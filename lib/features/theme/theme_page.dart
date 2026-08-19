@@ -1,0 +1,321 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+
+import '../../core/app_controller.dart';
+import '../../models/app_data.dart';
+import '../../widgets/keyboard_preview.dart';
+
+class ThemePage extends StatelessWidget {
+  const ThemePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    final data = controller.data;
+    return Scaffold(
+      appBar: AppBar(title: const Text('着せ替え')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const ThemeEditorPage()),
+            ),
+            icon: const Icon(Icons.add),
+            label: const Text('着せ替えを作成'),
+          ),
+          const SizedBox(height: 18),
+          Text('選ぶ', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          for (final theme in data.themes)
+            _ThemeCard(
+              theme: theme,
+              lightSelected: data.lightThemeId == theme.id,
+              darkSelected: data.darkThemeId == theme.id,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThemeCard extends StatelessWidget {
+  const _ThemeCard({
+    required this.theme,
+    required this.lightSelected,
+    required this.darkSelected,
+  });
+
+  final KeyboardThemeConfig theme;
+  final bool lightSelected;
+  final bool darkSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    final builtIn = const {'classic', 'midnight', 'azuki'}.contains(theme.id);
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 7),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: KeyboardPreview(theme: theme),
+          ),
+          ListTile(
+            title: Text(theme.name),
+            subtitle: Wrap(
+              spacing: 6,
+              children: [
+                if (lightSelected)
+                  const Chip(
+                    avatar: Icon(Icons.light_mode, size: 16),
+                    label: Text('ライト'),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                if (darkSelected)
+                  const Chip(
+                    avatar: Icon(Icons.dark_mode, size: 16),
+                    label: Text('ダーク'),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+            trailing: PopupMenuButton<String>(
+              onSelected: (value) async {
+                switch (value) {
+                  case 'light':
+                    controller.selectTheme(theme.id, dark: false);
+                  case 'dark':
+                    controller.selectTheme(theme.id, dark: true);
+                  case 'edit':
+                    await Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => ThemeEditorPage(theme: theme),
+                      ),
+                    );
+                  case 'share':
+                    await controller.platform.shareText(
+                      subject: 'Keynako theme: ${theme.name}',
+                      text: jsonEncode({'azooKeyTheme': theme.toJson()}),
+                    );
+                  case 'delete':
+                    controller.removeTheme(theme.id);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'light', child: Text('ライトモードで使用')),
+                const PopupMenuItem(value: 'dark', child: Text('ダークモードで使用')),
+                const PopupMenuDivider(),
+                if (!builtIn)
+                  const PopupMenuItem(value: 'edit', child: Text('編集')),
+                const PopupMenuItem(value: 'share', child: Text('共有')),
+                if (!builtIn)
+                  const PopupMenuItem(value: 'delete', child: Text('削除')),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ThemeEditorPage extends StatefulWidget {
+  const ThemeEditorPage({this.theme, super.key});
+
+  final KeyboardThemeConfig? theme;
+
+  @override
+  State<ThemeEditorPage> createState() => _ThemeEditorPageState();
+}
+
+class _ThemeEditorPageState extends State<ThemeEditorPage> {
+  late final TextEditingController _name;
+  late int _background;
+  late int _key;
+  late int _special;
+  late int _text;
+  late int _accent;
+
+  static const _colors = [
+    0xffffffff,
+    0xfff8fafc,
+    0xffd1d5db,
+    0xff94a3b8,
+    0xff334155,
+    0xff111827,
+    0xfffee2e2,
+    0xfffca5a5,
+    0xff9f3a48,
+    0xffffedd5,
+    0xfffde68a,
+    0xffbbf7d0,
+    0xff86efac,
+    0xffdbeafe,
+    0xff60a5fa,
+    0xff2563eb,
+    0xffe9d5ff,
+    0xffc084fc,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    final source = widget.theme ?? AppData.defaults().themes.first;
+    _name = TextEditingController(
+      text: widget.theme == null ? '新しい着せ替え' : source.name,
+    );
+    _background = source.backgroundColor;
+    _key = source.keyColor;
+    _special = source.specialKeyColor;
+    _text = source.textColor;
+    _accent = source.accentColor;
+  }
+
+  KeyboardThemeConfig get _value => KeyboardThemeConfig(
+    id: widget.theme?.id ?? 'theme-${DateTime.now().millisecondsSinceEpoch}',
+    name: _name.text.trim().isEmpty ? '名称未設定' : _name.text.trim(),
+    backgroundColor: _background,
+    keyColor: _key,
+    specialKeyColor: _special,
+    textColor: _text,
+    accentColor: _accent,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.theme == null ? '着せ替えを作成' : '着せ替えを編集'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              AppControllerScope.of(context).replaceTheme(_value);
+              Navigator.of(context).pop();
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          KeyboardPreview(theme: _value, compact: false),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: '着せ替え名'),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 18),
+          _ColorSetting(
+            title: '背景',
+            value: _background,
+            colors: _colors,
+            onChanged: (value) => setState(() => _background = value),
+          ),
+          _ColorSetting(
+            title: '通常キー',
+            value: _key,
+            colors: _colors,
+            onChanged: (value) => setState(() => _key = value),
+          ),
+          _ColorSetting(
+            title: '特殊キー',
+            value: _special,
+            colors: _colors,
+            onChanged: (value) => setState(() => _special = value),
+          ),
+          _ColorSetting(
+            title: '文字',
+            value: _text,
+            colors: _colors,
+            onChanged: (value) => setState(() => _text = value),
+          ),
+          _ColorSetting(
+            title: 'アクセント',
+            value: _accent,
+            colors: _colors,
+            onChanged: (value) => setState(() => _accent = value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+}
+
+class _ColorSetting extends StatelessWidget {
+  const _ColorSetting({
+    required this.title,
+    required this.value,
+    required this.colors,
+    required this.onChanged,
+  });
+
+  final String title;
+  final int value;
+  final List<int> colors;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: colors.map((color) {
+              final selected = value == color;
+              return InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => onChanged(color),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Color(color),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outlineVariant,
+                      width: selected ? 3 : 1,
+                    ),
+                  ),
+                  child: selected
+                      ? Icon(
+                          Icons.check,
+                          size: 18,
+                          color:
+                              ThemeData.estimateBrightnessForColor(
+                                    Color(color),
+                                  ) ==
+                                  Brightness.dark
+                              ? Colors.white
+                              : Colors.black,
+                        )
+                      : null,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}

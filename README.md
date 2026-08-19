@@ -1,0 +1,71 @@
+# Keynako
+
+![Keynako app icon](assets/icon/keynako-icon-1024.png)
+
+Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに、FlutterでiOSとAndroidへ移植したマルチプラットフォーム版です。設定アプリの画面とデータモデルはDartで共有し、OSが要求するキーボード拡張部分だけを各プラットフォームのネイティブAPIで実装しています。
+
+## 主な機能
+
+- フリック入力、ローマ字入力、英語・数字・記号・絵文字・顔文字入力
+- 変換候補、ライブ変換、学習、ユーザー辞書、テンプレート
+- ライト／ダークテーマ、配色編集、カスタムキー、カスタムタブ
+- 片手モード、カーソル移動、クリップボード履歴、音・触覚設定
+- 設定のJSONバックアップ／復元、連絡先からの辞書登録
+- 元のazooKeyと同じGoogle Forms送信先を使う変換報告・単語共有
+- Zenzai v3.2 small／xsmallによる完全オフライン変換
+
+Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey forkの`llama.cpp`をJNIから呼び出し、iOSは固定リビジョンの`AzooKeyKanaKanjiConverter`を`ZenzaiCPU` trait付きで利用します。モデルの出所とハッシュは[assets/ZENZAI_MODELS.md](assets/ZENZAI_MODELS.md)にあります。
+
+## 構成
+
+| 領域 | 実装 |
+| --- | --- |
+| 共通アプリ、設定、辞書、テーマ | Flutter / Dart |
+| Androidシステムキーボード | `InputMethodService` + Kotlin/JNI |
+| iOSシステムキーボード | `UIInputViewController` + Swift |
+| Android Zenzai | llama.cpp + C++ JNI bridge |
+| iOSかな漢字変換／Zenzai | AzooKeyKanaKanjiConverter Swift Package |
+
+Android/iOSは通常のFlutter画面だけではシステムIMEとして登録できないため、ライフサイクル、入力接続、ネイティブ推論境界には最小限のKotlin、Swift、C++が必要です。共有するアプリロジックとUIはDartに集約しています。互換性維持のため、内部のMethodChannel名、保存キー、App Groupには一部`azooKey`名が残っています。
+
+## 開発環境
+
+- Flutter stable（Dart 3.13以上）
+- JDK 17
+- Android SDK、NDK 28、CMake 3.22.1（Android）
+- macOS、Xcode、Apple Developerの署名設定（iOS）
+
+サブモジュールを含めて取得してください。
+
+```sh
+git clone --recursive git@github.com:StupidGame/Keynako.git
+cd Keynako
+flutter pub get
+flutter analyze
+flutter test
+```
+
+既にclone済みの場合は、次を実行します。
+
+```sh
+git submodule update --init --recursive
+```
+
+### Android
+
+```sh
+flutter build apk --debug
+flutter run
+```
+
+インストール後、Androidの「システム > キーボード > 画面キーボード」でKeynakoを有効化して選択します。ストア配布時は[android/app/build.gradle.kts](android/app/build.gradle.kts)のrelease署名を正式なkeystoreへ差し替えてください。
+
+### iOS
+
+iOS 17以上を対象にしています。macOSで`ios/Runner.xcworkspace`をXcodeから開き、RunnerとAzooKeyKeyboardの両ターゲットに同じDevelopment Teamを設定してください。両ターゲットでApp Groupを有効にし、環境に合わせてbundle identifierと`group.com.azooKey.keyboard`をプロビジョニングします。その後Runnerをビルドし、iOSの「設定 > 一般 > キーボード > キーボード」からKeynakoを追加します。
+
+WindowsではiOS SDKとXcodeが利用できないため、このリポジトリではXcodeプロジェクト、plist、entitlements、Swift Package参照までを構成し、最終署名ビルドはmacOS上で行います。
+
+## ライセンス
+
+本体はリポジトリ既定の[Apache License 2.0](LICENSE)です。移植元、変換エンジン、モデルなどの詳細は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)を参照してください。
