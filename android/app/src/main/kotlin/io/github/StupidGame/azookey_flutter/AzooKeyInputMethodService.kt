@@ -2,6 +2,7 @@ package io.github.StupidGame.azookey_flutter
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
@@ -11,14 +12,18 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.net.Uri
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.kazumaproject.zenz.ZenzEngine
 import org.json.JSONArray
@@ -174,58 +179,72 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun renderFlick(scale: Double) {
         val keys = if (mode == "english") listOf(
             listOf(
+                FlickKey("☆123", action = "symbols", special = true, customTarget = "symbols_tab"),
                 FlickKey("@#/&_", "@", "#", "/", "&", "_"),
                 FlickKey("ABC", "a", "b", "c", "2", null),
                 FlickKey("DEF", "d", "e", "f", "3", null),
                 FlickKey("⌫", action = "delete", special = true),
             ),
             listOf(
+                FlickKey("ABC", action = "english", special = true, customTarget = "abc_tab"),
                 FlickKey("GHI", "g", "h", "i", "4", null),
                 FlickKey("JKL", "j", "k", "l", "5", null),
                 FlickKey("MNO", "m", "n", "o", "6", null),
                 FlickKey("空白", action = "space", special = true),
             ),
             listOf(
+                FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
                 FlickKey("PQRS", "p", "q", "r", "s", "7"),
                 FlickKey("TUV", "t", "u", "v", "8", null),
                 FlickKey("WXYZ", "w", "x", "y", "z", "9"),
                 FlickKey("改行", action = "enter", special = true),
             ),
             listOf(
-                FlickKey("☆123", action = "symbols", special = true),
-                FlickKey(if (shift || capsLock) "A/a" else "a/A", action = "shiftEnglish", special = true),
-                FlickKey(".,?!", ".", ",", "?", "!", "'"),
                 FlickKey("🌐", action = "nextKeyboard", special = true),
+                FlickKey(if (shift || capsLock) "A/a" else "a/A", action = "shiftEnglish", special = true),
+                FlickKey("'\"()", "'", "\"", "(", ")", null),
+                FlickKey(".,?!", ".", ",", "?", "!", "'", customTarget = "kana_symbols"),
+                FlickKey("改行", action = "enter", special = true),
             ),
         ) else listOf(
             listOf(
+                FlickKey("☆123", action = "symbols", special = true, customTarget = "symbols_tab"),
                 FlickKey("あ", "あ", "い", "う", "え", "お"),
                 FlickKey("か", "か", "き", "く", "け", "こ"),
                 FlickKey("さ", "さ", "し", "す", "せ", "そ"),
                 FlickKey("⌫", action = "delete", special = true),
             ),
             listOf(
+                FlickKey("ABC", action = "english", special = true, customTarget = "abc_tab"),
                 FlickKey("た", "た", "ち", "つ", "て", "と"),
                 FlickKey("な", "な", "に", "ぬ", "ね", "の"),
                 FlickKey("は", "は", "ひ", "ふ", "へ", "ほ"),
                 FlickKey("空白", action = "space", special = true),
             ),
             listOf(
+                FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
                 FlickKey("ま", "ま", "み", "む", "め", "も"),
                 FlickKey("や", "や", "「", "ゆ", "」", "よ"),
                 FlickKey("ら", "ら", "り", "る", "れ", "ろ"),
                 FlickKey("改行", action = "enter", special = true),
             ),
             listOf(
-                FlickKey("☆123", action = "symbols", special = true),
-                FlickKey("小ﾞﾟ", action = "kogana", special = true),
-                FlickKey("わ", "わ", "を", "ん", "ー", "〜"),
                 FlickKey("🌐", action = "nextKeyboard", special = true),
+                FlickKey("小ﾞﾟ", action = "kogana", special = true, customTarget = "kogana"),
+                FlickKey("わ", "わ", "を", "ん", "ー", "〜"),
+                FlickKey("､｡?!", "、", "。", "？", "！", null, customTarget = "kana_symbols"),
+                FlickKey("改行", action = "enter", special = true),
             ),
         )
         for (row in keys) {
             val rowView = newRow(scale)
-            for (key in row) rowView.addView(createFlickKey(key, scale), weightParams())
+            for (key in row) {
+                val custom = key.customTarget?.let(::customKeyForTarget)
+                rowView.addView(
+                    if (custom == null) createFlickKey(key, scale) else createCustomKey(custom, scale),
+                    weightParams(),
+                )
+            }
             keyboardContainer.addView(rowView)
         }
     }
@@ -280,6 +299,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderCustomTab(id: String, scale: Double) {
+        if (renderCustard(id, scale)) return
         val tabs = state.optJSONArray("customTabs") ?: return setMode("japanese")
         var target: JSONObject? = null
         for (index in 0 until tabs.length()) {
@@ -313,18 +333,370 @@ class AzooKeyInputMethodService : InputMethodService() {
         keyboardContainer.addView(bottom)
     }
 
+    private fun renderCustard(id: String, scale: Double): Boolean {
+        val custards = state.optJSONArray("custards") ?: return false
+        var custard: JSONObject? = null
+        for (index in 0 until custards.length()) {
+            val candidate = custards.optJSONObject(index) ?: continue
+            if (candidate.optString("identifier") == id) {
+                custard = candidate
+                break
+            }
+        }
+        val definition = custard ?: return false
+        val interfaceData = definition.optJSONObject("interface") ?: return false
+        val layoutData = interfaceData.optJSONObject("key_layout") ?: return false
+        val keys = interfaceData.optJSONArray("keys") ?: JSONArray()
+        val keyStyle = interfaceData.optString("key_style", "tenkey_style")
+        return when (layoutData.optString("type", "grid_fit")) {
+            "grid_scroll" -> {
+                renderCustardScroll(layoutData, keys, keyStyle, scale)
+                true
+            }
+            else -> {
+                renderCustardGrid(layoutData, keys, keyStyle, scale)
+                true
+            }
+        }
+    }
+
+    private fun renderCustardGrid(
+        layoutData: JSONObject,
+        keys: JSONArray,
+        keyStyle: String,
+        scale: Double,
+    ) {
+        val across = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 20)
+        val down = layoutData.optDouble("column_count", 5.0).toInt().coerceIn(1, 20)
+        val grid = CustardGridLayout(this, across, down)
+        val cellHeight = (dp(47) * scale).toInt().coerceAtLeast(dp(32))
+        for (index in 0 until keys.length()) {
+            val element = keys.optJSONObject(index) ?: continue
+            if (element.optString("specifier_type") != "grid_fit") continue
+            val specifier = element.optJSONObject("specifier") ?: continue
+            val x = specifier.optDouble("x").coerceIn(0.0, across - 0.01)
+            val y = specifier.optDouble("y").coerceIn(0.0, down - 0.01)
+            val width = specifier.optDouble("width", 1.0).coerceIn(0.01, across - x)
+            val height = specifier.optDouble("height", 1.0).coerceIn(0.01, down - y)
+            val view = createCustardKey(element, keyStyle, scale)
+            grid.addPositionedView(view, x, y, width, height)
+        }
+        keyboardContainer.addView(
+            grid,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                cellHeight * down,
+            ),
+        )
+    }
+
+    private fun renderCustardScroll(
+        layoutData: JSONObject,
+        keys: JSONArray,
+        keyStyle: String,
+        scale: Double,
+    ) {
+        val elements = (0 until keys.length()).mapNotNull(keys::optJSONObject)
+            .filter { it.optString("specifier_type") == "grid_scroll" }
+            .sortedBy { it.optJSONObject("specifier")?.optInt("index") ?: Int.MAX_VALUE }
+        val crossCount = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 20)
+        val visibleCount = layoutData.optDouble("column_count", 4.0).coerceIn(1.0, 20.0)
+        val cellHeight = (dp(47) * scale).toInt().coerceAtLeast(dp(32))
+        if (layoutData.optString("direction", "vertical") == "horizontal") {
+            val cellWidth = (resources.displayMetrics.widthPixels / visibleCount).toInt()
+            val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (start in elements.indices step crossCount) {
+                val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                for (index in start until minOf(start + crossCount, elements.size)) {
+                    column.addView(
+                        createCustardKey(elements[index], keyStyle, scale, variationsEnabled = false),
+                        LinearLayout.LayoutParams(cellWidth, cellHeight).apply {
+                            setMargins(dp(2), dp(2), dp(2), dp(2))
+                        },
+                    )
+                }
+                content.addView(column)
+            }
+            val scroll = HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(content)
+            }
+            keyboardContainer.addView(
+                scroll,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    cellHeight * crossCount,
+                ),
+            )
+        } else {
+            val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            for (start in elements.indices step crossCount) {
+                val row = newRow(scale)
+                for (index in start until minOf(start + crossCount, elements.size)) {
+                    row.addView(
+                        createCustardKey(elements[index], keyStyle, scale, variationsEnabled = false),
+                        weightParams(),
+                    )
+                }
+                while (row.childCount < crossCount) row.addView(View(this), weightParams())
+                content.addView(row)
+            }
+            val scroll = ScrollView(this).apply {
+                isVerticalScrollBarEnabled = false
+                addView(content)
+            }
+            keyboardContainer.addView(
+                scroll,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    (cellHeight * visibleCount).toInt(),
+                ),
+            )
+        }
+    }
+
+    private fun createCustardKey(
+        element: JSONObject,
+        keyStyle: String,
+        scale: Double,
+        variationsEnabled: Boolean = true,
+    ): View {
+        val key = element.optJSONObject("key") ?: JSONObject()
+        if (element.optString("key_type") == "system") {
+            return createCustardSystemKey(key.optString("type"), scale)
+        }
+        val design = key.optJSONObject("design") ?: JSONObject()
+        val color = design.optString("color", "normal")
+        val view = createKey(
+            custardLabel(design.optJSONObject("label")),
+            color == "special" || color == "unimportant",
+            scale,
+            null,
+        )
+        if (color == "selected") view.background = roundedDrawable(palette.accent, dp(6).toFloat())
+        val handler = Handler(Looper.getMainLooper())
+        var startX = 0f
+        var startY = 0f
+        var currentX = 0f
+        var currentY = 0f
+        var didLongPress = false
+        var repeating = false
+        val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
+        val startActions = longPressData.optJSONArray("start") ?: JSONArray()
+        var activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
+        val flickVariations = if (variationsEnabled) custardVariations(key, "flick_variation") else emptyList()
+        val pcVariations = if (variationsEnabled && keyStyle == "pc_style") {
+            custardVariations(key, "longpress_variation")
+        } else {
+            emptyList()
+        }
+        fun selectedGestureKey(): JSONObject {
+            if (!variationsEnabled || keyStyle == "pc_style") return key
+            val dx = currentX - startX
+            val dy = currentY - startY
+            val threshold = dp(20).toFloat() *
+                settings.optDouble("flick_sensitivity_setting", 1.0).toFloat()
+            val direction = if (abs(dx) < threshold && abs(dy) < threshold) null
+            else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
+            else if (dy < 0) "top" else "bottom"
+            return findCustardVariation(key, "flick_variation", direction) ?: key
+        }
+        val handlesLongPress = startActions.length() > 0 || activeRepeatActions.length() > 0 ||
+            pcVariations.isNotEmpty() || flickVariations.any { variation ->
+                val variationLongPress = variation.optJSONObject("key")?.optJSONObject("longpress_actions")
+                (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
+                    (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
+            }
+        val repeatAction = object : Runnable {
+            override fun run() {
+                if (!repeating) return
+                dispatchActions(activeRepeatActions)
+                handler.postDelayed(this, 70)
+            }
+        }
+        val longPress = Runnable {
+            val selectedLongPress = selectedGestureKey().optJSONObject("longpress_actions") ?: JSONObject()
+            val selectedStartActions = selectedLongPress.optJSONArray("start") ?: JSONArray()
+            activeRepeatActions = selectedLongPress.optJSONArray("repeat") ?: JSONArray()
+            if (selectedStartActions.length() == 0 && activeRepeatActions.length() == 0 && pcVariations.isEmpty()) {
+                return@Runnable
+            }
+            didLongPress = true
+            dispatchActions(selectedStartActions)
+            if (activeRepeatActions.length() > 0) {
+                repeating = true
+                handler.post(repeatAction)
+            }
+            feedback(view)
+        }
+        view.setOnTouchListener { target, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = event.x
+                    startY = event.y
+                    currentX = event.x
+                    currentY = event.y
+                    didLongPress = false
+                    repeating = false
+                    activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
+                    target.isPressed = true
+                    val delay = if (longPressData.optString("duration") == "light") 300L else 500L
+                    if (handlesLongPress) handler.postDelayed(longPress, delay)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    currentX = event.x
+                    currentY = event.y
+                    handler.removeCallbacks(longPress)
+                    repeating = false
+                    handler.removeCallbacks(repeatAction)
+                    target.isPressed = false
+                    val dx = event.x - startX
+                    val dy = event.y - startY
+                    if (!didLongPress) {
+                        val threshold = dp(20).toFloat() *
+                            settings.optDouble("flick_sensitivity_setting", 1.0).toFloat()
+                        val direction = if (!variationsEnabled || abs(dx) < threshold && abs(dy) < threshold) null
+                        else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
+                        else if (dy < 0) "top" else "bottom"
+                        val variation = findCustardVariation(key, "flick_variation", direction)
+                        dispatchActions(variation?.optJSONArray("press_actions") ?: key.optJSONArray("press_actions"))
+                        feedback(target)
+                    } else if (pcVariations.isNotEmpty() && activeRepeatActions.length() == 0) {
+                        val width = target.width.coerceAtLeast(1)
+                        val normalized = ((event.x / width) * pcVariations.size).toInt()
+                        dispatchActions(
+                            pcVariations[normalized.coerceIn(0, pcVariations.lastIndex)]
+                                .optJSONObject("key")
+                                ?.optJSONArray("press_actions"),
+                        )
+                    }
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    currentX = event.x
+                    currentY = event.y
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPress)
+                    repeating = false
+                    handler.removeCallbacks(repeatAction)
+                    target.isPressed = false
+                    true
+                }
+                else -> true
+            }
+        }
+        return view
+    }
+
+    private fun createCustardSystemKey(type: String, scale: Double): View {
+        val customTarget = when (type) {
+            "flick_kogaki" -> "kogana"
+            "flick_kutoten" -> "kana_symbols"
+            "flick_hira_tab" -> "hira_tab"
+            "flick_abc_tab" -> "abc_tab"
+            "flick_star123_tab" -> "symbols_tab"
+            else -> null
+        }
+        customTarget?.let(::customKeyForTarget)?.let { return createCustomKey(it, scale) }
+        return when (type) {
+            "change_keyboard" -> createKey("🌐", true, scale) { nextKeyboard() }
+            "qwerty_language_switch" -> createKey("あA", true, scale) {
+                setMode(if (mode == "japanese") "english" else "japanese")
+            }
+            "qwerty_shift" -> createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() }
+            "qwerty_dynamic_change" -> createKey("☆123", true, scale) {
+                if (mode == "symbols") setMode("english") else setMode("symbols")
+            }
+            "qwerty_space" -> createKey(if (composing.isEmpty()) "空白" else "次候補", false, scale) {
+                if (candidates.isEmpty()) space() else {
+                    selectedCandidate = (selectedCandidate + 1) % candidates.size
+                    currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                    renderCandidateValues()
+                }
+            }
+            "enter" -> createKey("改行", true, scale) { enter() }
+            "upper_lower" -> createKey("Aa", true, scale) {
+                if (mode == "english") toggleShift() else transformLastCharacter()
+            }
+            "next_candidate" -> createKey(if (composing.isEmpty()) "空白" else "次候補", true, scale) {
+                if (candidates.isEmpty()) space() else {
+                    selectedCandidate = (selectedCandidate + 1) % candidates.size
+                    currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                    renderCandidateValues()
+                }
+            }
+            "flick_kogaki" -> createFlickKey(FlickKey("小ﾞﾟ", action = "kogana", special = true), scale)
+            "flick_kutoten" -> createFlickKey(FlickKey("､｡?!", "、", "。", "？", "！", null), scale)
+            "flick_hira_tab" -> createKey("あいう", true, scale) { setMode("japanese") }
+            "flick_abc_tab" -> createKey("ABC", true, scale) { setMode("english") }
+            "flick_star123_tab" -> createKey("☆123", true, scale) { setMode("symbols") }
+            else -> createKey("", true, scale) {}
+        }
+    }
+
+    private fun custardLabel(label: JSONObject?): String {
+        if (label == null) return ""
+        if (label.has("text")) return label.optString("text")
+        if (label.has("system_image")) return systemImageLabel(label.optString("system_image"))
+        return when (label.optString("type")) {
+            "main_and_sub" -> "${label.optString("main")}\n${label.optString("sub")}"
+            "main_and_directions" -> label.optString("main")
+            "system_image" -> systemImageLabel(label.optString("system_image"))
+            else -> label.optString("text")
+        }
+    }
+
+    private fun systemImageLabel(name: String): String = when (name) {
+        "delete.left" -> "⌫"
+        "xmark" -> "×"
+        "globe" -> "🌐"
+        "return", "return.left" -> "↵"
+        "space" -> "空白"
+        "list.bullet" -> "☰"
+        "arrow.left", "chevron.left" -> "←"
+        "arrow.right", "chevron.right" -> "→"
+        "shift", "shift.fill" -> "⇧"
+        else -> name
+    }
+
+    private fun findCustardVariation(key: JSONObject, type: String, direction: String?): JSONObject? {
+        if (direction == null) return null
+        return custardVariations(key, type).firstOrNull { it.optString("direction") == direction }
+            ?.optJSONObject("key")
+    }
+
+    private fun custardVariations(key: JSONObject, type: String): List<JSONObject> {
+        val values = key.optJSONArray("variations") ?: return emptyList()
+        return (0 until values.length()).mapNotNull(values::optJSONObject)
+            .filter { it.optString("type") == type }
+    }
+
     private fun renderStandaloneCustomKeys(scale: Double) {
         val keys = state.optJSONArray("customKeys") ?: return
-        if (keys.length() == 0) return
-        for (start in 0 until minOf(keys.length(), 8) step 4) {
+        val standalone = (0 until keys.length()).mapNotNull(keys::optJSONObject)
+            .filter { it.optString("target", "standalone") == "standalone" }
+            .take(8)
+        if (standalone.isEmpty()) return
+        for (start in standalone.indices step 4) {
             val row = newRow(scale)
-            for (index in start until minOf(start + 4, keys.length())) {
-                val key = keys.optJSONObject(index) ?: continue
-                row.addView(createCustomKey(key, scale), weightParams())
+            for (index in start until minOf(start + 4, standalone.size)) {
+                row.addView(createCustomKey(standalone[index], scale), weightParams())
             }
             while (row.childCount < 4) row.addView(View(this), weightParams())
             keyboardContainer.addView(row)
         }
+    }
+
+    private fun customKeyForTarget(target: String): JSONObject? {
+        val keys = state.optJSONArray("customKeys") ?: return null
+        for (index in 0 until keys.length()) {
+            val key = keys.optJSONObject(index) ?: continue
+            if (key.optString("target", "standalone") == target) return key
+        }
+        return null
     }
 
     private fun createCustomKey(key: JSONObject, scale: Double): View {
@@ -333,10 +705,24 @@ class AzooKeyInputMethodService : InputMethodService() {
         var startX = 0f
         var startY = 0f
         var longPressed = false
+        var repeating = false
+        val repeatAction = object : Runnable {
+            override fun run() {
+                if (!repeating) return
+                dispatchAction(key.optJSONObject("longPressRepeat"))
+                handler.postDelayed(this, 70)
+            }
+        }
         val longPress = Runnable {
-            val action = key.optJSONObject("longPress") ?: return@Runnable
+            val action = key.optJSONObject("longPress")
+            val repeated = key.optJSONObject("longPressRepeat")
+            if (action == null && repeated == null) return@Runnable
             longPressed = true
             dispatchAction(action)
+            if (repeated != null) {
+                repeating = true
+                handler.post(repeatAction)
+            }
             feedback(view)
         }
         view.setOnTouchListener { target, event ->
@@ -351,6 +737,8 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(longPress)
+                    repeating = false
+                    handler.removeCallbacks(repeatAction)
                     target.isPressed = false
                     if (!longPressed) {
                         val dx = event.x - startX
@@ -371,6 +759,8 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(longPress)
+                    repeating = false
+                    handler.removeCallbacks(repeatAction)
                     target.isPressed = false
                     true
                 }
@@ -935,6 +1325,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             "space" -> space()
             "enter" -> enter()
             "symbols" -> setMode("symbols")
+            "japanese" -> setMode("japanese")
+            "english" -> setMode("english")
             "kogana" -> transformLastCharacter()
             "shiftEnglish" -> toggleShift()
             "nextKeyboard" -> nextKeyboard()
@@ -946,19 +1338,249 @@ class AzooKeyInputMethodService : InputMethodService() {
         val type = action.optString("type", "input")
         val value = action.optString("value", "")
         when (type) {
-            "input" -> directCommit(value)
-            "delete" -> repeat(value.toIntOrNull()?.coerceIn(1, 100) ?: 1) { delete() }
+            "input" -> if (action.has("text")) custardInput(action.optString("text")) else directCommit(value)
+            "directInput" -> directCommit(value)
+            "direct_input" -> directCommit(action.optString("text"))
+            "delete" -> repeat(
+                if (action.has("count")) action.optInt("count", 1).coerceIn(1, 100)
+                else value.toIntOrNull()?.coerceIn(1, 100) ?: 1,
+            ) { delete() }
             "enter" -> enter()
             "space" -> space()
-            "moveCursor" -> currentInputConnection?.setSelection(
-                (currentInputConnection?.getTextBeforeCursor(1000, 0)?.length ?: 0) + (value.toIntOrNull() ?: 0),
-                (currentInputConnection?.getTextBeforeCursor(1000, 0)?.length ?: 0) + (value.toIntOrNull() ?: 0),
-            )
+            "moveCursor" -> moveCursor(value.toIntOrNull() ?: 0)
+            "move_cursor" -> moveCursor(action.optInt("count"))
             "switchLayout" -> setMode(if (value == "english") "english" else "japanese")
-            "paste" -> paste()
-            "toggleTabBar" -> renderCandidates(true)
-            "dismiss" -> requestHideSelf(0)
+            "paste", "__paste" -> paste()
+            "replace_default" -> replaceDefault()
+            "replaceDefault" -> replaceDefault()
+            "replace_last_characters" -> replaceLastCharacters(action.optJSONObject("table"))
+            "smart_delete_default" -> smartDeleteDefault()
+            "smartDeleteDefault" -> smartDeleteDefault()
+            "smart_delete" -> smartDelete(action)
+            "select_candidate" -> selectCandidate(action.optJSONObject("selection"))
+            "complete_character_form" -> completeCharacterForm(action.optJSONArray("forms"))
+            "completeCharacterForm" -> completeCharacterForm(JSONArray().put(value))
+            "complete" -> commitComposition()
+            "smart_move_cursor" -> smartMoveCursor(action)
+            "move_tab" -> moveTab(action)
+            "enable_resizing_mode" -> renderCandidates(true)
+            "toggle_cursor_bar", "toggleTabBar", "toggle_tab_bar" -> renderCandidates(true)
+            "toggleCursorBar" -> renderCandidates(true)
+            "toggle_caps_lock_state" -> {
+                capsLock = !capsLock
+                shift = capsLock
+                renderKeyboard()
+            }
+            "toggleCapsLock" -> {
+                capsLock = !capsLock
+                shift = capsLock
+                renderKeyboard()
+            }
+            "dismiss", "dismiss_keyboard" -> requestHideSelf(0)
+            "launch_application" -> launchApplication(action)
         }
+    }
+
+    private fun dispatchActions(actions: JSONArray?) {
+        if (actions == null) return
+        for (index in 0 until actions.length()) dispatchAction(actions.optJSONObject(index))
+    }
+
+    private fun activeCustard(): JSONObject? {
+        val id = activeCustomTab ?: return null
+        val custards = state.optJSONArray("custards") ?: return null
+        for (index in 0 until custards.length()) {
+            val custard = custards.optJSONObject(index) ?: continue
+            if (custard.optString("identifier") == id) return custard
+        }
+        return null
+    }
+
+    private fun custardInput(value: String) {
+        if (value.isEmpty()) return
+        val custard = activeCustard()
+        val language = custard?.optString("language", "undefined") ?: "undefined"
+        val inputStyle = custard?.optString("input_style", "direct") ?: "direct"
+        if (language != "ja_JP") {
+            directCommit(value)
+            return
+        }
+        mode = "japanese"
+        if (inputStyle == "roman2kana") {
+            layout = "qwerty"
+            rawRoman += value.lowercase(Locale.ROOT)
+            composing = romanToHiragana(rawRoman)
+        } else {
+            layout = "flick"
+            composing += value
+        }
+        updateComposition()
+    }
+
+    private fun moveCursor(count: Int) {
+        val keyCode = if (count < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
+        repeat(abs(count).coerceAtMost(100)) {
+            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        }
+    }
+
+    private fun replaceDefault() {
+        if (composing.isNotEmpty()) {
+            transformLastCharacter()
+            return
+        }
+        val before = currentInputConnection?.getTextBeforeCursor(2, 0)?.toString().orEmpty()
+        val last = before.takeLast(1)
+        val replacement = smallKana[last] ?: return
+        currentInputConnection?.deleteSurroundingText(last.length, 0)
+        currentInputConnection?.commitText(replacement, 1)
+    }
+
+    private fun replaceLastCharacters(table: JSONObject?) {
+        if (table == null) return
+        val before = if (composing.isNotEmpty()) composing
+        else currentInputConnection?.getTextBeforeCursor(256, 0)?.toString().orEmpty()
+        val match = table.keys().asSequence().filter(before::endsWith).maxByOrNull(String::length) ?: return
+        val replacement = table.optString(match)
+        if (composing.isNotEmpty()) {
+            composing = composing.dropLast(match.length) + replacement
+            updateComposition()
+        } else {
+            currentInputConnection?.deleteSurroundingText(match.length, 0)
+            currentInputConnection?.commitText(replacement, 1)
+        }
+    }
+
+    private fun actionTargets(action: JSONObject): List<String> {
+        val values = action.optJSONArray("targets") ?: return defaultScanTargets
+        return (0 until values.length()).map(values::optString).filter(String::isNotEmpty)
+    }
+
+    private fun smartDeleteDefault() {
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
+            composing = ""
+            rawRoman = ""
+            currentInputConnection?.finishComposingText()
+            renderCandidates()
+            return
+        }
+        smartDelete(JSONObject().put("direction", "backward").put("targets", JSONArray(defaultScanTargets)))
+    }
+
+    private fun smartDelete(action: JSONObject) {
+        val targets = actionTargets(action)
+        if (action.optString("direction", "forward") == "backward") {
+            val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
+            val boundary = targets.mapNotNull { target ->
+                val index = text.lastIndexOf(target)
+                if (index < 0) null else index + target.length
+            }.maxOrNull() ?: 0
+            currentInputConnection?.deleteSurroundingText(text.length - boundary, 0)
+        } else {
+            val text = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
+            val boundary = targets.mapNotNull { target ->
+                val index = text.indexOf(target)
+                if (index < 0) null else index
+            }.minOrNull() ?: text.length
+            currentInputConnection?.deleteSurroundingText(0, boundary)
+        }
+    }
+
+    private fun smartMoveCursor(action: JSONObject) {
+        val targets = actionTargets(action)
+        val backward = action.optString("direction", "forward") == "backward"
+        val text = if (backward) {
+            currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
+        } else {
+            currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
+        }
+        val distance = if (backward) {
+            val boundary = targets.mapNotNull { target ->
+                val index = text.lastIndexOf(target)
+                if (index < 0) null else index + target.length
+            }.maxOrNull() ?: 0
+            boundary - text.length
+        } else {
+            targets.mapNotNull { target ->
+                val index = text.indexOf(target)
+                if (index < 0) null else index
+            }.minOrNull() ?: text.length
+        }
+        moveCursor(distance)
+    }
+
+    private fun selectCandidate(selection: JSONObject?) {
+        if (candidates.isEmpty()) return
+        selectedCandidate = when (selection?.optString("type")) {
+            "last" -> candidates.lastIndex
+            "offset" -> selectedCandidate + selection.optInt("value")
+            "exact" -> selection.optInt("value")
+            else -> 0
+        }.coerceIn(0, candidates.lastIndex)
+        currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+        renderCandidateValues()
+    }
+
+    private fun completeCharacterForm(forms: JSONArray?) {
+        val source = displayReading()
+        if (source.isEmpty()) return
+        val form = forms?.optString(0).orEmpty()
+        val converted = when (form) {
+            "hiragana" -> katakanaToHiragana(source)
+            "katakana" -> hiraganaToKatakana(source)
+            "halfwidth_katakana" -> katakanaToHalfWidth(hiraganaToKatakana(source))
+            "uppercase" -> source.uppercase(Locale.ROOT)
+            "lowercase" -> source.lowercase(Locale.ROOT)
+            else -> source
+        }
+        currentInputConnection?.commitText(converted, 1)
+        composing = ""
+        rawRoman = ""
+        renderCandidates()
+    }
+
+    private fun moveTab(action: JSONObject) {
+        if (action.optString("tab_type") == "custom") {
+            commitComposition()
+            activeCustomTab = action.optString("identifier")
+            renderCandidates()
+            renderKeyboard()
+            return
+        }
+        when (action.optString("identifier")) {
+            "user_japanese" -> setMode("japanese")
+            "user_english" -> setMode("english")
+            "flick_japanese" -> setForcedLayout("japanese", "flick")
+            "flick_english" -> setForcedLayout("english", "flick")
+            "qwerty_japanese" -> setForcedLayout("japanese", "qwerty")
+            "qwerty_english" -> setForcedLayout("english", "qwerty")
+            "flick_numbersymbols", "qwerty_numbers", "qwerty_symbols" -> setMode("symbols")
+            "clipboard_history_tab" -> showClipboardHistory()
+            "emoji_tab" -> showEmoji()
+            "last_tab" -> setMode("japanese")
+        }
+    }
+
+    private fun setForcedLayout(newMode: String, newLayout: String) {
+        commitComposition()
+        mode = newMode
+        layout = newLayout
+        activeCustomTab = null
+        renderCandidates()
+        renderKeyboard()
+    }
+
+    private fun launchApplication(action: JSONObject) {
+        val scheme = action.optString("scheme_type")
+        val target = action.optString("target")
+        val intent = if (scheme == "azooKey") {
+            packageManager.getLaunchIntentForPackage(packageName)
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse(if (target.contains("://")) target else "shortcuts://run-shortcut?name=${Uri.encode(target)}"))
+        } ?: return
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(intent) }
     }
 
     private fun paste() {
@@ -1021,6 +1643,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val down: String? = null,
         val action: String? = null,
         val special: Boolean = false,
+        val customTarget: String? = null,
     )
 
     data class KeyboardPalette(
@@ -1082,6 +1705,57 @@ class AzooKeyInputMethodService : InputMethodService() {
             "か" to "が", "が" to "か", "き" to "ぎ", "ぎ" to "き", "く" to "ぐ", "ぐ" to "く",
             "け" to "げ", "げ" to "け", "こ" to "ご", "ご" to "こ", "は" to "ば", "ば" to "ぱ", "ぱ" to "は",
         )
+    }
+}
+
+private class CustardGridLayout(
+    context: Context,
+    private val columns: Int,
+    private val rows: Int,
+) : ViewGroup(context) {
+    private data class Position(
+        val x: Double,
+        val y: Double,
+        val width: Double,
+        val height: Double,
+    )
+
+    private val positions = linkedMapOf<View, Position>()
+    private val gap = (2 * resources.displayMetrics.density).toInt()
+
+    fun addPositionedView(
+        view: View,
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+    ) {
+        positions[view] = Position(x, y, width, height)
+        addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val measuredWidth = MeasureSpec.getSize(widthMeasureSpec)
+        val measuredHeight = MeasureSpec.getSize(heightMeasureSpec)
+        setMeasuredDimension(measuredWidth, measuredHeight)
+        for ((view, position) in positions) {
+            val childWidth = ((position.width / columns) * measuredWidth).toInt() - gap * 2
+            val childHeight = ((position.height / rows) * measuredHeight).toInt() - gap * 2
+            view.measure(
+                MeasureSpec.makeMeasureSpec(childWidth.coerceAtLeast(1), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(childHeight.coerceAtLeast(1), MeasureSpec.EXACTLY),
+            )
+        }
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val availableWidth = right - left
+        val availableHeight = bottom - top
+        for ((view, position) in positions) {
+            val childLeft = ((position.x / columns) * availableWidth).toInt() + gap
+            val childTop = ((position.y / rows) * availableHeight).toInt() + gap
+            view.layout(childLeft, childTop, childLeft + view.measuredWidth, childTop + view.measuredHeight)
+        }
     }
 }
 
@@ -1320,6 +1994,14 @@ private fun hiraganaToKatakana(value: String): String = buildString {
         append(if (char.code in 0x3041..0x3096) (char.code + 0x60).toChar() else char)
     }
 }
+
+private fun katakanaToHiragana(value: String): String = buildString {
+    for (char in value) {
+        append(if (char.code in 0x30a1..0x30f6) (char.code - 0x60).toChar() else char)
+    }
+}
+
+private val defaultScanTargets = listOf("、", "。", "！", "？", ".", ",", "．", "，", "\n")
 
 private val romanMap = mapOf(
     "kya" to "きゃ", "kyu" to "きゅ", "kyo" to "きょ", "gya" to "ぎゃ", "gyu" to "ぎゅ", "gyo" to "ぎょ",

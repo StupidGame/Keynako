@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 
 import '../models/app_data.dart';
+import '../models/custard.dart';
 import 'platform_service.dart';
 
 class AppController extends ChangeNotifier {
@@ -99,6 +102,7 @@ class AppController extends ChangeNotifier {
   }
 
   void replaceCustomTab(CustomTabData tab) {
+    data.custards.removeWhere((item) => item.identifier == tab.id);
     final index = data.customTabs.indexWhere((item) => item.id == tab.id);
     if (index < 0) {
       data.customTabs.add(tab);
@@ -117,7 +121,82 @@ class AppController extends ChangeNotifier {
     _changed();
   }
 
+  List<AzooKeyCustard> importCustards(String source) {
+    final imported = AzooKeyCustard.decodeMany(source);
+    for (final custard in imported) {
+      data.customTabs.removeWhere((item) => item.id == custard.identifier);
+      final index = data.custards.indexWhere(
+        (item) => item.identifier == custard.identifier,
+      );
+      if (index < 0) {
+        data.custards.add(custard);
+      } else {
+        data.custards[index] = custard;
+      }
+      final tab = 'custom:${custard.identifier}';
+      if (!data.tabBar.contains(tab)) data.tabBar.add(tab);
+    }
+    _changed(immediate: true);
+    return imported;
+  }
+
+  Future<List<AzooKeyCustard>> importCustardsFromUrl(String source) async {
+    final requested = Uri.tryParse(source.trim());
+    if (requested == null ||
+        !requested.hasAuthority ||
+        !const {'http', 'https'}.contains(requested.scheme)) {
+      throw const FormatException('httpまたはhttpsのURLを入力してください。');
+    }
+    final uri = resolveCustardUrl(requested);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
+    try {
+      final request = await client.getUrl(uri);
+      request.headers.set(
+        HttpHeaders.acceptHeader,
+        'application/json, text/plain',
+      );
+      request.headers.set(
+        HttpHeaders.userAgentHeader,
+        'Keynako Custard Import',
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('HTTP ${response.statusCode}で取得に失敗しました。', uri: uri);
+      }
+      const maximumBytes = 10 * 1024 * 1024;
+      if (response.contentLength > maximumBytes) {
+        throw const FormatException('Custardファイルが10MBを超えています。');
+      }
+      final bytes = <int>[];
+      await for (final chunk in response) {
+        bytes.addAll(chunk);
+        if (bytes.length > maximumBytes) {
+          throw const FormatException('Custardファイルが10MBを超えています。');
+        }
+      }
+      return importCustards(utf8.decode(bytes));
+    } on TimeoutException {
+      throw const HttpException('Custardの取得がタイムアウトしました。');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  void removeCustard(String identifier) {
+    data.custards.removeWhere((item) => item.identifier == identifier);
+    data.tabBar.removeWhere((item) => item == 'custom:$identifier');
+    _changed();
+  }
+
   void replaceCustomKey(CustomKeyData key) {
+    if (key.target != 'standalone') {
+      data.customKeys.removeWhere(
+        (item) => item.target == key.target && item.id != key.id,
+      );
+    }
     final index = data.customKeys.indexWhere((item) => item.id == key.id);
     if (index < 0) {
       data.customKeys.add(key);
@@ -197,6 +276,33 @@ class AppController extends ChangeNotifier {
     _saveTimer?.cancel();
     super.dispose();
   }
+}
+
+@visibleForTesting
+Uri resolveCustardUrl(Uri uri) {
+  if (uri.host == 'custard.azookey.com' && uri.path.startsWith('/tab/')) {
+    return uri.replace(path: uri.path.replaceFirst('/tab/', '/api/tab/'));
+  }
+  if (uri.host == 'github.com') {
+    final segments = uri.pathSegments;
+    if (segments.length >= 5 && segments[2] == 'blob') {
+      return Uri.https(
+        'raw.githubusercontent.com',
+        <String>[
+          segments[0],
+          segments[1],
+          segments[3],
+          ...segments.skip(4),
+        ].join('/'),
+      );
+    }
+  }
+  if (uri.host == 'gist.github.com' &&
+      uri.pathSegments.length >= 2 &&
+      uri.pathSegments.last != 'raw') {
+    return uri.replace(path: '${uri.path}/raw');
+  }
+  return uri;
 }
 
 class AppControllerScope extends InheritedNotifier<AppController> {
