@@ -47,7 +47,7 @@ Android InputMethodService <---- shared JSON state ----> iOS Keyboard Extension
 | ユーザー辞書／テンプレート | Flutter CRUD + 共有JSON |
 | 学習／リセット | 共有learning map + iOS converter memory |
 | テーマ／配色 | Flutter editor + ネイティブrenderer |
-| Custard相当のカスタムタブ | Flutter editor + ネイティブrenderer |
+| Custard 1.0〜1.2（座標、複数アクション、長押し反復、variation） | URL importer + ネイティブrenderer |
 | クリップボード | OS clipboard + 共有履歴 |
 | 連絡先取り込み | platform contacts API + 共有辞書 |
 | 音／触覚／片手設定 | ネイティブキーボードbehavior |

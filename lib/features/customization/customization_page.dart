@@ -30,7 +30,7 @@ class CustomizationPage extends StatelessWidget {
             context,
             icon: Icons.dashboard_customize_outlined,
             title: 'カスタムタブ',
-            body: '好きな文字、文章、操作を並べたオリジナルのタブを作成できます。',
+            body: 'azooKey公式のCustard（1.0〜1.2）をそのまま読み込むか、端末上でタブを作成できます。',
           ),
           Row(
             children: [
@@ -52,40 +52,84 @@ class CustomizationPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          if (controller.data.customTabs.isEmpty)
-            const _EmptyCard(text: '作成したカスタムタブはここに表示されます。')
-          else
-            for (final tab in controller.data.customTabs)
-              Card(
-                child: ListTile(
-                  leading: Icon(
-                    tab.kind == 'scroll' ? Icons.notes : Icons.grid_view,
+          if (controller.data.customTabs.isEmpty &&
+              controller.data.custards.isEmpty)
+            const _EmptyCard(text: '作成・読み込みしたカスタムタブはここに表示されます。'),
+          for (final tab in controller.data.customTabs)
+            Card(
+              child: ListTile(
+                leading: Icon(
+                  tab.kind == 'scroll' ? Icons.notes : Icons.grid_view,
+                ),
+                title: Text(tab.name),
+                subtitle: Text('${tab.keys.length}キー・${tab.columns}列'),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => CustomTabEditorPage(tab: tab),
                   ),
-                  title: Text(tab.name),
-                  subtitle: Text('${tab.keys.length}キー・${tab.columns}列'),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => CustomTabEditorPage(tab: tab),
+                ),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (value) async {
+                    if (value == 'share') {
+                      await controller.platform.shareText(
+                        subject: 'Keynako Custard: ${tab.name}',
+                        text: jsonEncode({'azooKeyCustomTab': tab.toJson()}),
+                      );
+                    } else if (value == 'delete') {
+                      controller.removeCustomTab(tab.id);
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'share', child: Text('共有')),
+                    PopupMenuItem(value: 'delete', child: Text('削除')),
+                  ],
+                ),
+              ),
+            ),
+          for (final custard in controller.data.custards)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.keyboard_alt_outlined),
+                title: Text(custard.displayName),
+                subtitle: Text(
+                  'Custard ${custard.version}・${custard.keyCount}キー・${custard.layoutType}',
+                ),
+                onTap: () => showDialog<void>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: Text(custard.displayName),
+                    content: Text(
+                      '識別子: ${custard.identifier}\n'
+                      '言語: ${custard.language}\n'
+                      '入力方式: ${custard.inputStyle}\n\n'
+                      '公式Custardの全情報を保持しており、azooKeyと同じ配置・アクションでキーボードに表示します。',
                     ),
-                  ),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (value) async {
-                      if (value == 'share') {
-                        await controller.platform.shareText(
-                          subject: 'Keynako Custard: ${tab.name}',
-                          text: jsonEncode({'azooKeyCustomTab': tab.toJson()}),
-                        );
-                      } else if (value == 'delete') {
-                        controller.removeCustomTab(tab.id);
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'share', child: Text('共有')),
-                      PopupMenuItem(value: 'delete', child: Text('削除')),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('閉じる'),
+                      ),
                     ],
                   ),
                 ),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (value) async {
+                    if (value == 'share') {
+                      await controller.platform.shareText(
+                        subject: 'Keynako Custard: ${custard.displayName}',
+                        text: jsonEncode(custard.toJson()),
+                      );
+                    } else if (value == 'delete') {
+                      controller.removeCustard(custard.identifier);
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'share', child: Text('共有')),
+                    PopupMenuItem(value: 'delete', child: Text('削除')),
+                  ],
+                ),
               ),
+            ),
           const SizedBox(height: 22),
           _intro(
             context,
@@ -127,7 +171,9 @@ class CustomizationPage extends StatelessWidget {
               child: ListTile(
                 leading: CircleAvatar(child: Text(key.label)),
                 title: Text(key.name),
-                subtitle: Text(_actionLabel(key.tap)),
+                subtitle: Text(
+                  '${_targetLabel(key.target)}・${_actionLabel(key.tap)}',
+                ),
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => CustomKeyEditorPage(keyData: key),
@@ -186,12 +232,16 @@ class CustomizationPage extends StatelessWidget {
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('カスタムタブを読み込む'),
+        title: const Text('URLからCustardを読み込む'),
         content: TextField(
           controller: text,
-          minLines: 5,
-          maxLines: 10,
-          decoration: const InputDecoration(hintText: '共有されたJSONを貼り付けます'),
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'CustardのURL',
+            hintText: 'https://custard.azookey.com/tab/...',
+            helperText: 'GitHub・Gist・直接の .custard / JSON URLにも対応します。',
+          ),
         ),
         actions: [
           TextButton(
@@ -214,16 +264,34 @@ class CustomizationPage extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
     try {
-      final decoded = jsonDecode(result);
-      final envelope = Map<String, dynamic>.from(decoded as Map);
-      final tab = CustomTabData.fromJson(
-        Map<String, dynamic>.from(envelope['azooKeyCustomTab'] as Map),
+      final trimmed = result.trim();
+      final decoded = trimmed.startsWith('{') || trimmed.startsWith('[')
+          ? jsonDecode(trimmed)
+          : null;
+      if (decoded is Map && decoded['azooKeyCustomTab'] is Map) {
+        final tab = CustomTabData.fromJson(
+          Map<String, dynamic>.from(decoded['azooKeyCustomTab'] as Map),
+        );
+        AppControllerScope.of(context).replaceCustomTab(tab);
+      } else {
+        final controller = AppControllerScope.of(context);
+        final imported = decoded == null
+            ? await controller.importCustardsFromUrl(trimmed)
+            : controller.importCustards(trimmed);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${imported.length}件のCustardを読み込みました。')),
+        );
+      }
+    } on FormatException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Custardを読み込めませんでした: ${error.message}')),
       );
-      AppControllerScope.of(context).replaceCustomTab(tab);
-    } catch (_) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('カスタムタブJSONを読み込めませんでした。')));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Custardを取得できませんでした: $error')));
     }
   }
 }
@@ -423,6 +491,7 @@ class CustomKeyEditorPage extends StatefulWidget {
 class _CustomKeyEditorPageState extends State<CustomKeyEditorPage> {
   late final TextEditingController _name;
   late final TextEditingController _label;
+  late String _target;
   late final Map<String, KeyActionData?> _actions;
 
   @override
@@ -431,6 +500,7 @@ class _CustomKeyEditorPageState extends State<CustomKeyEditorPage> {
     final key = widget.keyData;
     _name = TextEditingController(text: key?.name ?? '新しいキー');
     _label = TextEditingController(text: key?.label ?? '＋');
+    _target = key?.target ?? 'standalone';
     _actions = {
       'タップ': key?.tap ?? const KeyActionData(type: 'input'),
       '左フリック': key?.left,
@@ -438,6 +508,7 @@ class _CustomKeyEditorPageState extends State<CustomKeyEditorPage> {
       '右フリック': key?.right,
       '下フリック': key?.down,
       '長押し': key?.longPress,
+      '長押し反復': key?.longPressRepeat,
     };
   }
 
@@ -471,6 +542,29 @@ class _CustomKeyEditorPageState extends State<CustomKeyEditorPage> {
             ],
           ),
           const SizedBox(height: 18),
+          DropdownButtonFormField<String>(
+            initialValue: _target,
+            decoration: const InputDecoration(labelText: '配置先'),
+            items:
+                const {
+                      'standalone': '独立キー',
+                      'kogana': 'フリック「小ﾞﾟ」',
+                      'kana_symbols': 'フリック「､｡?!」',
+                      'hira_tab': 'フリック「あいう」',
+                      'abc_tab': 'フリック「ABC」',
+                      'symbols_tab': 'フリック「☆123」',
+                    }.entries
+                    .map(
+                      (entry) => DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                    )
+                    .toList(),
+            onChanged: (value) =>
+                setState(() => _target = value ?? 'standalone'),
+          ),
+          const SizedBox(height: 10),
           for (final entry in _actions.entries)
             Card(
               child: ListTile(
@@ -507,12 +601,14 @@ class _CustomKeyEditorPageState extends State<CustomKeyEditorPage> {
       id: widget.keyData?.id ?? 'key-${DateTime.now().microsecondsSinceEpoch}',
       name: _name.text.trim().isEmpty ? '名称未設定' : _name.text.trim(),
       label: _label.text.isEmpty ? ' ' : _label.text,
+      target: _target,
       tap: _actions['タップ'] ?? const KeyActionData(type: 'input'),
       left: _actions['左フリック'],
       up: _actions['上フリック'],
       right: _actions['右フリック'],
       down: _actions['下フリック'],
       longPress: _actions['長押し'],
+      longPressRepeat: _actions['長押し反復'],
     );
     if (widget.returnValue) {
       Navigator.of(context).pop(value);
@@ -544,13 +640,20 @@ class _ActionEditorState extends State<_ActionEditor> {
 
   static const _types = {
     'input': '文字を入力',
+    'directInput': '文字を直接確定',
     'delete': '削除',
+    'smartDeleteDefault': '文節の先頭まで削除',
     'enter': '改行',
     'space': '空白',
+    'replaceDefault': '小書き・濁点・大文字小文字を切替',
     'moveCursor': 'カーソル移動',
     'switchLayout': '言語・配列を変更',
+    'complete': '変換を確定',
+    'completeCharacterForm': '文字種を変換して確定',
     'paste': 'ペースト',
+    'toggleCursorBar': 'カーソルバーを開閉',
     'toggleTabBar': 'タブバーを開閉',
+    'toggleCapsLock': 'Caps Lockを切替',
     'dismiss': 'キーボードを閉じる',
   };
 
@@ -565,9 +668,11 @@ class _ActionEditorState extends State<_ActionEditor> {
   Widget build(BuildContext context) {
     final needsValue = const {
       'input',
+      'directInput',
       'delete',
       'moveCursor',
       'switchLayout',
+      'completeCharacterForm',
     }.contains(_type);
     return AlertDialog(
       title: const Text('アクション'),
@@ -661,6 +766,9 @@ class TabBarEditorPage extends StatelessWidget {
       for (final tab in data.customTabs) {
         if (tab.id == id) return tab.name;
       }
+      for (final custard in data.custards) {
+        if (custard.identifier == id) return custard.displayName;
+      }
       return '不明なカスタムタブ';
     }
     return const {
@@ -679,15 +787,33 @@ String _actionLabel(KeyActionData action) {
   final label =
       const {
         'input': '入力',
+        'directInput': '直接入力',
         'delete': '削除',
+        'smartDeleteDefault': '文節削除',
         'enter': '改行',
         'space': '空白',
+        'replaceDefault': '文字種切替',
         'moveCursor': 'カーソル移動',
         'switchLayout': '配列変更',
+        'complete': '確定',
+        'completeCharacterForm': '文字種確定',
         'paste': 'ペースト',
+        'toggleCursorBar': 'カーソルバー',
         'toggleTabBar': 'タブバー',
+        'toggleCapsLock': 'Caps Lock',
         'dismiss': '閉じる',
       }[action.type] ??
       action.type;
   return action.value.isEmpty ? label : '$label: ${action.value}';
 }
+
+String _targetLabel(String target) =>
+    const {
+      'standalone': '独立キー',
+      'kogana': '小ﾞﾟキー',
+      'kana_symbols': '､｡?!キー',
+      'hira_tab': 'あいうキー',
+      'abc_tab': 'ABCキー',
+      'symbols_tab': '☆123キー',
+    }[target] ??
+    target;

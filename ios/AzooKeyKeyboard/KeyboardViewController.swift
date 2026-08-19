@@ -154,25 +154,27 @@ final class KeyboardViewController: UIInputViewController {
         let rows: [[FlickDefinition]]
         if mode == "english" {
             rows = [
-                [.init(".@", [".", "@", "_", "-", "/"]), .init("ABC", ["a", "b", "c", "A", "B"]), .init("DEF", ["d", "e", "f", "D", "E"]), .action("⌫", "delete")],
-                [.init("GHI", ["g", "h", "i", "G", "H"]), .init("JKL", ["j", "k", "l", "J", "K"]), .init("MNO", ["m", "n", "o", "M", "N"]), .action("space", "space")],
-                [.init("PQRS", ["p", "q", "r", "s", "P"]), .init("TUV", ["t", "u", "v", "T", "U"]), .init("WXYZ", ["w", "x", "y", "z", "W"]), .action("return", "enter")],
-                [.action("☆123", "symbols"), .action("あいう", "japanese"), .init("'\"", ["'", "\"", ":", ";", "!"]), .action("🌐", "nextKeyboard")],
+                [.action("☆123", "symbols", target: "symbols_tab"), .init("@#/&_", ["@", "#", "/", "&", "_"]), .init("ABC", ["a", "b", "c", "2", ""]), .init("DEF", ["d", "e", "f", "3", ""]), .action("⌫", "delete")],
+                [.action("ABC", "english", target: "abc_tab"), .init("GHI", ["g", "h", "i", "4", ""]), .init("JKL", ["j", "k", "l", "5", ""]), .init("MNO", ["m", "n", "o", "6", ""]), .action("空白", "space")],
+                [.action("あいう", "japanese", target: "hira_tab"), .init("PQRS", ["p", "q", "r", "s", "7"]), .init("TUV", ["t", "u", "v", "8", ""]), .init("WXYZ", ["w", "x", "y", "z", "9"]), .action("改行", "enter")],
+                [.action("🌐", "nextKeyboard"), .action("a/A", "shiftEnglish"), .init("'\"()", ["'", "\"", "(", ")", ""]), .init(".,?!", [".", ",", "?", "!", "'"], target: "kana_symbols"), .action("改行", "enter")],
             ]
         } else {
             rows = [
-                [.init("あ", ["あ", "い", "う", "え", "お"]), .init("か", ["か", "き", "く", "け", "こ"]), .init("さ", ["さ", "し", "す", "せ", "そ"]), .action("⌫", "delete")],
-                [.init("た", ["た", "ち", "つ", "て", "と"]), .init("な", ["な", "に", "ぬ", "ね", "の"]), .init("は", ["は", "ひ", "ふ", "へ", "ほ"]), .action("空白", "space")],
-                [.init("ま", ["ま", "み", "む", "め", "も"]), .init("や", ["や", "「", "ゆ", "」", "よ"]), .init("ら", ["ら", "り", "る", "れ", "ろ"]), .action("改行", "enter")],
-                [.action("☆123", "symbols"), .action("小ﾞﾟ", "kogana"), .init("わ", ["わ", "を", "ん", "ー", "〜"]), .action("🌐", "nextKeyboard")],
+                [.action("☆123", "symbols", target: "symbols_tab"), .init("あ", ["あ", "い", "う", "え", "お"]), .init("か", ["か", "き", "く", "け", "こ"]), .init("さ", ["さ", "し", "す", "せ", "そ"]), .action("⌫", "delete")],
+                [.action("ABC", "english", target: "abc_tab"), .init("た", ["た", "ち", "つ", "て", "と"]), .init("な", ["な", "に", "ぬ", "ね", "の"]), .init("は", ["は", "ひ", "ふ", "へ", "ほ"]), .action("空白", "space")],
+                [.action("あいう", "japanese", target: "hira_tab"), .init("ま", ["ま", "み", "む", "め", "も"]), .init("や", ["や", "「", "ゆ", "」", "よ"]), .init("ら", ["ら", "り", "る", "れ", "ろ"]), .action("改行", "enter")],
+                [.action("🌐", "nextKeyboard"), .action("小ﾞﾟ", "kogana", target: "kogana"), .init("わ", ["わ", "を", "ん", "ー", "〜"]), .init("､｡?!", ["、", "。", "？", "！", ""], target: "kana_symbols"), .action("改行", "enter")],
             ]
         }
         for definitions in rows {
             let row = makeRow()
             for definition in definitions {
-                let button = FlickButton(definition: definition, sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))) { [weak self] value in
-                    self?.handleFlickValue(value, definition: definition)
+                if let target = definition.customTarget, let custom = customKeyForTarget(target) {
+                    row.addArrangedSubview(makeCustomButton(custom))
+                    continue
                 }
+                let button = FlickButton(definition: definition, sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))) { [weak self] value in self?.handleFlickValue(value, definition: definition) }
                 style(button, special: definition.action != nil)
                 row.addArrangedSubview(button)
             }
@@ -229,6 +231,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderCustomTab(_ id: String) {
+        if renderCustard(id) { return }
         guard let tabs = state["customTabs"] as? [[String: Any]],
               let tab = tabs.first(where: { $0["id"] as? String == id }),
               let keys = tab["keys"] as? [[String: Any]] else {
@@ -251,8 +254,171 @@ final class KeyboardViewController: UIInputViewController {
         keyboardStack.addArrangedSubview(bottom)
     }
 
+    @discardableResult
+    private func renderCustard(_ id: String) -> Bool {
+        guard let custards = state["custards"] as? [[String: Any]],
+              let custard = custards.first(where: { $0["identifier"] as? String == id }),
+              let interface = custard["interface"] as? [String: Any],
+              let layout = interface["key_layout"] as? [String: Any],
+              let elements = interface["keys"] as? [[String: Any]] else {
+            return false
+        }
+        let keyStyle = interface["key_style"] as? String ?? "tenkey_style"
+        let layoutType = layout["type"] as? String ?? "grid_fit"
+        let rowCount = (layout["row_count"] as? NSNumber)?.doubleValue ?? 4
+        let columnCount = (layout["column_count"] as? NSNumber)?.doubleValue ?? 5
+        let custardView: CustardLayoutView
+        if layoutType == "grid_scroll" {
+            let sorted = elements
+                .filter { $0["specifier_type"] as? String == "grid_scroll" }
+                .sorted {
+                    let lhs = (($0["specifier"] as? [String: Any])?["index"] as? NSNumber)?.intValue ?? .max
+                    let rhs = (($1["specifier"] as? [String: Any])?["index"] as? NSNumber)?.intValue ?? .max
+                    return lhs < rhs
+                }
+            custardView = CustardLayoutView(
+                scrollDirection: layout["direction"] as? String ?? "vertical",
+                crossCount: max(1, Int(rowCount)),
+                visibleCount: max(1, CGFloat(columnCount))
+            )
+            for element in sorted {
+                custardView.append(makeCustardKey(element, keyStyle: keyStyle, variationsEnabled: false))
+            }
+        } else {
+            let across = max(1, Int(rowCount))
+            let down = max(1, Int(columnCount))
+            custardView = CustardLayoutView(columns: across, rows: down)
+            for element in elements where element["specifier_type"] as? String == "grid_fit" {
+                guard let specifier = element["specifier"] as? [String: Any] else { continue }
+                let x = min(max(0, CGFloat((specifier["x"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(across) - 0.01)
+                let y = min(max(0, CGFloat((specifier["y"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(down) - 0.01)
+                let width = min(max(0.01, CGFloat((specifier["width"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(across) - x)
+                let height = min(max(0.01, CGFloat((specifier["height"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(down) - y)
+                custardView.append(
+                    makeCustardKey(element, keyStyle: keyStyle),
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height
+                )
+            }
+        }
+        keyboardStack.addArrangedSubview(custardView)
+        return true
+    }
+
+    private func makeCustardKey(
+        _ element: [String: Any],
+        keyStyle: String,
+        variationsEnabled: Bool = true
+    ) -> UIButton {
+        let key = element["key"] as? [String: Any] ?? [:]
+        if element["key_type"] as? String == "system" {
+            return makeCustardSystemKey(key["type"] as? String ?? "")
+        }
+        let design = key["design"] as? [String: Any] ?? [:]
+        let button = CustardButton(
+            title: custardLabel(design["label"] as? [String: Any]),
+            key: key,
+            keyStyle: keyStyle,
+            variationsEnabled: variationsEnabled,
+            sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
+        ) { [weak self] actions in
+            self?.dispatch(actions)
+            self?.feedback()
+        }
+        let color = design["color"] as? String ?? "normal"
+        style(button, special: color == "special" || color == "unimportant")
+        if color == "selected" { button.backgroundColor = palette.accent }
+        return button
+    }
+
+    private func makeCustardSystemKey(_ type: String) -> UIButton {
+        let target: String? = switch type {
+        case "flick_kogaki": "kogana"
+        case "flick_kutoten": "kana_symbols"
+        case "flick_hira_tab": "hira_tab"
+        case "flick_abc_tab": "abc_tab"
+        case "flick_star123_tab": "symbols_tab"
+        default: nil
+        }
+        if let target, let custom = customKeyForTarget(target) {
+            return makeCustomButton(custom)
+        }
+        switch type {
+        case "change_keyboard": return makeButton("🌐", special: true) { [weak self] in self?.advanceToNextInputMode() }
+        case "qwerty_language_switch": return makeButton("あA", special: true) { [weak self] in
+            guard let self else { return }
+            setMode(mode == "japanese" ? "english" : "japanese")
+        }
+        case "qwerty_shift": return makeButton(capsLock ? "⇪" : "⇧", special: true, action: toggleShift)
+        case "qwerty_dynamic_change": return makeButton("☆123", special: true) { [weak self] in
+            guard let self else { return }
+            setMode(mode == "symbols" ? "english" : "symbols")
+        }
+        case "qwerty_space": return makeButton(composing.isEmpty ? "空白" : "次候補", action: selectNextCandidate)
+        case "enter": return makeButton("改行", special: true, action: enter)
+        case "upper_lower": return makeButton("Aa", special: true) { [weak self] in
+            guard let self else { return }
+            mode == "english" ? toggleShift() : transformLastCharacter()
+        }
+        case "next_candidate": return makeButton(composing.isEmpty ? "空白" : "次候補", special: true) { [weak self] in self?.selectNextCandidate() }
+        case "flick_kogaki": return makeButton("小ﾞﾟ", special: true, action: transformLastCharacter)
+        case "flick_kutoten":
+            let definition = FlickDefinition("､｡?!", ["、", "。", "？", "！", ""])
+            let button = FlickButton(definition: definition, sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))) { [weak self] value in self?.input(value) }
+            style(button, special: true)
+            return button
+        case "flick_hira_tab": return makeButton("あいう", special: true) { [weak self] in self?.setMode("japanese") }
+        case "flick_abc_tab": return makeButton("ABC", special: true) { [weak self] in self?.setMode("english") }
+        case "flick_star123_tab": return makeButton("☆123", special: true) { [weak self] in self?.setMode("symbols") }
+        default: return makeButton("", special: true) {}
+        }
+    }
+
+    private func selectNextCandidate() {
+        if candidates.isEmpty {
+            space()
+            return
+        }
+        let current = candidates.firstIndex(of: lastDisplayed) ?? -1
+        let next = (current + 1) % candidates.count
+        replaceDisplayed(with: candidates[next], commit: false)
+        renderCandidates(showTabs: false)
+    }
+
+    private func custardLabel(_ label: [String: Any]?) -> String {
+        guard let label else { return "" }
+        if let text = label["text"] as? String { return text }
+        if let image = label["system_image"] as? String { return systemImageLabel(image) }
+        switch label["type"] as? String {
+        case "main_and_sub":
+            return "\(label["main"] as? String ?? "")\n\(label["sub"] as? String ?? "")"
+        case "main_and_directions": return label["main"] as? String ?? ""
+        case "system_image": return systemImageLabel(label["system_image"] as? String ?? "")
+        default: return label["text"] as? String ?? ""
+        }
+    }
+
+    private func systemImageLabel(_ name: String) -> String {
+        switch name {
+        case "delete.left": return "⌫"
+        case "xmark": return "×"
+        case "globe": return "🌐"
+        case "return", "return.left": return "↵"
+        case "space": return "空白"
+        case "list.bullet": return "☰"
+        case "arrow.left", "chevron.left": return "←"
+        case "arrow.right", "chevron.right": return "→"
+        case "shift", "shift.fill": return "⇧"
+        default: return name
+        }
+    }
+
     private func renderStandaloneCustomKeys() {
-        let keys = Array((state["customKeys"] as? [[String: Any]] ?? []).prefix(8))
+        let keys = Array((state["customKeys"] as? [[String: Any]] ?? [])
+            .filter { ($0["target"] as? String ?? "standalone") == "standalone" }
+            .prefix(8))
         guard !keys.isEmpty else { return }
         for start in stride(from: 0, to: keys.count, by: 4) {
             let row = makeRow()
@@ -260,6 +426,12 @@ final class KeyboardViewController: UIInputViewController {
                 row.addArrangedSubview(makeCustomButton(key))
             }
             keyboardStack.addArrangedSubview(row)
+        }
+    }
+
+    private func customKeyForTarget(_ target: String) -> [String: Any]? {
+        (state["customKeys"] as? [[String: Any]])?.first {
+            ($0["target"] as? String ?? "standalone") == target
         }
     }
 
@@ -458,7 +630,9 @@ final class KeyboardViewController: UIInputViewController {
         case "enter": enter()
         case "symbols": setMode("symbols")
         case "japanese": setMode("japanese")
+        case "english": setMode("english")
         case "kogana": transformLastCharacter()
+        case "shiftEnglish": toggleShift()
         case "nextKeyboard": advanceToNextInputMode()
         default: break
         }
@@ -477,19 +651,230 @@ final class KeyboardViewController: UIInputViewController {
         let type = action["type"] as? String ?? "input"
         let value = action["value"] as? String ?? ""
         switch type {
-        case "input": directCommit(value)
+        case "input":
+            if let text = action["text"] as? String { custardInput(text) } else { directCommit(value) }
+        case "directInput": directCommit(value)
+        case "direct_input": directCommit(action["text"] as? String ?? "")
         case "delete":
-            for _ in 0 ..< (Int(value) ?? 1).clamped(to: 1 ... 100) { delete() }
+            let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
+            for _ in 0 ..< count.clamped(to: 1 ... 100) { delete() }
         case "enter": enter()
         case "space": space()
         case "moveCursor": textDocumentProxy.adjustTextPosition(byCharacterOffset: Int(value) ?? 0)
+        case "move_cursor": textDocumentProxy.adjustTextPosition(byCharacterOffset: (action["count"] as? NSNumber)?.intValue ?? 0)
         case "switchLayout": setMode(value == "english" ? "english" : "japanese")
-        case "paste":
+        case "paste", "__paste":
             if hasFullAccess, let value = UIPasteboard.general.string { directCommit(value) }
-        case "toggleTabBar": renderCandidates(showTabs: true)
-        case "dismiss": dismissKeyboard()
+        case "replace_default": replaceDefault()
+        case "replaceDefault": replaceDefault()
+        case "replace_last_characters": replaceLastCharacters(action["table"] as? [String: String])
+        case "smart_delete_default": smartDeleteDefault()
+        case "smartDeleteDefault": smartDeleteDefault()
+        case "smart_delete": smartDelete(action)
+        case "select_candidate": selectCandidate(action["selection"] as? [String: Any])
+        case "complete_character_form": completeCharacterForm(action["forms"] as? [String])
+        case "completeCharacterForm": completeCharacterForm([value])
+        case "complete": commitComposition()
+        case "smart_move_cursor": smartMoveCursor(action)
+        case "move_tab": moveTab(action)
+        case "enable_resizing_mode": renderCandidates(showTabs: true)
+        case "toggle_cursor_bar", "toggleTabBar", "toggle_tab_bar": renderCandidates(showTabs: true)
+        case "toggleCursorBar": renderCandidates(showTabs: true)
+        case "toggle_caps_lock_state":
+            capsLock.toggle()
+            shift = capsLock
+            renderKeyboard()
+        case "toggleCapsLock":
+            capsLock.toggle()
+            shift = capsLock
+            renderKeyboard()
+        case "dismiss", "dismiss_keyboard": dismissKeyboard()
+        case "launch_application": launchApplication(action)
         default: break
         }
+    }
+
+    private func dispatch(_ actions: [[String: Any]]) {
+        for action in actions { dispatch(action) }
+    }
+
+    private func activeCustard() -> [String: Any]? {
+        guard let id = activeCustomTab else { return nil }
+        return (state["custards"] as? [[String: Any]])?.first { $0["identifier"] as? String == id }
+    }
+
+    private func custardInput(_ value: String) {
+        guard !value.isEmpty else { return }
+        let custard = activeCustard()
+        let language = custard?["language"] as? String ?? "undefined"
+        let inputStyle = custard?["input_style"] as? String ?? "direct"
+        guard language == "ja_JP" else {
+            directCommit(value)
+            return
+        }
+        mode = "japanese"
+        if inputStyle == "roman2kana" {
+            layout = "qwerty"
+            rawRoman += value.lowercased()
+            composing = romanToHiragana(rawRoman)
+        } else {
+            layout = "flick"
+            composing += value
+        }
+        updateComposition()
+    }
+
+    private func replaceDefault() {
+        if !composing.isEmpty {
+            transformLastCharacter()
+            return
+        }
+        guard let last = textDocumentProxy.documentContextBeforeInput?.last,
+              let replacement = smallKana[String(last)] else { return }
+        textDocumentProxy.deleteBackward()
+        textDocumentProxy.insertText(replacement)
+    }
+
+    private func replaceLastCharacters(_ table: [String: String]?) {
+        guard let table else { return }
+        let source = composing.isEmpty ? (textDocumentProxy.documentContextBeforeInput ?? "") : composing
+        guard let match = table.keys.filter(source.hasSuffix).max(by: { $0.count < $1.count }),
+              let replacement = table[match] else { return }
+        if composing.isEmpty {
+            for _ in match { textDocumentProxy.deleteBackward() }
+            textDocumentProxy.insertText(replacement)
+        } else {
+            composing.removeLast(match.count)
+            composing += replacement
+            updateComposition()
+        }
+    }
+
+    private func actionTargets(_ action: [String: Any]) -> [String] {
+        action["targets"] as? [String] ?? Self.defaultScanTargets
+    }
+
+    private func smartDeleteDefault() {
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            replaceDisplayed(with: "", commit: true)
+            resetComposition()
+            renderCandidates()
+            return
+        }
+        smartDelete(["direction": "backward", "targets": Self.defaultScanTargets])
+    }
+
+    private func smartDelete(_ action: [String: Any]) {
+        let targets = actionTargets(action)
+        if action["direction"] as? String == "backward" {
+            let text = textDocumentProxy.documentContextBeforeInput ?? ""
+            let boundaries = targets.compactMap { target -> String.Index? in
+                text.range(of: target, options: .backwards)?.upperBound
+            }
+            let boundary = boundaries.max() ?? text.startIndex
+            for _ in text[boundary...] { textDocumentProxy.deleteBackward() }
+        } else {
+            let text = textDocumentProxy.documentContextAfterInput ?? ""
+            let distances = targets.compactMap { target -> Int? in
+                guard let range = text.range(of: target) else { return nil }
+                return text.distance(from: text.startIndex, to: range.lowerBound)
+            }
+            let count = distances.min() ?? text.count
+            textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
+            for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+        }
+    }
+
+    private func smartMoveCursor(_ action: [String: Any]) {
+        let targets = actionTargets(action)
+        let backward = action["direction"] as? String == "backward"
+        let text = backward
+            ? (textDocumentProxy.documentContextBeforeInput ?? "")
+            : (textDocumentProxy.documentContextAfterInput ?? "")
+        let distance: Int
+        if backward {
+            let boundaries = targets.compactMap { target -> String.Index? in
+                text.range(of: target, options: .backwards)?.upperBound
+            }
+            let boundary = boundaries.max() ?? text.startIndex
+            distance = -text.distance(from: boundary, to: text.endIndex)
+        } else {
+            let distances = targets.compactMap { target -> Int? in
+                guard let range = text.range(of: target) else { return nil }
+                return text.distance(from: text.startIndex, to: range.lowerBound)
+            }
+            distance = distances.min() ?? text.count
+        }
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: distance)
+    }
+
+    private func selectCandidate(_ selection: [String: Any]?) {
+        guard !candidates.isEmpty else { return }
+        let current = candidates.firstIndex(of: lastDisplayed) ?? 0
+        let index: Int
+        switch selection?["type"] as? String {
+        case "last": index = candidates.count - 1
+        case "offset": index = current + ((selection?["value"] as? NSNumber)?.intValue ?? 0)
+        case "exact": index = (selection?["value"] as? NSNumber)?.intValue ?? 0
+        default: index = 0
+        }
+        replaceDisplayed(with: candidates[index.clamped(to: 0 ... candidates.count - 1)], commit: false)
+        renderCandidates(showTabs: false)
+    }
+
+    private func completeCharacterForm(_ forms: [String]?) {
+        guard !composing.isEmpty else { return }
+        let converted: String
+        switch forms?.first {
+        case "hiragana": converted = katakanaToHiragana(composing)
+        case "katakana": converted = hiraganaToKatakana(composing)
+        case "halfwidth_katakana": converted = hiraganaToKatakana(composing).applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? composing
+        case "uppercase": converted = composing.uppercased()
+        case "lowercase": converted = composing.lowercased()
+        default: converted = composing
+        }
+        replaceDisplayed(with: converted, commit: true)
+        resetComposition()
+        renderCandidates()
+    }
+
+    private func moveTab(_ action: [String: Any]) {
+        if action["tab_type"] as? String == "custom" {
+            commitComposition()
+            activeCustomTab = action["identifier"] as? String
+            renderCandidates()
+            renderKeyboard()
+            return
+        }
+        switch action["identifier"] as? String {
+        case "user_japanese": setMode("japanese")
+        case "user_english": setMode("english")
+        case "flick_japanese": setForcedLayout(mode: "japanese", layout: "flick")
+        case "flick_english": setForcedLayout(mode: "english", layout: "flick")
+        case "qwerty_japanese": setForcedLayout(mode: "japanese", layout: "qwerty")
+        case "qwerty_english": setForcedLayout(mode: "english", layout: "qwerty")
+        case "flick_numbersymbols", "qwerty_numbers", "qwerty_symbols": setMode("symbols")
+        case "clipboard_history_tab": showClipboardHistory()
+        case "emoji_tab": showEmoji()
+        case "last_tab": setMode("japanese")
+        default: break
+        }
+    }
+
+    private func setForcedLayout(mode: String, layout: String) {
+        commitComposition()
+        self.mode = mode
+        self.layout = layout
+        activeCustomTab = nil
+        renderCandidates()
+        renderKeyboard()
+    }
+
+    private func launchApplication(_ action: [String: Any]) {
+        let target = action["target"] as? String ?? ""
+        let value = target.contains("://") ? target : "shortcuts://run-shortcut?name=\(target.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? target)"
+        guard let url = URL(string: value) else { return }
+        extensionContext?.open(url)
     }
 
     private func buildCandidates() -> [String] {
@@ -705,7 +1090,12 @@ final class KeyboardViewController: UIInputViewController {
 
     private func customTabName(_ id: String) -> String {
         let tabs = state["customTabs"] as? [[String: Any]] ?? []
-        return tabs.first(where: { $0["id"] as? String == id })?["name"] as? String ?? "タブ"
+        if let name = tabs.first(where: { $0["id"] as? String == id })?["name"] as? String {
+            return name
+        }
+        let custards = state["custards"] as? [[String: Any]] ?? []
+        let custard = custards.first(where: { $0["identifier"] as? String == id })
+        return (custard?["metadata"] as? [String: Any])?["display_name"] as? String ?? "タブ"
     }
 
     private func renderTemplate(_ template: String) -> String {
@@ -808,6 +1198,7 @@ final class KeyboardViewController: UIInputViewController {
     ]
     private static let emojiDictionary = ["えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"]]
     private static let kaomojiDictionary = ["えがお": ["( ´ ▽ ` )", "(^_^)"], "かなしい": ["( ; _ ; )", "(´；ω；`)"]]
+    private static let defaultScanTargets = ["、", "。", "！", "？", ".", ",", "．", "，", "\n"]
     private static func isReportableInput(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
         case 0x3041 ... 0x3096, 0x30 ... 0x39, 0x41 ... 0x5a, 0x61 ... 0x7a: true
@@ -843,21 +1234,24 @@ private struct FlickDefinition {
     let label: String
     let values: [String]
     let action: String?
+    let customTarget: String?
 
-    init(_ label: String, _ values: [String]) {
+    init(_ label: String, _ values: [String], target: String? = nil) {
         self.label = label
         self.values = values
         self.action = nil
+        self.customTarget = target
     }
 
-    static func action(_ label: String, _ action: String) -> Self {
-        Self(label: label, values: [label], action: action)
+    static func action(_ label: String, _ action: String, target: String? = nil) -> Self {
+        Self(label: label, values: [label], action: action, customTarget: target)
     }
 
-    private init(label: String, values: [String], action: String?) {
+    private init(label: String, values: [String], action: String?, customTarget: String?) {
         self.label = label
         self.values = values
         self.action = action
+        self.customTarget = customTarget
     }
 }
 
@@ -906,6 +1300,7 @@ private final class CustomFlickButton: UIButton {
     private let callback: ([String: Any]?) -> Void
     private var start = CGPoint.zero
     private var longPressWorkItem: DispatchWorkItem?
+    private var repeatTimer: Timer?
     private var didLongPress = false
 
     init(
@@ -927,9 +1322,18 @@ private final class CustomFlickButton: UIButton {
         start = touches.first?.location(in: self) ?? .zero
         didLongPress = false
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let action = key["longPress"] as? [String: Any] else { return }
+            guard let self else { return }
+            let action = key["longPress"] as? [String: Any]
+            let repeated = key["longPressRepeat"] as? [String: Any]
+            guard action != nil || repeated != nil else { return }
             didLongPress = true
             callback(action)
+            if let repeated {
+                repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
+                    self?.callback(repeated)
+                }
+                repeatTimer?.fire()
+            }
         }
         longPressWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
@@ -938,6 +1342,8 @@ private final class CustomFlickButton: UIButton {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
         longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
         guard !didLongPress else { return }
         let end = touches.first?.location(in: self) ?? start
         let dx = end.x - start.x
@@ -956,7 +1362,246 @@ private final class CustomFlickButton: UIButton {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
         super.touchesCancelled(touches, with: event)
+    }
+}
+
+private final class CustardLayoutView: UIView {
+    private struct Item {
+        let view: UIView
+        let x: CGFloat
+        let y: CGFloat
+        let width: CGFloat
+        let height: CGFloat
+    }
+
+    private let columns: Int
+    private let rows: Int
+    private let scrollDirection: String?
+    private let crossCount: Int
+    private let visibleCount: CGFloat
+    private var items: [Item] = []
+    private let scrollView = UIScrollView()
+    private let contentView = UIView()
+
+    init(columns: Int, rows: Int) {
+        self.columns = max(1, columns)
+        self.rows = max(1, rows)
+        self.scrollDirection = nil
+        self.crossCount = 1
+        self.visibleCount = 1
+        super.init(frame: .zero)
+    }
+
+    init(scrollDirection: String, crossCount: Int, visibleCount: CGFloat) {
+        self.columns = 1
+        self.rows = 1
+        self.scrollDirection = scrollDirection
+        self.crossCount = max(1, crossCount)
+        self.visibleCount = max(1, visibleCount)
+        super.init(frame: .zero)
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        addSubview(scrollView)
+        scrollView.addSubview(contentView)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func append(_ view: UIView, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) {
+        items.append(.init(view: view, x: x, y: y, width: width, height: height))
+        addSubview(view)
+    }
+
+    func append(_ view: UIView) {
+        items.append(.init(view: view, x: 0, y: 0, width: 1, height: 1))
+        contentView.addSubview(view)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let gap: CGFloat = 2
+        guard let scrollDirection else {
+            let cellWidth = bounds.width / CGFloat(columns)
+            let cellHeight = bounds.height / CGFloat(rows)
+            for item in items {
+                item.view.frame = CGRect(
+                    x: item.x * cellWidth + gap,
+                    y: item.y * cellHeight + gap,
+                    width: item.width * cellWidth - gap * 2,
+                    height: item.height * cellHeight - gap * 2
+                )
+            }
+            return
+        }
+
+        scrollView.frame = bounds
+        if scrollDirection == "horizontal" {
+            let cellHeight = bounds.height / CGFloat(crossCount)
+            let cellWidth = bounds.width / visibleCount
+            let columnCount = Int(ceil(Double(items.count) / Double(crossCount)))
+            contentView.frame = CGRect(x: 0, y: 0, width: cellWidth * CGFloat(columnCount), height: bounds.height)
+            for (index, item) in items.enumerated() {
+                let column = index / crossCount
+                let row = index % crossCount
+                item.view.frame = CGRect(
+                    x: CGFloat(column) * cellWidth + gap,
+                    y: CGFloat(row) * cellHeight + gap,
+                    width: cellWidth - gap * 2,
+                    height: cellHeight - gap * 2
+                )
+            }
+        } else {
+            let cellWidth = bounds.width / CGFloat(crossCount)
+            let cellHeight = bounds.height / visibleCount
+            let rowCount = Int(ceil(Double(items.count) / Double(crossCount)))
+            contentView.frame = CGRect(x: 0, y: 0, width: bounds.width, height: cellHeight * CGFloat(rowCount))
+            for (index, item) in items.enumerated() {
+                let column = index % crossCount
+                let row = index / crossCount
+                item.view.frame = CGRect(
+                    x: CGFloat(column) * cellWidth + gap,
+                    y: CGFloat(row) * cellHeight + gap,
+                    width: cellWidth - gap * 2,
+                    height: cellHeight - gap * 2
+                )
+            }
+        }
+        scrollView.contentSize = contentView.bounds.size
+    }
+}
+
+private final class CustardButton: UIButton {
+    private let key: [String: Any]
+    private let keyStyle: String
+    private let variationsEnabled: Bool
+    private let sensitivity: CGFloat
+    private let callback: ([[String: Any]]) -> Void
+    private var start = CGPoint.zero
+    private var current = CGPoint.zero
+    private var longPressWorkItem: DispatchWorkItem?
+    private var repeatTimer: Timer?
+    private var didLongPress = false
+    private var repeatedLongPress = false
+
+    init(
+        title: String,
+        key: [String: Any],
+        keyStyle: String,
+        variationsEnabled: Bool,
+        sensitivity: CGFloat,
+        callback: @escaping ([[String: Any]]) -> Void
+    ) {
+        self.key = key
+        self.keyStyle = keyStyle
+        self.variationsEnabled = variationsEnabled
+        self.sensitivity = sensitivity
+        self.callback = callback
+        super.init(frame: .zero)
+        setTitle(title, for: .normal)
+        titleLabel?.numberOfLines = 2
+        titleLabel?.textAlignment = .center
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        start = touches.first?.location(in: self) ?? .zero
+        current = start
+        didLongPress = false
+        repeatedLongPress = false
+        let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
+        let startActions = longPress["start"] as? [[String: Any]] ?? []
+        let repeated = longPress["repeat"] as? [[String: Any]] ?? []
+        let handlesPCVariation = variationsEnabled && keyStyle == "pc_style" && !variations(type: "longpress_variation").isEmpty
+        let handlesFlickLongPress = variationsEnabled && variations(type: "flick_variation").contains { variation in
+            guard let variationKey = variation["key"] as? [String: Any],
+                  let actions = variationKey["longpress_actions"] as? [String: Any] else { return false }
+            return !(actions["start"] as? [[String: Any]] ?? []).isEmpty ||
+                !(actions["repeat"] as? [[String: Any]] ?? []).isEmpty
+        }
+        guard !startActions.isEmpty || !repeated.isEmpty || handlesPCVariation || handlesFlickLongPress else { return }
+        let delay = longPress["duration"] as? String == "light" ? 0.3 : 0.5
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let selected = selectedGestureKey(at: current)
+            let selectedLongPress = selected["longpress_actions"] as? [String: Any] ?? [:]
+            let selectedStart = selectedLongPress["start"] as? [[String: Any]] ?? []
+            let selectedRepeat = selectedLongPress["repeat"] as? [[String: Any]] ?? []
+            guard !selectedStart.isEmpty || !selectedRepeat.isEmpty || handlesPCVariation else { return }
+            didLongPress = true
+            repeatedLongPress = !selectedRepeat.isEmpty
+            callback(selectedStart)
+            if !selectedRepeat.isEmpty {
+                repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
+                    self?.callback(selectedRepeat)
+                }
+                repeatTimer?.fire()
+            }
+        }
+        longPressWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        current = touches.first?.location(in: self) ?? current
+        super.touchesMoved(touches, with: event)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        let end = touches.first?.location(in: self) ?? start
+        current = end
+        if didLongPress {
+            if variationsEnabled, keyStyle == "pc_style", !repeatedLongPress {
+                let variations = variations(type: "longpress_variation")
+                if !variations.isEmpty {
+                    let index = Int((end.x / max(1, bounds.width)) * CGFloat(variations.count))
+                    let selected = variations[min(max(0, index), variations.count - 1)]
+                    let variationKey = selected["key"] as? [String: Any]
+                    callback(variationKey?["press_actions"] as? [[String: Any]] ?? [])
+                }
+            }
+            return
+        }
+        let selected = selectedGestureKey(at: end)
+        callback(selected["press_actions"] as? [[String: Any]] ?? [])
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        super.touchesCancelled(touches, with: event)
+    }
+
+    private func variations(type: String) -> [[String: Any]] {
+        (key["variations"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == type }
+    }
+
+    private func selectedGestureKey(at point: CGPoint) -> [String: Any] {
+        guard variationsEnabled, keyStyle != "pc_style" else { return key }
+        let dx = point.x - start.x
+        let dy = point.y - start.y
+        let threshold = 20 * sensitivity
+        let direction: String?
+        if abs(dx) < threshold, abs(dy) < threshold {
+            direction = nil
+        } else if abs(dx) > abs(dy) {
+            direction = dx < 0 ? "left" : "right"
+        } else {
+            direction = dy < 0 ? "top" : "bottom"
+        }
+        guard let direction,
+              let variation = variations(type: "flick_variation").first(where: { $0["direction"] as? String == direction }),
+              let variationKey = variation["key"] as? [String: Any] else { return key }
+        return variationKey
     }
 }
 
@@ -1037,6 +1682,15 @@ private func romanToHiragana(_ input: String) -> String {
 private func hiraganaToKatakana(_ value: String) -> String {
     String(value.unicodeScalars.map { scalar in
         if (0x3041 ... 0x3096).contains(scalar.value), let converted = UnicodeScalar(scalar.value + 0x60) {
+            return Character(converted)
+        }
+        return Character(scalar)
+    })
+}
+
+private func katakanaToHiragana(_ value: String) -> String {
+    String(value.unicodeScalars.map { scalar in
+        if (0x30a1 ... 0x30f6).contains(scalar.value), let converted = UnicodeScalar(scalar.value - 0x60) {
             return Character(converted)
         }
         return Character(scalar)

@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-const int currentSchemaVersion = 1;
+import 'custard.dart';
+
+const int currentSchemaVersion = 2;
 
 const Map<String, dynamic> defaultKeyboardSettings = {
   'keyboard_type': 'flick',
@@ -210,22 +212,26 @@ class CustomKeyData {
     required this.name,
     required this.label,
     required this.tap,
+    this.target = 'standalone',
     this.left,
     this.up,
     this.right,
     this.down,
     this.longPress,
+    this.longPressRepeat,
   });
 
   final String id;
   final String name;
   final String label;
+  final String target;
   final KeyActionData tap;
   final KeyActionData? left;
   final KeyActionData? up;
   final KeyActionData? right;
   final KeyActionData? down;
   final KeyActionData? longPress;
+  final KeyActionData? longPressRepeat;
 
   factory CustomKeyData.fromJson(Map<String, dynamic> json) {
     KeyActionData? action(String key) {
@@ -239,12 +245,14 @@ class CustomKeyData {
       id: json['id'] as String? ?? 'key',
       name: json['name'] as String? ?? 'カスタムキー',
       label: json['label'] as String? ?? '',
+      target: json['target'] as String? ?? 'standalone',
       tap: action('tap') ?? const KeyActionData(type: 'input'),
       left: action('left'),
       up: action('up'),
       right: action('right'),
       down: action('down'),
       longPress: action('longPress'),
+      longPressRepeat: action('longPressRepeat'),
     );
   }
 
@@ -252,12 +260,14 @@ class CustomKeyData {
     'id': id,
     'name': name,
     'label': label,
+    'target': target,
     'tap': tap.toJson(),
     'left': left?.toJson(),
     'up': up?.toJson(),
     'right': right?.toJson(),
     'down': down?.toJson(),
     'longPress': longPress?.toJson(),
+    'longPressRepeat': longPressRepeat?.toJson(),
   };
 }
 
@@ -347,6 +357,7 @@ class AppData {
     required this.lightThemeId,
     required this.darkThemeId,
     required this.customTabs,
+    required this.custards,
     required this.customKeys,
     required this.tabBar,
     required this.clipboardHistory,
@@ -361,6 +372,7 @@ class AppData {
   String lightThemeId;
   String darkThemeId;
   final List<CustomTabData> customTabs;
+  final List<AzooKeyCustard> custards;
   final List<CustomKeyData> customKeys;
   final List<String> tabBar;
   final List<String> clipboardHistory;
@@ -412,6 +424,7 @@ class AppData {
       lightThemeId: 'classic',
       darkThemeId: 'midnight',
       customTabs: [],
+      custards: [],
       customKeys: [],
       tabBar: ['dismiss', 'resize', 'emoji', 'japanese', 'english'],
       clipboardHistory: [],
@@ -456,6 +469,7 @@ class AppData {
       lightThemeId: json['lightThemeId'] as String? ?? defaults.lightThemeId,
       darkThemeId: json['darkThemeId'] as String? ?? defaults.darkThemeId,
       customTabs: decodeList('customTabs', CustomTabData.fromJson),
+      custards: decodeList('custards', AzooKeyCustard.fromJson),
       customKeys: decodeList('customKeys', CustomKeyData.fromJson),
       tabBar: rawTabBar is List
           ? rawTabBar.whereType<String>().toList()
@@ -495,6 +509,7 @@ class AppData {
     'lightThemeId': lightThemeId,
     'darkThemeId': darkThemeId,
     'customTabs': customTabs.map((value) => value.toJson()).toList(),
+    'custards': custards.map((value) => value.toJson()).toList(),
     'customKeys': customKeys.map((value) => value.toJson()).toList(),
     'tabBar': tabBar,
     'clipboardHistory': clipboardHistory,

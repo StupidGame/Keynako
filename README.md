@@ -8,9 +8,10 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 
 - フリック入力、ローマ字入力、英語・数字・記号・絵文字・顔文字入力
 - 変換候補、ライブ変換、学習、ユーザー辞書、テンプレート
-- ライト／ダークテーマ、配色編集、カスタムキー、カスタムタブ
+- ライト／ダークテーマ、配色編集、azooKey互換カスタムキー、Custardカスタムタブ
 - 片手モード、カーソル移動、クリップボード履歴、音・触覚設定
 - 設定のJSONバックアップ／復元、連絡先からの辞書登録
+- URL（custard.azookey.com、GitHub、Gist、直接JSON）からのCustard 1.0〜1.2インポート
 - 元のazooKeyと同じGoogle Forms送信先を使う変換報告・単語共有
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
 
@@ -65,6 +66,12 @@ flutter run
 iOS 17以上を対象にしています。macOSで`ios/Runner.xcworkspace`をXcodeから開き、RunnerとAzooKeyKeyboardの両ターゲットに同じDevelopment Teamを設定してください。両ターゲットでApp Groupを有効にし、環境に合わせてbundle identifierと`group.com.azooKey.keyboard`をプロビジョニングします。その後Runnerをビルドし、iOSの「設定 > 一般 > キーボード > キーボード」からKeynakoを追加します。
 
 WindowsではiOS SDKとXcodeが利用できないため、このリポジトリではXcodeプロジェクト、plist、entitlements、Swift Package参照までを構成し、最終署名ビルドはmacOS上で行います。
+
+## azooKey / Custard互換性
+
+「拡張」の読み込みボタンへCustard URLを入力すると、元のazooKeyと同じJSON形式を単体・配列のどちらでも読み込めます。`https://custard.azookey.com/tab/...` は公式API URLへ自動変換されます。キー座標とサイズ、system key、複数アクション、長押し開始・反復、フリック／PCバリエーションは定義を無損失で保持し、AndroidとiOSのネイティブキーボードが直接実行します。
+
+組み込みフリック配列は元の5列×4段構成で、`☆123`、`ABC`、`あいう`、`小ﾞﾟ`、`､｡?!`をカスタムキー編集画面から個別に差し替えられます。
 
 ## ライセンス
 
