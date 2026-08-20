@@ -160,7 +160,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
-        activeCustomTab = null
+        activeCustomTab = getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .getString(ACTIVE_CUSTOM_TAB_KEY, null)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
         mode = when (info?.inputType?.and(0x0000000f)) {
             0x00000002, 0x00000003 -> "symbols"
             else -> "japanese"
@@ -1238,6 +1241,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             value.startsWith("custom:") -> {
                 commitComposition()
                 activeCustomTab = value.removePrefix("custom:").trim()
+                getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(ACTIVE_CUSTOM_TAB_KEY, activeCustomTab)
+                    .apply()
                 mode = "japanese"
                 layout = "flick"
                 renderKeyboard()
@@ -1680,6 +1687,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         commitComposition()
         mode = newMode
         activeCustomTab = null
+        getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(ACTIVE_CUSTOM_TAB_KEY)
+            .apply()
         layout = when (newMode) {
             "japanese" -> settings.optString("keyboard_type", "flick")
             "english" -> settings.optString("keyboard_type_en", "qwerty")
@@ -2058,6 +2069,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     companion object {
         private const val IME_LOG_TAG = "KeynakoIME"
+        private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null
 
