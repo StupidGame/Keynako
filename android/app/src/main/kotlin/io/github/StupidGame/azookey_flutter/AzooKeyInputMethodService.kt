@@ -66,10 +66,27 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var flickGuide: FlickGuide? = null
     private val zenzaiRuntime by lazy { AndroidZenzaiRuntime(this) }
 
+    override fun onCreate() {
+        super.onCreate()
+        activeInstance = this
+    }
+
     override fun onDestroy() {
         dismissFlickGuide()
+        if (activeInstance === this) activeInstance = null
         if (this::root.isInitialized) zenzaiRuntime.close()
         super.onDestroy()
+    }
+
+    /** Reload Flutter state while the IME is already open. */
+    fun refreshFromApp() {
+        if (!::root.isInitialized) return
+        reloadState()
+        inputViewFrame.setBackgroundColor(palette.background)
+        root.setBackgroundColor(palette.background)
+        renderCandidates()
+        renderKeyboard()
+        prepareZenzaiIfNeeded()
     }
 
     override fun onCreateInputView(): View {
@@ -428,18 +445,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         keyStyle: String,
         scale: Double,
     ) {
-        val across = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 20)
-        val down = layoutData.optDouble("column_count", 5.0).toInt().coerceIn(1, 20)
-        val grid = CustardGridLayout(this, across, down)
+        // Custard coordinates use x/width across columns and y/height down
+        // rows.  Keep those axes aligned with the source definition.
+        val rows = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 20)
+        val columns = layoutData.optDouble("column_count", 5.0).toInt().coerceIn(1, 20)
+        val grid = CustardGridLayout(this, columns, rows)
         val cellHeight = (dp(47) * scale).toInt().coerceAtLeast(dp(32))
         for (index in 0 until keys.length()) {
             val element = keys.optJSONObject(index) ?: continue
             if (element.optString("specifier_type") != "grid_fit") continue
             val specifier = element.optJSONObject("specifier") ?: continue
-            val x = specifier.optDouble("x").coerceIn(0.0, across - 0.01)
-            val y = specifier.optDouble("y").coerceIn(0.0, down - 0.01)
-            val width = specifier.optDouble("width", 1.0).coerceIn(0.01, across - x)
-            val height = specifier.optDouble("height", 1.0).coerceIn(0.01, down - y)
+            val x = specifier.optDouble("x").coerceIn(0.0, columns - 0.01)
+            val y = specifier.optDouble("y").coerceIn(0.0, rows - 0.01)
+            val width = specifier.optDouble("width", 1.0).coerceIn(0.01, columns - x)
+            val height = specifier.optDouble("height", 1.0).coerceIn(0.01, rows - y)
             val view = createCustardKey(element, keyStyle, scale)
             grid.addPositionedView(view, x, y, width, height)
         }
@@ -447,7 +466,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             grid,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                cellHeight * down,
+                cellHeight * rows,
             ),
         )
     }
@@ -2024,6 +2043,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     companion object {
+        @Volatile
+        var activeInstance: AzooKeyInputMethodService? = null
+
         private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
         private val systemDictionary = mapOf(
             "あい" to listOf("愛", "藍", "相"),
