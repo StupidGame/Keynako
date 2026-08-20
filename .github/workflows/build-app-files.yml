@@ -44,27 +44,35 @@ jobs:
       - name: Install Flutter packages
         run: flutter pub get
 
-      - name: Create an ephemeral signer and build the APK
+      - name: Restore the stable CI signing key
+        uses: actions/cache@v4
+        with:
+          path: .ci/keynako-ci-release.jks
+          key: keynako-ci-release-signing-v1
+
+      - name: Create or reuse the CI signer and build the APK
         shell: bash
         run: |
           set -euo pipefail
-          signing_password="$(openssl rand -hex 32)"
-          echo "::add-mask::$signing_password"
-          keystore_path="$RUNNER_TEMP/keynako-ephemeral.jks"
+          signing_password="keynako-ci-release-v1"
+          keystore_path="$GITHUB_WORKSPACE/.ci/keynako-ci-release.jks"
+          mkdir -p "$(dirname "$keystore_path")"
 
-          keytool -genkeypair -v \
-            -keystore "$keystore_path" \
-            -storepass "$signing_password" \
-            -keypass "$signing_password" \
-            -alias keynako-ephemeral \
-            -keyalg RSA \
-            -keysize 4096 \
-            -validity 3650 \
-            -dname "CN=Keynako GitHub Actions, OU=CI, O=Keynako, L=Tokyo, C=JP"
+          if [[ ! -f "$keystore_path" ]]; then
+            keytool -genkeypair -v \
+              -keystore "$keystore_path" \
+              -storepass "$signing_password" \
+              -keypass "$signing_password" \
+              -alias keynako-ci \
+              -keyalg RSA \
+              -keysize 4096 \
+              -validity 3650 \
+              -dname "CN=Keynako GitHub Actions, OU=CI, O=Keynako, L=Tokyo, C=JP"
+          fi
 
           export KEYNAKO_KEYSTORE_PATH="$keystore_path"
           export KEYNAKO_STORE_PASSWORD="$signing_password"
-          export KEYNAKO_KEY_ALIAS="keynako-ephemeral"
+          export KEYNAKO_KEY_ALIAS="keynako-ci"
           export KEYNAKO_KEY_PASSWORD="$signing_password"
           flutter build apk --release --build-number="$GITHUB_RUN_NUMBER"
 
