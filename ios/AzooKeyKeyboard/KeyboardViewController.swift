@@ -946,7 +946,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func zenzaiConfiguration() -> (url: URL, inferenceLimit: Int)? {
-        guard boolSetting("enable_zenzai", fallback: false) else { return nil }
+        guard boolSetting("enable_zenzai", fallback: true) else { return nil }
         let effort = intSetting("zenzai_effort", fallback: 1)
         let size = effort == 0 ? "xsmall" : "small"
         guard let url = Bundle.main.url(

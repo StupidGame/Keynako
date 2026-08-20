@@ -153,7 +153,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (::root.isInitialized && settings.optBoolean("enable_zenzai", false)) {
+        if (::root.isInitialized && settings.optBoolean("enable_zenzai", true)) {
             zenzaiRuntime.cancel()
         }
         reloadState()
@@ -1373,7 +1373,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun requestZenzaiCandidates(reading: String, baseCandidates: List<String>) {
-        if (!settings.optBoolean("enable_zenzai", false) || reading.isBlank()) return
+        if (!settings.optBoolean("enable_zenzai", true) || reading.isBlank()) return
         val effort = settings.optInt("zenzai_effort", 1).coerceIn(0, 2)
         val size = if (effort == 0) "xsmall" else "small"
         val modelInput = hiraganaToKatakana(reading)
@@ -1464,7 +1464,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun commitCandidate(index: Int) {
         if (candidates.isEmpty()) return
-        if (settings.optBoolean("enable_zenzai", false)) zenzaiRuntime.cancel()
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         val selectedIndex = index.coerceIn(0, candidates.lastIndex)
         val candidate = candidates[selectedIndex]
         learnCandidate(displayReading(), candidate)
@@ -1606,7 +1606,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun commitComposition(useCandidate: Boolean = true) {
         if (composing.isEmpty() && rawRoman.isEmpty()) return
-        if (settings.optBoolean("enable_zenzai", false)) zenzaiRuntime.cancel()
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         val reading = displayReading()
         val text = if (useCandidate) candidates.firstOrNull() ?: buildCandidates().firstOrNull() ?: reading else reading
         learnCandidate(reading, text)
@@ -1995,7 +1995,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun prepareZenzaiIfNeeded() {
-        if (!settings.optBoolean("enable_zenzai", false)) return
+        if (!settings.optBoolean("enable_zenzai", true)) return
         val effort = settings.optInt("zenzai_effort", 1)
         zenzaiRuntime.prepare(if (effort == 0) "xsmall" else "small")
     }
