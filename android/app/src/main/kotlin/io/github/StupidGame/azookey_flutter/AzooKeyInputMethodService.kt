@@ -239,11 +239,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> renderFlick(heightScale)
             }
         } catch (_: RuntimeException) {
-            // A malformed imported custom tab must not take down the IME.
-            // Drop the invalid selection and restore the built-in keyboard.
-            activeCustomTab = null
+            // A malformed imported custom tab must not take down the IME or
+            // silently turn into the built-in Japanese layout.
             keyboardContainer.removeAllViews()
-            if (mode == "symbols") renderSymbols(heightScale)
+            if (activeCustomTab != null) renderCustomTabFooter(heightScale)
+            else if (mode == "symbols") renderSymbols(heightScale)
             else if (layout == "qwerty") renderQwerty(heightScale)
             else renderFlick(heightScale)
         }
@@ -388,7 +388,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         for (index in 0 until keys.length()) {
             val key = keys.optJSONObject(index) ?: continue
             val label = key.optString("label", "")
-            row.addView(createCustomKey(key, scale), weightParams())
+            runCatching { createCustomKey(key, scale) }
+                .onSuccess { row.addView(it, weightParams()) }
+                .onFailure { Log.w(IME_LOG_TAG, "Skipping malformed custom key", it) }
             count += 1
             if (count % columns == 0) {
                 keyboardContainer.addView(row)
