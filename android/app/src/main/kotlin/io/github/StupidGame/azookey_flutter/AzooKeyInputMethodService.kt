@@ -387,6 +387,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             keyboardContainer.addView(row)
         }
         val bottom = newRow(scale)
+        bottom.addView(createKey("タブ", true, scale) { renderCandidates(true) }, weightParams())
         bottom.addView(createKey("あいう", true, scale) { setMode("japanese") }, weightParams())
         bottom.addView(createKey("⌫", true, scale) { delete() }, weightParams())
         bottom.addView(createKey("space", false, scale) { space() }, weightParams(2f))
@@ -1142,7 +1143,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                 gravity = Gravity.CENTER
                 setTextColor(palette.text)
                 setPadding(dp(16), 0, dp(16), 0)
-                setOnClickListener { selectTab(value) }
+                isClickable = true
+                isFocusable = false
+                if (value.startsWith("custom:")) {
+                    setOnTouchListener { _, event ->
+                        if (event.actionMasked == MotionEvent.ACTION_UP) selectTab(value)
+                        true
+                    }
+                } else {
+                    setOnClickListener { selectTab(value) }
+                }
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(43)))
         }
         if (settings.optBoolean("enable_clipboard_history_manager_tab", false) &&
