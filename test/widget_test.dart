@@ -1,6 +1,8 @@
 import 'package:azookey_flutter/app.dart';
 import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
+import 'package:azookey_flutter/widgets/keyboard_preview.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class MemoryStorage implements StateStorage {
@@ -27,5 +29,16 @@ void main() {
     expect(find.text('拡張'), findsOneWidget);
     expect(find.text('設定'), findsOneWidget);
     expect(find.text('Keynako', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('keyboard sandbox opens a real editable input field', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: KeyboardSandboxPage()));
+
+    final field = find.byKey(const ValueKey('keyboard-test-field'));
+    expect(field, findsOneWidget);
+    await tester.enterText(field, 'カスタムタブ入力');
+    expect(find.text('カスタムタブ入力'), findsOneWidget);
   });
 }
