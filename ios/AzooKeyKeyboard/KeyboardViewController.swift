@@ -231,11 +231,15 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderCustomTab(_ id: String) {
-        if renderCustard(id) { return }
+        let normalizedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if renderCustard(normalizedID) { return }
         guard let tabs = state["customTabs"] as? [[String: Any]],
-              let tab = tabs.first(where: { $0["id"] as? String == id }),
+              let tab = tabs.first(where: { ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedID }),
               let keys = tab["keys"] as? [[String: Any]] else {
-            setMode("japanese")
+            let bottom = makeRow()
+            bottom.addArrangedSubview(makeButton("タブ", special: true) { [weak self] in self?.renderCandidates(showTabs: true) })
+            bottom.addArrangedSubview(makeButton("あいう", special: true) { [weak self] in self?.setMode("japanese") })
+            keyboardStack.addArrangedSubview(bottom)
             return
         }
         let columns = (tab["columns"] as? Int ?? 4).clamped(to: 1 ... 8)
@@ -257,7 +261,9 @@ final class KeyboardViewController: UIInputViewController {
     @discardableResult
     private func renderCustard(_ id: String) -> Bool {
         guard let custards = state["custards"] as? [[String: Any]],
-              let custard = custards.first(where: { $0["identifier"] as? String == id }),
+              let custard = custards.first(where: {
+                  ($0["identifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == id
+              }),
               let interface = custard["interface"] as? [String: Any],
               let layout = interface["key_layout"] as? [String: Any],
               let elements = interface["keys"] as? [[String: Any]] else {
@@ -467,7 +473,16 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderTabBar() {
-        let values = state["tabBar"] as? [String] ?? ["dismiss", "resize", "emoji", "japanese", "english"]
+        var values = state["tabBar"] as? [String] ?? ["dismiss", "resize", "emoji", "japanese", "english"]
+        let configured = Set(values)
+        let customTabs = (state["customTabs"] as? [[String: Any]] ?? [])
+            .filter { ($0["addToTabBar"] as? Bool) ?? true }
+            .compactMap { tab -> String? in
+                guard let rawID = tab["id"] as? String else { return nil }
+                let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+                return id.isEmpty ? nil : "custom:\(id)"
+            }
+        for value in customTabs where !configured.contains(value) { values.append(value) }
         for value in values {
             let title: String
             switch value {
@@ -497,7 +512,7 @@ final class KeyboardViewController: UIInputViewController {
         default:
             if value.hasPrefix("custom:") {
                 commitComposition()
-                activeCustomTab = String(value.dropFirst(7))
+                activeCustomTab = String(value.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
                 mode = "japanese"
                 layout = "flick"
                 renderKeyboard()
@@ -601,7 +616,9 @@ final class KeyboardViewController: UIInputViewController {
 
     private func enter() {
         commitComposition()
-        textDocumentProxy.insertText("\n")
+        if !(textDocumentProxy.documentContextBeforeInput ?? "").hasSuffix("\n") {
+            textDocumentProxy.insertText("\n")
+        }
     }
 
     private func toggleShift() {
@@ -929,7 +946,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func zenzaiConfiguration() -> (url: URL, inferenceLimit: Int)? {
-        guard boolSetting("enable_zenzai", fallback: false) else { return nil }
+        guard boolSetting("enable_zenzai", fallback: true) else { return nil }
         let effort = intSetting("zenzai_effort", fallback: 1)
         let size = effort == 0 ? "xsmall" : "small"
         guard let url = Bundle.main.url(
@@ -1196,10 +1213,24 @@ final class KeyboardViewController: UIInputViewController {
 
     private static let systemDictionary: [String: [String]] = [
         "あい": ["愛", "藍", "相"], "あした": ["明日"], "ありがとう": ["ありがとう", "有難う"],
-        "いま": ["今", "居間"], "おねがい": ["お願い"], "きょう": ["今日", "京"],
+        "いま": ["今", "居間"], "おねがい": ["お願い"], "きょう": ["今日", "京", "きょう"],
         "こんにちは": ["今日は", "こんにちは"], "じかん": ["時間"], "せってい": ["設定"],
         "だいじょうぶ": ["大丈夫"], "でんわ": ["電話"], "にほん": ["日本", "二本"],
         "にほんご": ["日本語"], "へんかん": ["変換"], "ほんじつ": ["本日"], "わたし": ["私"],
+        "これ": ["これ", "此れ"], "それ": ["それ", "其れ"], "ここ": ["ここ", "此処"],
+        "こと": ["こと", "事"], "もの": ["もの", "物"], "ひと": ["人"], "ともだち": ["友達"],
+        "かぞく": ["家族"], "せんせい": ["先生"], "がくせい": ["学生"], "かいしゃ": ["会社"],
+        "しごと": ["仕事"], "きのう": ["昨日"], "あさ": ["朝", "麻"], "ひる": ["昼"], "よる": ["夜"],
+        "てんき": ["天気"], "あめ": ["雨", "飴"], "はれ": ["晴れ"], "ゆき": ["雪", "行き"],
+        "みず": ["水"], "たべもの": ["食べ物"], "のみもの": ["飲み物"], "ごはん": ["ご飯"],
+        "おちゃ": ["お茶"], "でんしゃ": ["電車"], "えき": ["駅"], "くるま": ["車"],
+        "びょういん": ["病院"], "だいがく": ["大学"], "がっこう": ["学校"], "ほん": ["本", "ほん"],
+        "なまえ": ["名前"], "めーる": ["メール"], "ほうほう": ["方法"], "もんだい": ["問題"],
+        "かいけつ": ["解決"], "せいこう": ["成功"], "しっぱい": ["失敗"], "かくにん": ["確認"],
+        "せつめい": ["説明"], "へんこう": ["変更"], "ほぞん": ["保存"], "けんさく": ["検索"],
+        "けっか": ["結果"], "ひつよう": ["必要"], "たいせつ": ["大切"], "べんり": ["便利"],
+        "かんたん": ["簡単"], "むずかしい": ["難しい"], "おおきい": ["大きい"], "ちいさい": ["小さい"],
+        "はやい": ["早い", "速い"], "おそい": ["遅い"], "いい": ["いい", "良い"], "わるい": ["悪い"],
     ]
     private static let emojiDictionary = ["えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"]]
     private static let kaomojiDictionary = ["えがお": ["( ´ ▽ ` )", "(^_^)"], "かなしい": ["( ; _ ; )", "(´；ω；`)"]]

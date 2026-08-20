@@ -2,14 +2,14 @@ import 'dart:convert';
 
 import 'custard.dart';
 
-const int currentSchemaVersion = 2;
+const int currentSchemaVersion = 3;
 
 const Map<String, dynamic> defaultKeyboardSettings = {
   'keyboard_type': 'flick',
   'keyboard_type_en': 'flick',
   'live_conversion': true,
   'automatic_completion_strength': 1,
-  'enable_zenzai': false,
+  'enable_zenzai': true,
   'zenzai_effort': 1,
   'typography_roman_candidate': true,
   'roman_english_candidate': true,
@@ -458,9 +458,10 @@ class AppData {
     final rawTabBar = json['tabBar'];
     final rawClipboard = json['clipboardHistory'];
 
+    final storedSchemaVersion =
+        (json['schemaVersion'] as num?)?.toInt() ?? currentSchemaVersion;
     final data = AppData(
-      schemaVersion:
-          (json['schemaVersion'] as num?)?.toInt() ?? currentSchemaVersion,
+      schemaVersion: storedSchemaVersion,
       settings: defaults.settings,
       userDictionary: decodedDictionary.isEmpty
           ? defaults.userDictionary
@@ -485,6 +486,13 @@ class AppData {
           : <String, int>{},
       onboardingCompleted: json['onboardingCompleted'] as bool? ?? false,
     )..schemaVersion = currentSchemaVersion;
+
+    // Zenzai is now part of the default conversion pipeline. Preserve an
+    // explicit choice made after schema 3, but enable it for older state that
+    // only carried the old default value.
+    if (storedSchemaVersion < 3) {
+      data.settings['enable_zenzai'] = true;
+    }
 
     // Older versions only synchronized the tab bar when a custom tab was
     // first created. Repair that saved state so existing tabs are selectable.
