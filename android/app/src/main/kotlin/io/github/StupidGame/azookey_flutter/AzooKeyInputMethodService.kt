@@ -160,7 +160,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
-        activeCustomTab = null
+        activeCustomTab = getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .getString(ACTIVE_CUSTOM_TAB_KEY, null)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
         mode = when (info?.inputType?.and(0x0000000f)) {
             0x00000002, 0x00000003 -> "symbols"
             else -> "japanese"
@@ -239,11 +242,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> renderFlick(heightScale)
             }
         } catch (_: RuntimeException) {
-            // A malformed imported custom tab must not take down the IME.
-            // Drop the invalid selection and restore the built-in keyboard.
-            activeCustomTab = null
+            // A malformed imported custom tab must not take down the IME or
+            // silently turn into the built-in Japanese layout.
             keyboardContainer.removeAllViews()
-            if (mode == "symbols") renderSymbols(heightScale)
+            if (activeCustomTab != null) renderCustomTabFooter(heightScale)
+            else if (mode == "symbols") renderSymbols(heightScale)
             else if (layout == "qwerty") renderQwerty(heightScale)
             else renderFlick(heightScale)
         }
@@ -388,7 +391,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         for (index in 0 until keys.length()) {
             val key = keys.optJSONObject(index) ?: continue
             val label = key.optString("label", "")
-            row.addView(createCustomKey(key, scale), weightParams())
+            runCatching { createCustomKey(key, scale) }
+                .onSuccess { row.addView(it, weightParams()) }
+                .onFailure { Log.w(IME_LOG_TAG, "Skipping malformed custom key", it) }
             count += 1
             if (count % columns == 0) {
                 keyboardContainer.addView(row)
@@ -1236,6 +1241,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             value.startsWith("custom:") -> {
                 commitComposition()
                 activeCustomTab = value.removePrefix("custom:").trim()
+                getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(ACTIVE_CUSTOM_TAB_KEY, activeCustomTab)
+                    .apply()
                 mode = "japanese"
                 layout = "flick"
                 renderKeyboard()
@@ -1678,6 +1687,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         commitComposition()
         mode = newMode
         activeCustomTab = null
+        getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(ACTIVE_CUSTOM_TAB_KEY)
+            .apply()
         layout = when (newMode) {
             "japanese" -> settings.optString("keyboard_type", "flick")
             "english" -> settings.optString("keyboard_type_en", "qwerty")
@@ -2056,6 +2069,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     companion object {
         private const val IME_LOG_TAG = "KeynakoIME"
+        private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null
 
