@@ -952,7 +952,7 @@ final class KeyboardViewController: UIInputViewController {
             rightContext: textDocumentProxy.documentContextAfterInput ?? "",
             japaneseLayout: layout,
             textContentType: textDocumentProxy.textContentType?.rawValue ?? "nil",
-            returnKeyType: String(textDocumentProxy.returnKeyType.rawValue)
+            returnKeyType: String(textDocumentProxy.returnKeyType?.rawValue ?? 0)
         )
     }
 
@@ -1002,8 +1002,8 @@ final class KeyboardViewController: UIInputViewController {
         candidateStack.addArrangedSubview(makeCandidateButton("「\(candidate)」を誤変換として報告", action: {}))
         candidateStack.addArrangedSubview(makeCandidateButton("送信") { [weak self] in
             guard let self else { return }
-            candidateStack.removeAllArrangedSubviews()
-            candidateStack.addArrangedSubview(makeCandidateButton("送信中…", action: {}))
+            self.candidateStack.removeAllArrangedSubviews()
+            self.candidateStack.addArrangedSubview(self.makeCandidateButton("送信中…", action: {}))
             ReportClient.submitLegacyWrongConversion(
                 candidate: candidate,
                 ruby: ruby,
@@ -1013,8 +1013,8 @@ final class KeyboardViewController: UIInputViewController {
             ) { [weak self] success in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    candidateStack.removeAllArrangedSubviews()
-                    candidateStack.addArrangedSubview(makeCandidateButton(success ? "レポートを送信しました" : "送信に失敗しました", action: {}))
+                    self.candidateStack.removeAllArrangedSubviews()
+                    self.candidateStack.addArrangedSubview(self.makeCandidateButton(success ? "レポートを送信しました" : "送信に失敗しました", action: {}))
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
                         self?.renderCandidates(showTabs: false)
                     }
@@ -1037,10 +1037,10 @@ final class KeyboardViewController: UIInputViewController {
         ) { [weak self] success in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if success { registerReportedPair(report) }
-                pendingReport = nil
-                candidateStack.removeAllArrangedSubviews()
-                candidateStack.addArrangedSubview(makeCandidateButton(success ? "レポートを送信しました" : "送信に失敗しました", action: {}))
+                if success { self.registerReportedPair(report) }
+                self.pendingReport = nil
+                self.candidateStack.removeAllArrangedSubviews()
+                self.candidateStack.addArrangedSubview(self.makeCandidateButton(success ? "レポートを送信しました" : "送信に失敗しました", action: {}))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in self?.renderCandidates() }
             }
         }
