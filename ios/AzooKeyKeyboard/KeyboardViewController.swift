@@ -494,7 +494,10 @@ final class KeyboardViewController: UIInputViewController {
         case "clipboard": showClipboardHistory()
         default:
             if value.hasPrefix("custom:") {
+                commitComposition()
                 activeCustomTab = String(value.dropFirst(7))
+                mode = "japanese"
+                layout = "flick"
                 renderKeyboard()
             }
         }
