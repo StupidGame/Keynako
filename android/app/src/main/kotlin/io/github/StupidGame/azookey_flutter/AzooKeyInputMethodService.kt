@@ -373,16 +373,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderCustomTab(id: String, scale: Double) {
-        if (renderCustard(id, scale)) return
-        val tabs = state.optJSONArray("customTabs") ?: return setMode("japanese")
-        var target: JSONObject? = null
-        for (index in 0 until tabs.length()) {
-            val tab = tabs.optJSONObject(index) ?: continue
-            if (tab.optString("id") == id) target = tab
-        }
+        val normalizedId = id.trim()
+        if (renderCustard(normalizedId, scale)) return
+        val target = customTabDefinition(normalizedId)
         if (target == null) {
-            activeCustomTab = null
-            renderFlick(scale)
+            Log.w(IME_LOG_TAG, "Custom tab '$normalizedId' was selected but is not in the saved state")
+            renderCustomTabFooter(scale)
             return
         }
         val columns = target.optInt("columns", 4).coerceIn(1, 8)
@@ -403,6 +399,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             while (row.childCount < columns) row.addView(View(this), weightParams())
             keyboardContainer.addView(row)
         }
+        renderCustomTabFooter(scale)
+    }
+
+    private fun renderCustomTabFooter(scale: Double) {
         val bottom = newRow(scale)
         bottom.addView(createKey("タブ", true, scale) { renderCandidates(true) }, weightParams())
         bottom.addView(createKey("あいう", true, scale) { setMode("japanese") }, weightParams())
@@ -410,6 +410,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         bottom.addView(createKey("space", false, scale) { space() }, weightParams(2f))
         bottom.addView(createKey("return", true, scale) { enter() }, weightParams())
         keyboardContainer.addView(bottom)
+    }
+
+    private fun customTabDefinition(id: String): JSONObject? {
+        val tabs = state.optJSONArray("customTabs") ?: return null
+        for (index in 0 until tabs.length()) {
+            val tab = tabs.optJSONObject(index) ?: continue
+            if (tab.optString("id").trim() == id) return tab
+        }
+        return null
     }
 
     private fun renderCustard(id: String, scale: Double): Boolean {
@@ -1195,7 +1204,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         for (index in 0 until tabs.length()) {
             val tab = tabs.optJSONObject(index) ?: continue
             if (!tab.optBoolean("addToTabBar", true)) continue
-            val id = tab.optString("id")
+            val id = tab.optString("id").trim()
             if (id.isNotEmpty()) customItems.add("custom:$id")
         }
         val custards = state.optJSONArray("custards") ?: JSONArray()
@@ -1226,7 +1235,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             value == "clipboard" -> showClipboardHistory()
             value.startsWith("custom:") -> {
                 commitComposition()
-                activeCustomTab = value.removePrefix("custom:")
+                activeCustomTab = value.removePrefix("custom:").trim()
                 mode = "japanese"
                 layout = "flick"
                 renderKeyboard()
@@ -1653,7 +1662,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             ?: EditorInfo.IME_ACTION_NONE
         val handled = action != EditorInfo.IME_ACTION_NONE &&
             currentInputConnection?.performEditorAction(action) == true
-        if (!handled) currentInputConnection?.commitText("\n", 1)
+        if (!handled) {
+            val before = currentInputConnection?.getTextBeforeCursor(1, 0)?.toString().orEmpty()
+            if (!before.endsWith("\n")) currentInputConnection?.commitText("\n", 1)
+        }
     }
 
     private fun toggleShift() {
@@ -2043,6 +2055,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     companion object {
+        private const val IME_LOG_TAG = "KeynakoIME"
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null
 
@@ -2067,6 +2080,61 @@ class AzooKeyInputMethodService : InputMethodService() {
             "ほんじつ" to listOf("本日"),
             "よろしく" to listOf("よろしく", "宜しく"),
             "わたし" to listOf("私"),
+            "これ" to listOf("これ", "此れ"),
+            "それ" to listOf("それ", "其れ"),
+            "ここ" to listOf("ここ", "此処"),
+            "こと" to listOf("こと", "事"),
+            "もの" to listOf("もの", "物"),
+            "ひと" to listOf("人"),
+            "ともだち" to listOf("友達"),
+            "かぞく" to listOf("家族"),
+            "せんせい" to listOf("先生"),
+            "がくせい" to listOf("学生"),
+            "かいしゃ" to listOf("会社"),
+            "しごと" to listOf("仕事"),
+            "きのう" to listOf("昨日"),
+            "ひる" to listOf("昼"),
+            "よる" to listOf("夜"),
+            "てんき" to listOf("天気"),
+            "あめ" to listOf("雨", "飴"),
+            "はれ" to listOf("晴れ"),
+            "ゆき" to listOf("雪", "行き"),
+            "みず" to listOf("水"),
+            "たべもの" to listOf("食べ物"),
+            "のみもの" to listOf("飲み物"),
+            "ごはん" to listOf("ご飯"),
+            "おちゃ" to listOf("お茶"),
+            "でんしゃ" to listOf("電車"),
+            "えき" to listOf("駅"),
+            "くるま" to listOf("車"),
+            "びょういん" to listOf("病院"),
+            "だいがく" to listOf("大学"),
+            "がっこう" to listOf("学校"),
+            "ほん" to listOf("本", "ほん"),
+            "なまえ" to listOf("名前"),
+            "めーる" to listOf("メール"),
+            "ほうほう" to listOf("方法"),
+            "もんだい" to listOf("問題"),
+            "かいけつ" to listOf("解決"),
+            "せいこう" to listOf("成功"),
+            "しっぱい" to listOf("失敗"),
+            "かくにん" to listOf("確認"),
+            "せつめい" to listOf("説明"),
+            "へんこう" to listOf("変更"),
+            "ほぞん" to listOf("保存"),
+            "けんさく" to listOf("検索"),
+            "けっか" to listOf("結果"),
+            "ひつよう" to listOf("必要"),
+            "たいせつ" to listOf("大切"),
+            "べんり" to listOf("便利"),
+            "かんたん" to listOf("簡単"),
+            "むずかしい" to listOf("難しい"),
+            "おおきい" to listOf("大きい"),
+            "ちいさい" to listOf("小さい"),
+            "はやい" to listOf("早い", "速い"),
+            "おそい" to listOf("遅い"),
+            "いい" to listOf("いい", "良い"),
+            "わるい" to listOf("悪い"),
         )
         private val emojiDictionary = mapOf(
             "えがお" to listOf("😊", "😄", "🙂"),
