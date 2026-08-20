@@ -59,13 +59,17 @@ flutter build apk --debug
 flutter run
 ```
 
-インストール後、Androidの「システム > キーボード > 画面キーボード」でKeynakoを有効化して選択します。ストア配布時は[android/app/build.gradle.kts](android/app/build.gradle.kts)のrelease署名を正式なkeystoreへ差し替えてください。
+インストール後、Androidの「システム > キーボード > 画面キーボード」でKeynakoを有効化して選択します。release署名は`KEYNAKO_KEYSTORE_PATH`、`KEYNAKO_STORE_PASSWORD`、`KEYNAKO_KEY_ALIAS`、`KEYNAKO_KEY_PASSWORD`の環境変数から読み込みます。
 
 ### iOS
 
 iOS 17以上を対象にしています。macOSで`ios/Runner.xcworkspace`をXcodeから開き、RunnerとAzooKeyKeyboardの両ターゲットに同じDevelopment Teamを設定してください。両ターゲットでApp Groupを有効にし、環境に合わせてbundle identifierと`group.com.azooKey.keyboard`をプロビジョニングします。その後Runnerをビルドし、iOSの「設定 > 一般 > キーボード > キーボード」からKeynakoを追加します。
 
 WindowsではiOS SDKとXcodeが利用できないため、このリポジトリではXcodeプロジェクト、plist、entitlements、Swift Package参照までを構成し、最終署名ビルドはmacOS上で行います。
+
+### GitHub Actions
+
+「Build app files」ワークフローは、Secretsを登録せずに、一時署名されたAndroid APK、未署名iOS IPA、Simulator用アプリを作成します。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
 
 ## azooKey / Custard互換性
 

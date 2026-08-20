@@ -67,7 +67,7 @@ class _TipsPageState extends State<TipsPage> {
             context,
             icon: Icons.science_outlined,
             title: 'キーボードを試す',
-            body: '現在のレイアウト、変換候補、ユーザー辞書をアプリ内で確認します。',
+            body: '実際の入力欄で、変換・フリック・カスタムタブを確認します。',
             destination: const KeyboardSandboxPage(),
           ),
           const SizedBox(height: 18),

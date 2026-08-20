@@ -59,6 +59,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var capsLock = false
     private var selectedCandidate = 0
     private var activeCustomTab: String? = null
+    private var oneHandedMode = "full"
     private var candidates = mutableListOf<String>()
     private var pendingReport: WrongConversionReport? = null
     private var palette = KeyboardPalette.default()
@@ -73,7 +74,9 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     override fun onCreateInputView(): View {
         reloadState()
-        inputViewFrame = FrameLayout(this)
+        inputViewFrame = FrameLayout(this).apply {
+            setBackgroundColor(palette.background)
+        }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(palette.background)
@@ -85,6 +88,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ),
         )
+        applyKeyboardWidth()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             inputViewFrame.setOnApplyWindowInsetsListener { view, insets ->
                 val bottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
@@ -150,7 +154,9 @@ class AzooKeyInputMethodService : InputMethodService() {
             "qwerty"
         }
         if (::root.isInitialized) {
+            inputViewFrame.setBackgroundColor(palette.background)
             root.setBackgroundColor(palette.background)
+            applyKeyboardWidth()
             renderCandidates()
             renderKeyboard()
             prepareZenzaiIfNeeded()
@@ -158,10 +164,14 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun reloadState() {
-        val value = getSharedPreferences(
+        val preferences = getSharedPreferences(
             MainActivity.PREFERENCES_NAME,
             Context.MODE_PRIVATE,
-        ).getString(MainActivity.STATE_KEY, null)
+        )
+        val value = preferences.getString(MainActivity.STATE_KEY, null)
+        oneHandedMode = preferences.getString(ONE_HANDED_MODE_KEY, "full")
+            ?.takeIf { it == "left" || it == "right" }
+            ?: "full"
         state = try {
             if (value.isNullOrBlank()) JSONObject() else JSONObject(value)
         } catch (_: Exception) {
@@ -926,6 +936,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val cellHeight = target.height.coerceAtLeast(1)
         val content = FrameLayout(this)
         val directionCells = mutableMapOf<String, TextView>()
+        var centerCell: TextView? = null
 
         fun addCell(label: String?, column: Int, row: Int, direction: String?, selected: Boolean = false) {
             if (label.isNullOrEmpty()) return
@@ -941,7 +952,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     topMargin = row * cellHeight + gap
                 },
             )
-            if (direction != null) directionCells[direction] = cell
+            if (direction == null) centerCell = cell else directionCells[direction] = cell
         }
 
         addCell(up, 1, 0, "up")
@@ -951,28 +962,33 @@ class AzooKeyInputMethodService : InputMethodService() {
         addCell(down, 1, 2, "down")
 
         val targetLocation = IntArray(2)
-        val rootLocation = IntArray(2)
+        val inputWindowLocation = IntArray(2)
         target.getLocationOnScreen(targetLocation)
-        root.getLocationOnScreen(rootLocation)
+        inputViewFrame.getLocationOnScreen(inputWindowLocation)
         val guideWidth = cellWidth * 3
         val guideHeight = cellHeight * 3
-        val desiredLeft = targetLocation[0] - cellWidth
-        val desiredTop = targetLocation[1] - cellHeight
-        val guideLeft = desiredLeft.coerceIn(0, (resources.displayMetrics.widthPixels - guideWidth).coerceAtLeast(0))
-        val guideTop = desiredTop.coerceIn(
-            rootLocation[1],
-            (rootLocation[1] + root.height - guideHeight).coerceAtLeast(rootLocation[1]),
-        )
+        // PopupWindow offsets are relative to the IME window, while
+        // getLocationOnScreen() returns display coordinates. Passing the
+        // display Y coordinate here moves the guide down by the IME window's
+        // top offset (several key rows on a phone).
+        // inputViewFrame continues to span the IME window in one-handed mode,
+        // while root itself moves left or right. Use the window origin so the
+        // guide stays attached to the pressed key in every width mode.
+        val targetLeftInWindow = targetLocation[0] - inputWindowLocation[0]
+        val targetTopInWindow = targetLocation[1] - inputWindowLocation[1]
+        val guideLeft = targetLeftInWindow - cellWidth
+        val guideTop = targetTopInWindow - cellHeight
         val popup = PopupWindow(content, guideWidth, guideHeight, false).apply {
             isTouchable = false
             isFocusable = false
             isOutsideTouchable = false
+            isClippingEnabled = false
             inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(5).toFloat()
             showAtLocation(root, Gravity.TOP or Gravity.START, guideLeft, guideTop)
         }
-        flickGuide = FlickGuide(popup, directionCells)
+        flickGuide = FlickGuide(popup, checkNotNull(centerCell), directionCells)
     }
 
     private fun flickGuideCell(label: String, selected: Boolean): TextView = TextView(this).apply {
@@ -987,6 +1003,11 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun updateFlickGuide(direction: String?) {
         val guide = flickGuide ?: return
+        guide.centerCell.setTextColor(if (direction == null) Color.WHITE else palette.text)
+        guide.centerCell.background = roundedDrawable(
+            if (direction == null) palette.accent else palette.key,
+            dp(6).toFloat(),
+        )
         for ((cellDirection, cell) in guide.directionCells) {
             val selected = cellDirection == direction
             cell.setTextColor(if (selected) Color.WHITE else palette.text)
@@ -1160,8 +1181,53 @@ class AzooKeyInputMethodService : InputMethodService() {
                 activeCustomTab = value.removePrefix("custom:")
                 renderKeyboard()
             }
-            value == "resize" -> Unit
+            value == "resize" -> showResizeControls()
         }
+    }
+
+    private fun showResizeControls() {
+        candidateRow.removeAllViews()
+        addCandidateButton(if (oneHandedMode == "left") "✓ 左寄せ" else "← 左寄せ") {
+            setOneHandedMode("left")
+        }
+        addCandidateButton(if (oneHandedMode == "full") "✓ 標準" else "↔ 標準") {
+            setOneHandedMode("full")
+        }
+        addCandidateButton(if (oneHandedMode == "right") "✓ 右寄せ" else "右寄せ →") {
+            setOneHandedMode("right")
+        }
+        addCandidateButton("閉じる") { renderCandidates() }
+    }
+
+    private fun setOneHandedMode(value: String) {
+        oneHandedMode = value
+        getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(ONE_HANDED_MODE_KEY, value)
+            .apply()
+        applyKeyboardWidth()
+        showResizeControls()
+    }
+
+    private fun applyKeyboardWidth() {
+        if (!::root.isInitialized) return
+        val width = if (oneHandedMode == "full") {
+            FrameLayout.LayoutParams.MATCH_PARENT
+        } else {
+            (resources.displayMetrics.widthPixels * 0.78f).toInt()
+        }
+        val horizontalGravity = when (oneHandedMode) {
+            "left" -> Gravity.START
+            "right" -> Gravity.END
+            else -> Gravity.CENTER_HORIZONTAL
+        }
+        root.layoutParams = FrameLayout.LayoutParams(
+            width,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            horizontalGravity or Gravity.BOTTOM,
+        )
+        root.requestLayout()
+        inputViewFrame.requestLayout()
     }
 
     private fun customTabName(id: String): String {
@@ -1898,6 +1964,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private data class FlickGuide(
         val popup: PopupWindow,
+        val centerCell: TextView,
         val directionCells: Map<String, TextView>,
     )
 
@@ -1918,6 +1985,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     companion object {
+        private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
         private val systemDictionary = mapOf(
             "あい" to listOf("愛", "藍", "相"),
             "あう" to listOf("会う", "合う", "遭う"),

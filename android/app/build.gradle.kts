@@ -4,6 +4,25 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseKeystorePath = providers.environmentVariable("KEYNAKO_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("KEYNAKO_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("KEYNAKO_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("KEYNAKO_KEY_PASSWORD").orNull
+val releaseSigningValues = listOf(
+    releaseKeystorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+)
+val hasReleaseSigning = releaseSigningValues.all { !it.isNullOrBlank() }
+
+if (!hasReleaseSigning && releaseSigningValues.any { !it.isNullOrBlank() }) {
+    throw GradleException(
+        "Release signing requires KEYNAKO_KEYSTORE_PATH, KEYNAKO_STORE_PASSWORD, " +
+            "KEYNAKO_KEY_ALIAS, and KEYNAKO_KEY_PASSWORD.",
+    )
+}
+
 android {
     namespace = "io.github.StupidGame.azookey_flutter"
     compileSdk = flutter.compileSdkVersion
@@ -55,11 +74,23 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(checkNotNull(releaseKeystorePath))
+                storePassword = checkNotNull(releaseStorePassword)
+                keyAlias = checkNotNull(releaseKeyAlias)
+                keyPassword = checkNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // CI creates a temporary keystore and supplies these values through
+            // environment variables. Without them, Gradle emits an unsigned
+            // release instead of silently using the public debug certificate.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 }
