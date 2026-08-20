@@ -26,6 +26,7 @@ class MainActivity : FlutterActivity() {
                         result.error("invalid_state", "state must be a JSON string", null)
                     } else {
                         sharedPreferences().edit().putString(STATE_KEY, state).apply()
+                        AzooKeyInputMethodService.activeInstance?.refreshFromApp()
                         result.success(null)
                     }
                 }

@@ -285,15 +285,17 @@ final class KeyboardViewController: UIInputViewController {
                 custardView.append(makeCustardKey(element, keyStyle: keyStyle, variationsEnabled: false))
             }
         } else {
-            let across = max(1, Int(rowCount))
-            let down = max(1, Int(columnCount))
-            custardView = CustardLayoutView(columns: across, rows: down)
+            // Custard coordinates use x/width across columns and y/height
+            // down rows. Keep those axes aligned with the source definition.
+            let columns = max(1, Int(columnCount))
+            let rows = max(1, Int(rowCount))
+            custardView = CustardLayoutView(columns: columns, rows: rows)
             for element in elements where element["specifier_type"] as? String == "grid_fit" {
                 guard let specifier = element["specifier"] as? [String: Any] else { continue }
-                let x = min(max(0, CGFloat((specifier["x"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(across) - 0.01)
-                let y = min(max(0, CGFloat((specifier["y"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(down) - 0.01)
-                let width = min(max(0.01, CGFloat((specifier["width"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(across) - x)
-                let height = min(max(0.01, CGFloat((specifier["height"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(down) - y)
+                let x = min(max(0, CGFloat((specifier["x"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(columns) - 0.01)
+                let y = min(max(0, CGFloat((specifier["y"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(rows) - 0.01)
+                let width = min(max(0.01, CGFloat((specifier["width"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(columns) - x)
+                let height = min(max(0.01, CGFloat((specifier["height"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(rows) - y)
                 custardView.append(
                     makeCustardKey(element, keyStyle: keyStyle),
                     x: x,
