@@ -834,14 +834,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                     longPressed = false
                     target.isPressed = true
                     handler.postDelayed(longPress, 500)
-                    showFlickGuide(
-                        target,
-                        key.optString("label", key.optString("name", "")),
-                        leftLabel,
-                        upLabel,
-                        rightLabel,
-                        downLabel,
-                    )
+                    runCatching {
+                        showFlickGuide(
+                            target,
+                            key.optString("label", key.optString("name", "")),
+                            leftLabel,
+                            upLabel,
+                            rightLabel,
+                            downLabel,
+                        )
+                    }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -866,7 +868,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                         } else {
                             if (dy < 0) "up" else "down"
                         }
-                        dispatchAction(key.optJSONObject(direction) ?: key.optJSONObject("tap"))
+                        runCatching {
+                            dispatchAction(key.optJSONObject(direction) ?: key.optJSONObject("tap"))
+                        }
                         feedback(target)
                     }
                     true
@@ -1192,7 +1196,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             value == "english" -> setMode("english")
             value == "clipboard" -> showClipboardHistory()
             value.startsWith("custom:") -> {
+                commitComposition()
                 activeCustomTab = value.removePrefix("custom:")
+                mode = "japanese"
+                layout = "flick"
                 renderKeyboard()
             }
             value == "resize" -> showResizeControls()
