@@ -440,7 +440,7 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_ENABLE_CXX_INTEROP = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -cxx-interoperability-mode=default";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -463,7 +463,7 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_ENABLE_CXX_INTEROP = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -cxx-interoperability-mode=default";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -486,7 +486,7 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_ENABLE_CXX_INTEROP = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -cxx-interoperability-mode=default";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
