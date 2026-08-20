@@ -1,4 +1,5 @@
 import 'package:azookey_flutter/core/app_controller.dart';
+import 'package:azookey_flutter/models/app_data.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -23,5 +24,28 @@ void main() {
       ).toString(),
       'https://gist.github.com/owner/0123456789abcdef/raw',
     );
+  });
+
+  test('keeps edited custom tabs in sync with the keyboard tab bar', () {
+    final controller = AppController();
+    const hidden = CustomTabData(
+      id: 'phrases',
+      name: '定型文',
+      kind: 'scroll',
+      columns: 2,
+      rows: 5,
+      keys: [],
+      addToTabBar: false,
+    );
+
+    controller.replaceCustomTab(hidden);
+    expect(controller.data.tabBar, isNot(contains('custom:phrases')));
+
+    controller.replaceCustomTab(hidden.copyWith(addToTabBar: true));
+    expect(controller.data.tabBar, contains('custom:phrases'));
+
+    controller.replaceCustomTab(hidden);
+    expect(controller.data.tabBar, isNot(contains('custom:phrases')));
+    controller.dispose();
   });
 }

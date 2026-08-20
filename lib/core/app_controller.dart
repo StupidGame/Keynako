@@ -106,11 +106,14 @@ class AppController extends ChangeNotifier {
     final index = data.customTabs.indexWhere((item) => item.id == tab.id);
     if (index < 0) {
       data.customTabs.add(tab);
-      if (tab.addToTabBar && !data.tabBar.contains('custom:${tab.id}')) {
-        data.tabBar.add('custom:${tab.id}');
-      }
     } else {
       data.customTabs[index] = tab;
+    }
+    final tabBarItem = 'custom:${tab.id}';
+    if (tab.addToTabBar) {
+      if (!data.tabBar.contains(tabBarItem)) data.tabBar.add(tabBarItem);
+    } else {
+      data.tabBar.removeWhere((item) => item == tabBarItem);
     }
     _changed();
   }

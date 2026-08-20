@@ -458,7 +458,7 @@ class AppData {
     final rawTabBar = json['tabBar'];
     final rawClipboard = json['clipboardHistory'];
 
-    return AppData(
+    final data = AppData(
       schemaVersion:
           (json['schemaVersion'] as num?)?.toInt() ?? currentSchemaVersion,
       settings: defaults.settings,
@@ -485,6 +485,22 @@ class AppData {
           : <String, int>{},
       onboardingCompleted: json['onboardingCompleted'] as bool? ?? false,
     )..schemaVersion = currentSchemaVersion;
+
+    // Older versions only synchronized the tab bar when a custom tab was
+    // first created. Repair that saved state so existing tabs are selectable.
+    for (final tab in data.customTabs) {
+      final item = 'custom:${tab.id}';
+      if (tab.addToTabBar) {
+        if (!data.tabBar.contains(item)) data.tabBar.add(item);
+      } else {
+        data.tabBar.removeWhere((value) => value == item);
+      }
+    }
+    for (final custard in data.custards) {
+      final item = 'custom:${custard.identifier}';
+      if (!data.tabBar.contains(item)) data.tabBar.add(item);
+    }
+    return data;
   }
 
   factory AppData.decode(String value) {

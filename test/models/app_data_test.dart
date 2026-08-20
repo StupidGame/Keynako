@@ -45,4 +45,23 @@ void main() {
     expect(data.settings['unicode_candidate'], isTrue);
     expect(data.themes, isNotEmpty);
   });
+
+  test('restores selectable phrase tabs while decoding older state', () {
+    final data = AppData.defaults()
+      ..customTabs.add(
+        const CustomTabData(
+          id: 'phrases',
+          name: '定型文',
+          kind: 'scroll',
+          columns: 2,
+          rows: 5,
+          keys: [],
+        ),
+      );
+
+    final json = data.toJson()..['tabBar'] = <String>['japanese'];
+    final decoded = AppData.fromJson(json);
+
+    expect(decoded.tabBar, ['japanese', 'custom:phrases']);
+  });
 }
