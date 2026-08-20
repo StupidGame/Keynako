@@ -214,11 +214,21 @@ class AzooKeyInputMethodService : InputMethodService() {
         dismissFlickGuide()
         keyboardContainer.removeAllViews()
         val heightScale = settings.optDouble("keyboard_height_scale", 1.0).coerceIn(0.7, 1.4)
-        when {
-            activeCustomTab != null -> renderCustomTab(activeCustomTab!!, heightScale)
-            mode == "symbols" -> renderSymbols(heightScale)
-            layout == "qwerty" -> renderQwerty(heightScale)
-            else -> renderFlick(heightScale)
+        try {
+            when {
+                activeCustomTab != null -> renderCustomTab(activeCustomTab!!, heightScale)
+                mode == "symbols" -> renderSymbols(heightScale)
+                layout == "qwerty" -> renderQwerty(heightScale)
+                else -> renderFlick(heightScale)
+            }
+        } catch (_: RuntimeException) {
+            // A malformed imported custom tab must not take down the IME.
+            // Drop the invalid selection and restore the built-in keyboard.
+            activeCustomTab = null
+            keyboardContainer.removeAllViews()
+            if (mode == "symbols") renderSymbols(heightScale)
+            else if (layout == "qwerty") renderQwerty(heightScale)
+            else renderFlick(heightScale)
         }
         if (activeCustomTab == null) renderStandaloneCustomKeys(heightScale)
     }
@@ -353,7 +363,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             val tab = tabs.optJSONObject(index) ?: continue
             if (tab.optString("id") == id) target = tab
         }
-        if (target == null) return setMode("japanese")
+        if (target == null) {
+            activeCustomTab = null
+            renderFlick(scale)
+            return
+        }
         val columns = target.optInt("columns", 4).coerceIn(1, 8)
         val keys = target.optJSONArray("keys") ?: JSONArray()
         var row = newRow(scale)
@@ -1906,11 +1920,19 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun transformLastCharacter() {
-        if (composing.isEmpty()) return
-        val last = composing.last().toString()
-        val transformed = smallKana[last] ?: last
-        composing = composing.dropLast(1) + transformed
-        updateComposition()
+        if (composing.isNotEmpty()) {
+            val last = composing.last().toString()
+            val transformed = smallKana[last] ?: return
+            composing = composing.dropLast(1) + transformed
+            updateComposition()
+            return
+        }
+        val connection = currentInputConnection ?: return
+        val before = connection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
+        val last = before.takeLast(1)
+        val transformed = smallKana[last] ?: return
+        connection.deleteSurroundingText(last.length, 0)
+        connection.commitText(transformed, 1)
     }
 
     private fun displayReading(): String = if (layout == "qwerty") romanToHiragana(rawRoman) else composing
@@ -2027,6 +2049,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             "や" to "ゃ", "ゃ" to "や", "ゆ" to "ゅ", "ゅ" to "ゆ", "よ" to "ょ", "ょ" to "よ",
             "か" to "が", "が" to "か", "き" to "ぎ", "ぎ" to "き", "く" to "ぐ", "ぐ" to "く",
             "け" to "げ", "げ" to "け", "こ" to "ご", "ご" to "こ", "は" to "ば", "ば" to "ぱ", "ぱ" to "は",
+            "さ" to "ざ", "ざ" to "さ", "し" to "じ", "じ" to "し", "す" to "ず", "ず" to "す",
+            "せ" to "ぜ", "ぜ" to "せ", "そ" to "ぞ", "ぞ" to "そ",
+            "た" to "だ", "だ" to "た", "ち" to "ぢ", "ぢ" to "ち", "て" to "で", "で" to "て", "と" to "ど", "ど" to "と",
+            "ふ" to "ぶ", "ぶ" to "ぷ", "ぷ" to "ふ", "ひ" to "び", "び" to "ぴ", "ぴ" to "ひ",
+            "へ" to "べ", "べ" to "ぺ", "ぺ" to "へ", "ほ" to "ぼ", "ぼ" to "ぽ", "ぽ" to "ほ",
+            "ま" to "ま", "な" to "な", "ら" to "ら", "わ" to "わ",
         )
     }
 }
