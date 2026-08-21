@@ -20,6 +20,8 @@ final class KeyboardViewController: UIInputViewController {
     private var shift = false
     private var capsLock = false
     private var activeCustomTab: String?
+    private var cursorBarVisible = false
+    private weak var cursorBarView: CursorBarView?
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
@@ -43,6 +45,8 @@ final class KeyboardViewController: UIInputViewController {
         reloadState()
         loadOSLexiconIfNeeded()
         resetComposition()
+        cursorBarVisible = false
+        cursorBarView = nil
         mode = "japanese"
         layout = stringSetting("keyboard_type", fallback: "flick")
         renderCandidates()
@@ -52,6 +56,7 @@ final class KeyboardViewController: UIInputViewController {
     override func textWillChange(_ textInput: (any UITextInput)?) {
         super.textWillChange(textInput)
         reloadState()
+        refreshCursorBar()
     }
 
     private func configureView() {
@@ -154,15 +159,15 @@ final class KeyboardViewController: UIInputViewController {
         let rows: [[FlickDefinition]]
         if mode == "english" {
             rows = [
-                [.action("☆123", "symbols", target: "symbols_tab"), .init("@#/&_", ["@", "#", "/", "&", "_"]), .init("ABC", ["a", "b", "c", "2", ""]), .init("DEF", ["d", "e", "f", "3", ""]), .action("⌫", "delete")],
-                [.action("ABC", "english", target: "abc_tab"), .init("GHI", ["g", "h", "i", "4", ""]), .init("JKL", ["j", "k", "l", "5", ""]), .init("MNO", ["m", "n", "o", "6", ""]), .action("空白", "space")],
+                [.action("☆123", "symbols", target: "symbols_tab"), .init("@#/&_", ["@", "#", "/", "&", "_"]), .init("ABC", ["a", "b", "c", "2", ""]), .init("DEF", ["d", "e", "f", "3", ""]), .delete("⌫")],
+                [.action("ABC", "english", target: "abc_tab"), .init("GHI", ["g", "h", "i", "4", ""]), .init("JKL", ["j", "k", "l", "5", ""]), .init("MNO", ["m", "n", "o", "6", ""]), .space("空白")],
                 [.action("あいう", "japanese", target: "hira_tab"), .init("PQRS", ["p", "q", "r", "s", "7"]), .init("TUV", ["t", "u", "v", "8", ""]), .init("WXYZ", ["w", "x", "y", "z", "9"]), .action("改行", "enter")],
                 [.action("🌐", "nextKeyboard"), .action("a/A", "shiftEnglish"), .init("'\"()", ["'", "\"", "(", ")", ""]), .init(".,?!", [".", ",", "?", "!", "'"], target: "kana_symbols"), .action("改行", "enter")],
             ]
         } else {
             rows = [
-                [.action("☆123", "symbols", target: "symbols_tab"), .init("あ", ["あ", "い", "う", "え", "お"]), .init("か", ["か", "き", "く", "け", "こ"]), .init("さ", ["さ", "し", "す", "せ", "そ"]), .action("⌫", "delete")],
-                [.action("ABC", "english", target: "abc_tab"), .init("た", ["た", "ち", "つ", "て", "と"]), .init("な", ["な", "に", "ぬ", "ね", "の"]), .init("は", ["は", "ひ", "ふ", "へ", "ほ"]), .action("空白", "space")],
+                [.action("☆123", "symbols", target: "symbols_tab"), .init("あ", ["あ", "い", "う", "え", "お"]), .init("か", ["か", "き", "く", "け", "こ"]), .init("さ", ["さ", "し", "す", "せ", "そ"]), .delete("⌫")],
+                [.action("ABC", "english", target: "abc_tab"), .init("た", ["た", "ち", "つ", "て", "と"]), .init("な", ["な", "に", "ぬ", "ね", "の"]), .init("は", ["は", "ひ", "ふ", "へ", "ほ"]), .space("空白")],
                 [.action("あいう", "japanese", target: "hira_tab"), .init("ま", ["ま", "み", "む", "め", "も"]), .init("や", ["や", "「", "ゆ", "」", "よ"]), .init("ら", ["ら", "り", "る", "れ", "ろ"]), .action("改行", "enter")],
                 [.action("🌐", "nextKeyboard"), .action("小ﾞﾟ", "kogana", target: "kogana"), .init("わ", ["わ", "を", "ん", "ー", "〜"]), .init("､｡?!", ["、", "。", "？", "！", ""], target: "kana_symbols"), .action("改行", "enter")],
             ]
@@ -464,6 +469,14 @@ final class KeyboardViewController: UIInputViewController {
 
     private func renderCandidates(showTabs: Bool? = nil) {
         candidateStack.removeAllArrangedSubviews()
+        if showTabs == true {
+            cursorBarVisible = false
+            cursorBarView = nil
+        }
+        if cursorBarVisible {
+            renderCursorBar()
+            return
+        }
         if showTabs ?? composing.isEmpty && rawRoman.isEmpty {
             if boolSetting("display_tab_bar_button", fallback: true) {
                 renderTabBar()
@@ -477,6 +490,52 @@ final class KeyboardViewController: UIInputViewController {
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
             candidateStack.addArrangedSubview(button)
         }
+    }
+
+    private func toggleCursorBar() {
+        cursorBarVisible.toggle()
+        if cursorBarVisible {
+            renderCursorBar()
+            if boolSetting("display_cursor_bar_automatically", fallback: false) {
+                cursorBarView?.scheduleAutoDismiss { [weak self] in
+                    guard let self, self.cursorBarVisible else { return }
+                    self.cursorBarVisible = false
+                    self.cursorBarView = nil
+                    self.renderCandidates()
+                }
+            }
+        } else {
+            cursorBarView = nil
+            renderCandidates()
+        }
+    }
+
+    private func renderCursorBar() {
+        candidateStack.removeAllArrangedSubviews()
+        let before = textDocumentProxy.documentContextBeforeInput ?? ""
+        let after = textDocumentProxy.documentContextAfterInput ?? ""
+        let bar = CursorBarView(
+            before: before,
+            after: after,
+            palette: palette,
+            fontSize: CGFloat(doubleSetting("result_view_font_size", fallback: 16).positiveOr(16)),
+            onMove: { [weak self] count in
+                self?.textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
+                self?.refreshCursorBar()
+            }
+        )
+        cursorBarView = bar
+        bar.widthAnchor.constraint(equalTo: candidateScroll.frameLayoutGuide.widthAnchor).isActive = true
+        candidateStack.addArrangedSubview(bar)
+    }
+
+    private func refreshCursorBar() {
+        guard cursorBarVisible,
+              let bar = cursorBarView else { return }
+        bar.update(
+            before: textDocumentProxy.documentContextBeforeInput ?? "",
+            after: textDocumentProxy.documentContextAfterInput ?? ""
+        )
     }
 
     private func renderTabBar() {
@@ -592,6 +651,7 @@ final class KeyboardViewController: UIInputViewController {
     private func directCommit(_ value: String) {
         commitComposition()
         textDocumentProxy.insertText(value)
+        refreshCursorBar()
     }
 
     private func delete() {
@@ -602,6 +662,7 @@ final class KeyboardViewController: UIInputViewController {
             composing.removeLast()
         } else {
             textDocumentProxy.deleteBackward()
+            refreshCursorBar()
             return
         }
         if composing.isEmpty {
@@ -649,13 +710,32 @@ final class KeyboardViewController: UIInputViewController {
 
     private func handleFlickValue(_ value: String, definition: FlickDefinition) {
         feedback()
+        if definition.action == "space", value == "__space_longpress__" {
+            if candidates.isEmpty {
+                if !cursorBarVisible { toggleCursorBar() }
+            } else {
+                selectNextCandidate()
+            }
+            return
+        }
+        if definition.action == "space", value == "__cursor_repeat__" {
+            textDocumentProxy.adjustTextPosition(byCharacterOffset: -1)
+            refreshCursorBar()
+            return
+        }
         guard let action = definition.action else {
             input(value)
             return
         }
         switch action {
-        case "delete": delete()
-        case "space": space()
+        case "delete": value == "×" ? smartDeleteDefault() : delete()
+        case "space":
+            switch value {
+            case "←": textDocumentProxy.adjustTextPosition(byCharacterOffset: -1); refreshCursorBar()
+            case "　": input("　")
+            case "\t": input("\t")
+            default: space()
+            }
         case "enter": enter()
         case "symbols": setMode("symbols")
         case "japanese": setMode("japanese")
@@ -689,8 +769,12 @@ final class KeyboardViewController: UIInputViewController {
             for _ in 0 ..< count.clamped(to: 1 ... 100) { delete() }
         case "enter": enter()
         case "space": space()
-        case "moveCursor": textDocumentProxy.adjustTextPosition(byCharacterOffset: Int(value) ?? 0)
-        case "move_cursor": textDocumentProxy.adjustTextPosition(byCharacterOffset: (action["count"] as? NSNumber)?.intValue ?? 0)
+        case "moveCursor":
+            textDocumentProxy.adjustTextPosition(byCharacterOffset: Int(value) ?? 0)
+            refreshCursorBar()
+        case "move_cursor":
+            textDocumentProxy.adjustTextPosition(byCharacterOffset: (action["count"] as? NSNumber)?.intValue ?? 0)
+            refreshCursorBar()
         case "switchLayout": setMode(value == "english" ? "english" : "japanese")
         case "paste", "__paste":
             if hasFullAccess, let value = UIPasteboard.general.string { directCommit(value) }
@@ -707,8 +791,8 @@ final class KeyboardViewController: UIInputViewController {
         case "smart_move_cursor": smartMoveCursor(action)
         case "move_tab": moveTab(action)
         case "enable_resizing_mode": renderCandidates(showTabs: true)
-        case "toggle_cursor_bar", "toggleTabBar", "toggle_tab_bar": renderCandidates(showTabs: true)
-        case "toggleCursorBar": renderCandidates(showTabs: true)
+        case "toggle_cursor_bar", "toggleCursorBar": toggleCursorBar()
+        case "toggleTabBar", "toggle_tab_bar": renderCandidates(showTabs: true)
         case "toggle_caps_lock_state":
             capsLock.toggle()
             shift = capsLock
@@ -802,6 +886,7 @@ final class KeyboardViewController: UIInputViewController {
             }
             let boundary = boundaries.max() ?? text.startIndex
             for _ in text[boundary...] { textDocumentProxy.deleteBackward() }
+            refreshCursorBar()
         } else {
             let text = textDocumentProxy.documentContextAfterInput ?? ""
             let distances = targets.compactMap { target -> Int? in
@@ -811,6 +896,7 @@ final class KeyboardViewController: UIInputViewController {
             let count = distances.min() ?? text.count
             textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
             for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+            refreshCursorBar()
         }
     }
 
@@ -835,6 +921,7 @@ final class KeyboardViewController: UIInputViewController {
             distance = distances.min() ?? text.count
         }
         textDocumentProxy.adjustTextPosition(byCharacterOffset: distance)
+        refreshCursorBar()
     }
 
     private func selectCandidate(_ selection: [String: Any]?) {
@@ -1175,6 +1262,31 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func makeButton(_ title: String, special: Bool = false, action: @escaping () -> Void) -> UIButton {
+        if title == "⌫" {
+            let deleteButton = RepeatDeleteButton(action: { [weak self] in
+                action()
+                self?.feedback()
+            })
+            deleteButton.setTitle(title, for: .normal)
+            style(deleteButton, special: special)
+            return deleteButton
+        }
+        if title == "space" || title == "空白" || title == "次候補" {
+            let spaceButton = RepeatActionButton(
+                action: { [weak self] in action(); self?.feedback() },
+                longPress: { [weak self] in
+                    guard let self else { return }
+                    if candidates.isEmpty {
+                        if !cursorBarVisible { toggleCursorBar() }
+                    } else {
+                        selectNextCandidate()
+                    }
+                }
+            )
+            spaceButton.setTitle(title, for: .normal)
+            style(spaceButton, special: special)
+            return spaceButton
+        }
         let button = ClosureButton(type: .system)
         button.action = { [weak self] in
             action()
@@ -1290,6 +1402,14 @@ private struct FlickDefinition {
         Self(label: label, values: [label], action: action, customTarget: target)
     }
 
+    static func delete(_ label: String) -> Self {
+        Self(label: label, values: [label, "×", label, label, label], action: "delete", customTarget: nil)
+    }
+
+    static func space(_ label: String) -> Self {
+        Self(label: label, values: [label, "←", "　", "", "\t"], action: "space", customTarget: nil)
+    }
+
     private init(label: String, values: [String], action: String?, customTarget: String?) {
         self.label = label
         self.values = values
@@ -1298,11 +1418,298 @@ private struct FlickDefinition {
     }
 }
 
+/// The cursor bar follows azooKey's reflect style: the cursor stays fixed in
+/// the middle while the surrounding text scrolls, arrows repeat after 0.4s,
+/// and a horizontal swipe advances one character per accumulated distance.
+private final class CursorBarView: UIView {
+    private let palette: KeyboardPalette
+    private let fontSize: CGFloat
+    private let onMove: (Int) -> Void
+    private var line: [String] = []
+    private var displayLeftIndex = 0
+    private var displayRightIndex = 0
+    private var itemCount = 0
+    private var itemWidth: CGFloat { fontSize * 1.3 }
+    private var start = CGPoint.zero
+    private var last = CGPoint.zero
+    private var last2 = CGPoint.zero
+    private var last3 = CGPoint.zero
+    private var swipeCount = 0.0
+    private var moving = false
+    private var arrowOffset = 0
+    private var arrowLongPressed = false
+    private var arrowDownAt = 0.0
+    private var longPressWorkItem: DispatchWorkItem?
+    private var repeatTimer: Timer?
+    private var autoDismissWorkItem: DispatchWorkItem?
+
+    init(
+        before: String,
+        after: String,
+        palette: KeyboardPalette,
+        fontSize: CGFloat,
+        onMove: @escaping (Int) -> Void
+    ) {
+        self.palette = palette
+        self.fontSize = fontSize
+        self.onMove = onMove
+        super.init(frame: .zero)
+        isUserInteractionEnabled = true
+        update(before: before, after: after)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: 42) }
+
+    func update(before: String, after: String) {
+        let left = before.components(separatedBy: "\n").last ?? before
+        line = Array(left + after).map { String($0) } + ["⏎"]
+        updateItemCount()
+        setNeedsDisplay()
+    }
+
+    func scheduleAutoDismiss(_ action: @escaping () -> Void) {
+        autoDismissWorkItem?.cancel()
+        let work = DispatchWorkItem(block: action)
+        autoDismissWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: work)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateItemCount()
+    }
+
+    private func updateItemCount() {
+        guard bounds.width > 0 else { return }
+        itemCount = max(0, (Int(bounds.width / itemWidth) >> 1) << 1)
+        let half = itemCount / 2
+        displayLeftIndex = line.count - half
+        displayRightIndex = displayLeftIndex + itemCount
+    }
+
+    private func move(_ count: Int) {
+        let center = displayLeftIndex + itemCount / 2
+        guard center + count >= -1, line.count >= center + count else { return }
+        displayLeftIndex += count
+        displayRightIndex += count
+        onMove(count)
+        setNeedsDisplay()
+    }
+
+    private func tap(at x: CGFloat) {
+        guard itemWidth > 0, bounds.width > 0 else { return }
+        let offset = Int(((x - bounds.midX) / itemWidth).rounded(.toNearestOrAwayFromZero))
+        move(offset)
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        let colors = [palette.key.cgColor, palette.background.cgColor] as CFArray
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+            context.drawRadialGradient(gradient, startCenter: CGPoint(x: bounds.midX, y: bounds.midY), startRadius: 1, endCenter: CGPoint(x: bounds.midX, y: bounds.midY), endRadius: bounds.width / 2, options: [])
+        } else {
+            palette.key.setFill()
+            context.fill(bounds)
+        }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: fontSize),
+            .foregroundColor: palette.text.withAlphaComponent(0.4),
+        ]
+        let centerIndex = displayLeftIndex + itemCount / 2
+        let startIndex = displayLeftIndex - 4
+        for index in startIndex ..< displayRightIndex + 4 {
+            guard line.indices.contains(index), !line[index].isEmpty else { continue }
+            let value = line[index] as NSString
+            let width = value.size(withAttributes: attributes).width
+            let x = bounds.midX + CGFloat(index - centerIndex) * itemWidth - width / 2
+            value.draw(at: CGPoint(x: x, y: bounds.midY - fontSize / 2 - 1), withAttributes: attributes)
+        }
+        let symbolAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 18),
+            .foregroundColor: palette.text,
+        ]
+        ("‹‹" as NSString).draw(at: CGPoint(x: 12, y: bounds.midY - 11), withAttributes: symbolAttributes)
+        ("››" as NSString).draw(at: CGPoint(x: bounds.width - 35, y: bounds.midY - 11), withAttributes: symbolAttributes)
+        ("│" as NSString).draw(at: CGPoint(x: bounds.midX - 4, y: bounds.midY - (fontSize + 4) / 2 - 1), withAttributes: [
+            .font: UIFont.boldSystemFont(ofSize: fontSize + 4),
+            .foregroundColor: palette.text,
+        ])
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        guard let point = touches.first?.location(in: self) else { return }
+        start = point
+        last = point
+        last2 = point
+        last3 = point
+        swipeCount = 0
+        moving = false
+        arrowLongPressed = false
+        arrowDownAt = CACurrentMediaTime()
+        arrowOffset = point.x < 48 ? -1 : (point.x > bounds.width - 48 ? 1 : 0)
+        if arrowOffset != 0 {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.arrowOffset != 0 else { return }
+                self.arrowLongPressed = true
+                self.move(self.arrowOffset)
+                self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                    guard let self, self.arrowLongPressed else { return }
+                    self.move(self.arrowOffset)
+                }
+            }
+            longPressWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        guard let point = touches.first?.location(in: self) else { return }
+        if hypot(point.x - start.x, point.y - start.y) > 20 {
+            longPressWorkItem?.cancel()
+            if arrowOffset == 0 { moving = true }
+        }
+        if arrowOffset == 0, moving {
+            var direction = 0
+            direction += point.x - last.x > 0 ? -1 : 1
+            direction += last.x - last2.x > 0 ? -1 : 1
+            direction += last2.x - last3.x > 0 ? -1 : 1
+            if direction > 0, point.x < last3.x { swipeCount += Double(direction) / 3 * (last3.x - point.x) / 3 }
+            else if direction < 0, point.x > last3.x { swipeCount -= Double(direction) / 3 * (last3.x - point.x) / 3 }
+            while swipeCount >= 15 { move(1); swipeCount -= 15 }
+            while swipeCount <= -15 { move(-1); swipeCount += 15 }
+        }
+        last3 = last2
+        last2 = last
+        last = point
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        guard let point = touches.first?.location(in: self) else { return }
+        let elapsed = CACurrentMediaTime() - arrowDownAt
+        if arrowOffset != 0 {
+            if !arrowLongPressed, elapsed < 0.4, hypot(point.x - start.x, point.y - start.y) <= 20 { move(arrowOffset) }
+        } else if !moving {
+            tap(at: start.x)
+        }
+        arrowOffset = 0
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        arrowOffset = 0
+        super.touchesCancelled(touches, with: event)
+    }
+}
+
+private final class RepeatDeleteButton: UIButton {
+    private let press: () -> Void
+    private var longPressWorkItem: DispatchWorkItem?
+    private var repeatTimer: Timer?
+    private var didLongPress = false
+
+    init(action: @escaping () -> Void) {
+        self.press = action
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        didLongPress = false
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.didLongPress = true
+            self.press()
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.press() }
+            self.repeatTimer?.fire()
+        }
+        longPressWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        super.touchesEnded(touches, with: event)
+        if !didLongPress { press() }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        super.touchesCancelled(touches, with: event)
+    }
+}
+
+private final class RepeatActionButton: UIButton {
+    private let press: () -> Void
+    private let longPress: () -> Void
+    private var longPressWorkItem: DispatchWorkItem?
+    private var repeatTimer: Timer?
+    private var didLongPress = false
+
+    init(action: @escaping () -> Void, longPress: @escaping () -> Void) {
+        self.press = action
+        self.longPress = longPress
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        didLongPress = false
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.didLongPress = true
+            self.longPress()
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.longPress() }
+            self.repeatTimer?.fire()
+        }
+        longPressWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        super.touchesEnded(touches, with: event)
+        if !didLongPress { press() }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        super.touchesCancelled(touches, with: event)
+    }
+}
+
 private final class FlickButton: UIButton {
     private let definition: FlickDefinition
     private let sensitivity: CGFloat
     private let callback: (String) -> Void
     private var start = CGPoint.zero
+    private var longPressWorkItem: DispatchWorkItem?
+    private var repeatTimer: Timer?
+    private var didLongPress = false
+    private var longPressFlicked = false
+    private var cursorLongPressed = false
+    private var cursorLongPressScheduled = false
 
     init(definition: FlickDefinition, sensitivity: CGFloat, callback: @escaping (String) -> Void) {
         self.definition = definition
@@ -1317,10 +1724,37 @@ private final class FlickButton: UIButton {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         start = touches.first?.location(in: self) ?? .zero
+        didLongPress = false
+        longPressFlicked = false
+        cursorLongPressed = false
+        cursorLongPressScheduled = false
+        guard definition.action == "delete" || definition.action == "space" else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.didLongPress = true
+            if self.definition.action == "delete" {
+                self.callback(self.definition.values[0])
+                self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
+                    guard let self else { return }
+                    self.callback(self.definition.values[0])
+                }
+                self.repeatTimer?.fire()
+            } else {
+                self.callback("__space_longpress__")
+                self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.callback("__space_longpress__") }
+                self.repeatTimer?.fire()
+            }
+        }
+        longPressWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        guard (!didLongPress || longPressFlicked) && !cursorLongPressed else { return }
         let end = touches.first?.location(in: self) ?? start
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -1335,6 +1769,42 @@ private final class FlickButton: UIButton {
         }
         callback(definition.values[min(index, definition.values.count - 1)])
     }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        cursorLongPressScheduled = false
+        super.touchesCancelled(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let point = touches.first?.location(in: self) else { return }
+        let dx = point.x - start.x
+        let dy = point.y - start.y
+        if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
+            longPressWorkItem?.cancel()
+            if didLongPress {
+                longPressFlicked = true
+                didLongPress = false
+                repeatTimer?.invalidate()
+                repeatTimer = nil
+            }
+            if definition.action == "space", abs(dx) > abs(dy), dx < 0, !cursorLongPressScheduled {
+                cursorLongPressScheduled = true
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.cursorLongPressed = true
+                    self.callback("__cursor_repeat__")
+                    self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.callback("__cursor_repeat__") }
+                    self.repeatTimer?.fire()
+                }
+                longPressWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
 }
 
 private final class CustomFlickButton: UIButton {
@@ -1345,6 +1815,7 @@ private final class CustomFlickButton: UIButton {
     private var longPressWorkItem: DispatchWorkItem?
     private var repeatTimer: Timer?
     private var didLongPress = false
+    private var longPressFlicked = false
 
     init(
         key: [String: Any],
@@ -1364,6 +1835,7 @@ private final class CustomFlickButton: UIButton {
         super.touchesBegan(touches, with: event)
         start = touches.first?.location(in: self) ?? .zero
         didLongPress = false
+        longPressFlicked = false
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             let action = key["longPress"] as? [String: Any]
@@ -1379,7 +1851,8 @@ private final class CustomFlickButton: UIButton {
             }
         }
         longPressWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        let duration = (key["duration"] as? String == "light") ? 0.125 : 0.4
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -1387,7 +1860,7 @@ private final class CustomFlickButton: UIButton {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
-        guard !didLongPress else { return }
+        guard !didLongPress || longPressFlicked else { return }
         let end = touches.first?.location(in: self) ?? start
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -1401,6 +1874,22 @@ private final class CustomFlickButton: UIButton {
             direction = dy < 0 ? "up" : "down"
         }
         callback(key[direction] as? [String: Any] ?? key["tap"] as? [String: Any])
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let point = touches.first?.location(in: self) else { return }
+        let dx = point.x - start.x
+        let dy = point.y - start.y
+        if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
+            longPressWorkItem?.cancel()
+            if didLongPress {
+                longPressFlicked = true
+                didLongPress = false
+                repeatTimer?.invalidate()
+                repeatTimer = nil
+            }
+        }
+        super.touchesMoved(touches, with: event)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -1528,6 +2017,9 @@ private final class CustardButton: UIButton {
     private var repeatTimer: Timer?
     private var didLongPress = false
     private var repeatedLongPress = false
+    private var longPressFlicked = false
+    private var variationDidLongPress = false
+    private var longPressDirection: String?
 
     init(
         title: String,
@@ -1556,6 +2048,9 @@ private final class CustardButton: UIButton {
         current = start
         didLongPress = false
         repeatedLongPress = false
+        longPressFlicked = false
+        variationDidLongPress = false
+        longPressDirection = nil
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let startActions = longPress["start"] as? [[String: Any]] ?? []
         let repeated = longPress["repeat"] as? [[String: Any]] ?? []
@@ -1567,22 +2062,23 @@ private final class CustardButton: UIButton {
                 !(actions["repeat"] as? [[String: Any]] ?? []).isEmpty
         }
         guard !startActions.isEmpty || !repeated.isEmpty || handlesPCVariation || handlesFlickLongPress else { return }
-        let delay = longPress["duration"] as? String == "light" ? 0.3 : 0.5
+        let delay = longPress["duration"] as? String == "light" ? 0.125 : 0.4
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            let selected = selectedGestureKey(at: current)
+            let selected = self.selectedGestureKey(at: self.current)
             let selectedLongPress = selected["longpress_actions"] as? [String: Any] ?? [:]
             let selectedStart = selectedLongPress["start"] as? [[String: Any]] ?? []
             let selectedRepeat = selectedLongPress["repeat"] as? [[String: Any]] ?? []
             guard !selectedStart.isEmpty || !selectedRepeat.isEmpty || handlesPCVariation else { return }
-            didLongPress = true
-            repeatedLongPress = !selectedRepeat.isEmpty
-            callback(selectedStart)
+            self.didLongPress = true
+            self.variationDidLongPress = self.current.x != self.start.x || self.current.y != self.start.y
+            self.repeatedLongPress = !selectedRepeat.isEmpty
+            self.callback(selectedStart)
             if !selectedRepeat.isEmpty {
-                repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
+                self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
                     self?.callback(selectedRepeat)
                 }
-                repeatTimer?.fire()
+                self.repeatTimer?.fire()
             }
         }
         longPressWorkItem = work
@@ -1591,6 +2087,43 @@ private final class CustardButton: UIButton {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         current = touches.first?.location(in: self) ?? current
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
+            longPressWorkItem?.cancel()
+            if didLongPress {
+                longPressFlicked = true
+                didLongPress = false
+                variationDidLongPress = false
+                repeatTimer?.invalidate()
+                repeatTimer = nil
+            }
+            let direction: String = abs(dx) > abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "top" : "bottom")
+            if !didLongPress, direction != longPressDirection, variationsEnabled, keyStyle != "pc_style" {
+                longPressDirection = direction
+                let variation = variations(type: "flick_variation").first { $0["direction"] as? String == direction }
+                let variationKey = variation?["key"] as? [String: Any] ?? [:]
+                let variationLongPress = variationKey["longpress_actions"] as? [String: Any] ?? [:]
+                let startActions = variationLongPress["start"] as? [[String: Any]] ?? []
+                let repeatActions = variationLongPress["repeat"] as? [[String: Any]] ?? []
+                if !startActions.isEmpty || !repeatActions.isEmpty {
+                    let work = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.variationDidLongPress = true
+                        self.didLongPress = true
+                        self.repeatedLongPress = !repeatActions.isEmpty
+                        self.callback(startActions)
+                        if !repeatActions.isEmpty {
+                            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.callback(repeatActions) }
+                            self.repeatTimer?.fire()
+                        }
+                    }
+                    longPressWorkItem = work
+                    let delay = variationLongPress["duration"] as? String == "light" ? 0.125 : 0.4
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+                }
+            }
+        }
         super.touchesMoved(touches, with: event)
     }
 
@@ -1601,7 +2134,8 @@ private final class CustardButton: UIButton {
         repeatTimer = nil
         let end = touches.first?.location(in: self) ?? start
         current = end
-        if didLongPress {
+        if didLongPress && !longPressFlicked {
+            if variationDidLongPress { return }
             if variationsEnabled, keyStyle == "pc_style", !repeatedLongPress {
                 let variations = variations(type: "longpress_variation")
                 if !variations.isEmpty {
@@ -1613,6 +2147,7 @@ private final class CustardButton: UIButton {
             }
             return
         }
+        if longPressFlicked && variationDidLongPress { return }
         let selected = selectedGestureKey(at: end)
         callback(selected["press_actions"] as? [[String: Any]] ?? [])
     }
