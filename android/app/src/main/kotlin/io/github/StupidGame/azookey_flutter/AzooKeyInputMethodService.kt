@@ -8,6 +8,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.inputmethodservice.InputMethodService
 import android.media.AudioManager
 import android.os.Build
@@ -42,6 +46,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 class AzooKeyInputMethodService : InputMethodService() {
@@ -64,6 +69,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var pendingReport: WrongConversionReport? = null
     private var palette = KeyboardPalette.default()
     private var flickGuide: FlickGuide? = null
+    private var cursorBarVisible = false
+    private var cursorBarView: CursorBarView? = null
     private val zenzaiRuntime by lazy { AndroidZenzaiRuntime(this) }
 
     override fun onCreate() {
@@ -160,6 +167,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
+        cursorBarVisible = false
+        cursorBarView = null
         activeCustomTab = getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .getString(ACTIVE_CUSTOM_TAB_KEY, null)
             ?.trim()
@@ -267,7 +276,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("GHI", "g", "h", "i", "4", null),
                 FlickKey("JKL", "j", "k", "l", "5", null),
                 FlickKey("MNO", "m", "n", "o", "6", null),
-                FlickKey("空白", action = "space", special = true),
+                FlickKey("空白", "空白", "←", "　", "", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -296,7 +305,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("た", "た", "ち", "つ", "て", "と"),
                 FlickKey("な", "な", "に", "ぬ", "ね", "の"),
                 FlickKey("は", "は", "ひ", "ふ", "へ", "ほ"),
-                FlickKey("空白", action = "space", special = true),
+                FlickKey("空白", "空白", "←", "　", "", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -582,6 +591,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         var currentY = 0f
         var didLongPress = false
         var repeating = false
+        var selectedDirection: String? = null
+        var longPressFlicked = false
+        var variationDidLongPress = false
         val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
         val startActions = longPressData.optJSONArray("start") ?: JSONArray()
         var activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
@@ -634,6 +646,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 return@Runnable
             }
             didLongPress = true
+            variationDidLongPress = selectedDirection != null
             dismissFlickGuide()
             dispatchActions(selectedStartActions)
             if (activeRepeatActions.length() > 0) {
@@ -651,9 +664,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                     currentY = event.y
                     didLongPress = false
                     repeating = false
+                    longPressFlicked = false
+                    variationDidLongPress = false
                     activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
                     target.isPressed = true
-                    val delay = if (longPressData.optString("duration") == "light") 300L else 500L
+                    selectedDirection = null
+                    val delay = if (longPressData.optString("duration") == "light") 125L else 400L
                     if (handlesLongPress) handler.postDelayed(longPress, delay)
                     showFlickGuide(target, centerLabel, leftLabel, upLabel, rightLabel, downLabel)
                     true
@@ -668,7 +684,18 @@ class AzooKeyInputMethodService : InputMethodService() {
                     dismissFlickGuide()
                     val dx = event.x - startX
                     val dy = event.y - startY
-                    if (!didLongPress) {
+                    if (longPressFlicked) {
+                        if (!variationDidLongPress) {
+                            val threshold = dp(20).toFloat() *
+                                settings.optDouble("flick_sensitivity_setting", 1.0).toFloat()
+                            val direction = if (!variationsEnabled || abs(dx) < threshold && abs(dy) < threshold) null
+                            else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
+                            else if (dy < 0) "top" else "bottom"
+                            val variation = findCustardVariation(key, "flick_variation", direction)
+                            dispatchActions(variation?.optJSONArray("press_actions") ?: key.optJSONArray("press_actions"))
+                            feedback(target)
+                        }
+                    } else if (!didLongPress) {
                         val threshold = dp(20).toFloat() *
                             settings.optDouble("flick_sensitivity_setting", 1.0).toFloat()
                         val direction = if (!variationsEnabled || abs(dx) < threshold && abs(dy) < threshold) null
@@ -691,7 +718,28 @@ class AzooKeyInputMethodService : InputMethodService() {
                 MotionEvent.ACTION_MOVE -> {
                     currentX = event.x
                     currentY = event.y
-                    updateFlickGuide(flickDirection(event.x - startX, event.y - startY))
+                    val direction = flickDirection(event.x - startX, event.y - startY)
+                    updateFlickGuide(direction)
+                    if (direction != null && direction != selectedDirection) {
+                        // azooKey cancels the center long-press as soon as a
+                        // flick direction is selected, then reserves the
+                        // variation's own long-press from that point.
+                        selectedDirection = direction
+                        handler.removeCallbacks(longPress)
+                        if (didLongPress) {
+                            longPressFlicked = true
+                            didLongPress = false
+                            repeating = false
+                            handler.removeCallbacks(repeatAction)
+                        }
+                        val variation = findCustardVariation(key, "flick_variation", direction)
+                        val variationLongPress = variation?.optJSONObject("longpress_actions")
+                        val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
+                            (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
+                        if (hasVariationLongPress) {
+                            handler.postDelayed(longPress, if (longPressData.optString("duration") == "light") 125L else 400L)
+                        }
+                    }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -844,6 +892,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var startY = 0f
         var longPressed = false
         var repeating = false
+        var longPressFlicked = false
         val leftLabel = actionDisplayLabel(key.optJSONObject("left"))
         val upLabel = actionDisplayLabel(key.optJSONObject("up"))
         val rightLabel = actionDisplayLabel(key.optJSONObject("right"))
@@ -874,8 +923,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                     startX = event.x
                     startY = event.y
                     longPressed = false
+                    longPressFlicked = false
                     target.isPressed = true
-                    handler.postDelayed(longPress, 500)
+                    val delay = if (key.optString("longPressDuration", key.optString("duration")) == "light") 125L else 400L
+                    handler.postDelayed(longPress, delay)
                     runCatching {
                         showFlickGuide(
                             target,
@@ -889,7 +940,17 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    updateFlickGuide(flickDirection(event.x - startX, event.y - startY))
+                    val direction = flickDirection(event.x - startX, event.y - startY)
+                    if (direction != null) {
+                        handler.removeCallbacks(longPress)
+                        if (longPressed) {
+                            longPressFlicked = true
+                            longPressed = false
+                            repeating = false
+                            handler.removeCallbacks(repeatAction)
+                        }
+                    }
+                    updateFlickGuide(direction)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
@@ -898,7 +959,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     handler.removeCallbacks(repeatAction)
                     target.isPressed = false
                     dismissFlickGuide()
-                    if (!longPressed) {
+                    if (!longPressed || longPressFlicked) {
                         val dx = event.x - startX
                         val dy = event.y - startY
                         val threshold = dp(20).toFloat() *
@@ -933,22 +994,93 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun createFlickKey(key: FlickKey, scale: Double): View {
         val view = createKey(key.label, key.special, scale, null)
+        val handler = Handler(Looper.getMainLooper())
         var startX = 0f
         var startY = 0f
+        var longPressed = false
+        var repeating = false
+        var longPressFlicked = false
+        var cursorLongPressed = false
+        var cursorLongPressScheduled = false
+        val isDelete = key.action == "delete"
+        val isSpace = key.action == "space"
+        val repeat = object : Runnable {
+            override fun run() {
+                if (!repeating) return
+                if (isDelete) delete() else if (isSpace) selectNextCandidate()
+                handler.postDelayed(this, 70)
+            }
+        }
+        val cursorRepeat = object : Runnable {
+            override fun run() {
+                if (!cursorLongPressed) return
+                moveCursor(-1)
+                handler.postDelayed(this, 70)
+            }
+        }
+        val longPress = Runnable {
+            if (!isDelete && !isSpace) return@Runnable
+            longPressed = true
+            if (isDelete) {
+                repeating = true
+                delete()
+                handler.postDelayed(repeat, 70)
+            } else if (composing.isEmpty() && rawRoman.isEmpty()) {
+                toggleCursorBar()
+            } else {
+                repeating = true
+                selectNextCandidate()
+                handler.postDelayed(repeat, 70)
+            }
+            feedback(view)
+        }
+        val cursorLongPress = Runnable {
+            if (!isSpace) return@Runnable
+            cursorLongPressed = true
+            moveCursor(-1)
+            handler.post(cursorRepeat)
+            feedback(view)
+        }
         view.setOnTouchListener { target, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.x
                     startY = event.y
+                    longPressed = false
+                    repeating = false
+                    longPressFlicked = false
+                    cursorLongPressed = false
+                    cursorLongPressScheduled = false
+                    if (isDelete || isSpace) handler.postDelayed(longPress, 400)
                     target.isPressed = true
                     showFlickGuide(target, key.label, key.left, key.up, key.right, key.down)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    updateFlickGuide(flickDirection(event.x - startX, event.y - startY))
+                    val direction = flickDirection(event.x - startX, event.y - startY)
+                    if (direction != null) {
+                        handler.removeCallbacks(longPress)
+                        if (longPressed) {
+                            longPressFlicked = true
+                            longPressed = false
+                            repeating = false
+                            handler.removeCallbacks(repeat)
+                        }
+                        if (isSpace && direction == "left" && !cursorLongPressScheduled) {
+                            cursorLongPressScheduled = true
+                            handler.postDelayed(cursorLongPress, 400)
+                        }
+                    }
+                    updateFlickGuide(direction)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(longPress)
+                    handler.removeCallbacks(cursorLongPress)
+                    cursorLongPressScheduled = false
+                    repeating = false
+                    handler.removeCallbacks(repeat)
+                    handler.removeCallbacks(cursorRepeat)
                     target.isPressed = false
                     val dx = event.x - startX
                     val dy = event.y - startY
@@ -961,17 +1093,31 @@ class AzooKeyInputMethodService : InputMethodService() {
                         else -> key.center
                     }
                     dismissFlickGuide()
-                    if (key.action == "delete" && direction == "left") {
-                        smartDeleteDefault()
-                    } else if (key.action != null) {
-                        dispatchNamedAction(key.action)
-                    } else {
-                        inputText(value ?: key.center)
+                    if ((!longPressed || longPressFlicked) && !cursorLongPressed) {
+                        if (isSpace && direction == "left") {
+                            moveCursor(-1)
+                        } else if (isSpace && direction == "up") {
+                            inputText("　")
+                        } else if (isSpace && direction == "down") {
+                            inputText("\t")
+                        } else if (isDelete && direction == "left") {
+                            smartDeleteDefault()
+                        } else if (key.action != null) {
+                            dispatchNamedAction(key.action)
+                        } else {
+                            inputText(value ?: key.center)
+                        }
+                        feedback(target)
                     }
-                    feedback(target)
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPress)
+                    handler.removeCallbacks(cursorLongPress)
+                    cursorLongPressScheduled = false
+                    repeating = false
+                    handler.removeCallbacks(repeat)
+                    handler.removeCallbacks(cursorRepeat)
                     target.isPressed = false
                     dismissFlickGuide()
                     true
@@ -1109,7 +1255,71 @@ class AzooKeyInputMethodService : InputMethodService() {
             val vertical = (dp(2) * scale).toInt().coerceAtLeast(1)
             val horizontal = dp(2)
             setPadding(horizontal, vertical, horizontal, vertical)
-            if (action != null) {
+            if (action != null && (label == "⌫" || label == "space" || label == "空白" || label == "次候補")) {
+                // azooKey's delete and space keys share the same long-press
+                // state machine. Space opens the cursor bar when no candidate
+                // is active, otherwise it repeats candidate selection.
+                val isDelete = label == "⌫"
+                val isNextCandidate = label == "次候補"
+                val handler = Handler(Looper.getMainLooper())
+                var longPressed = false
+                var repeating = false
+                val repeat = object : Runnable {
+                    override fun run() {
+                        if (!repeating) return
+                        if (isDelete) action() else if (isNextCandidate) space() else selectNextCandidate()
+                        handler.postDelayed(this, 70)
+                    }
+                }
+                val longPress = Runnable {
+                    longPressed = true
+                    repeating = true
+                    if (isDelete) {
+                        action()
+                        handler.postDelayed(repeat, 70)
+                    } else if (isNextCandidate) {
+                        repeating = false
+                        space()
+                    } else if (composing.isEmpty() && rawRoman.isEmpty()) {
+                        repeating = false
+                        toggleCursorBar()
+                    } else {
+                        selectNextCandidate()
+                        handler.postDelayed(repeat, 70)
+                    }
+                    feedback(this@apply)
+                }
+                setOnTouchListener { target, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            longPressed = false
+                            repeating = false
+                            handler.postDelayed(longPress, 400)
+                            target.isPressed = true
+                            true
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            handler.removeCallbacks(longPress)
+                            repeating = false
+                            handler.removeCallbacks(repeat)
+                            target.isPressed = false
+                            if (!longPressed) {
+                                action()
+                                feedback(target)
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            handler.removeCallbacks(longPress)
+                            repeating = false
+                            handler.removeCallbacks(repeat)
+                            target.isPressed = false
+                            true
+                        }
+                        else -> true
+                    }
+                }
+            } else if (action != null) {
                 setOnClickListener {
                     action()
                     feedback(this)
@@ -1137,6 +1347,14 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun renderCandidates(showTabs: Boolean = composing.isEmpty()) {
         if (!::candidateRow.isInitialized) return
         candidateRow.removeAllViews()
+        if (showTabs) {
+            cursorBarVisible = false
+            cursorBarView = null
+        }
+        if (cursorBarVisible) {
+            renderCursorBar()
+            return
+        }
         if (showTabs) {
             if (settings.optBoolean("display_tab_bar_button", true)) renderTabBar()
             return
@@ -1206,6 +1424,31 @@ class AzooKeyInputMethodService : InputMethodService() {
                 setOnClickListener { showClipboardHistory() }
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(43)))
         }
+    }
+
+    private fun toggleCursorBar() {
+        cursorBarVisible = !cursorBarVisible
+        if (cursorBarVisible) {
+            renderCursorBar()
+            if (settings.optBoolean("display_cursor_bar_automatically", false)) {
+                cursorBarView?.scheduleAutoDismiss()
+            }
+        } else {
+            cursorBarView = null
+            renderCandidates()
+        }
+    }
+
+    private fun renderCursorBar() {
+        if (!::candidateRow.isInitialized) return
+        candidateRow.removeAllViews()
+        val bar = CursorBarView()
+        cursorBarView = bar
+        candidateRow.addView(
+            bar,
+            LinearLayout.LayoutParams(resources.displayMetrics.widthPixels, dp(43)),
+        )
+        bar.post { bar.refresh() }
     }
 
     private fun resolvedTabBar(): JSONArray {
@@ -1638,6 +1881,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         commitComposition()
         currentInputConnection?.commitText(value, 1)
         renderCandidates()
+        cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun delete() {
@@ -1657,7 +1901,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                     renderCandidates()
                 } else updateComposition()
             }
-            else -> currentInputConnection?.deleteSurroundingText(1, 0)
+            else -> {
+                currentInputConnection?.deleteSurroundingText(1, 0)
+                cursorBarView?.post { cursorBarView?.refresh() }
+            }
         }
     }
 
@@ -1671,6 +1918,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         } else {
             commitComposition()
         }
+    }
+
+    private fun selectNextCandidate() {
+        if (candidates.isEmpty()) {
+            space()
+            return
+        }
+        selectedCandidate = (selectedCandidate + 1) % candidates.size
+        currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+        renderCandidateValues()
     }
 
     private fun enter() {
@@ -1763,8 +2020,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             "smart_move_cursor" -> smartMoveCursor(action)
             "move_tab" -> moveTab(action)
             "enable_resizing_mode" -> renderCandidates(true)
-            "toggle_cursor_bar", "toggleTabBar", "toggle_tab_bar" -> renderCandidates(true)
-            "toggleCursorBar" -> renderCandidates(true)
+            "toggle_cursor_bar", "toggleCursorBar" -> toggleCursorBar()
+            "toggleTabBar", "toggle_tab_bar" -> renderCandidates(true)
             "toggle_caps_lock_state" -> {
                 capsLock = !capsLock
                 shift = capsLock
@@ -1822,6 +2079,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
             currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
         }
+        cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun replaceDefault() {
@@ -1876,6 +2134,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (index < 0) null else index + target.length
             }.maxOrNull() ?: 0
             currentInputConnection?.deleteSurroundingText(text.length - boundary, 0)
+            cursorBarView?.post { cursorBarView?.refresh() }
         } else {
             val text = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
             val boundary = targets.mapNotNull { target ->
@@ -1883,6 +2142,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (index < 0) null else index
             }.minOrNull() ?: text.length
             currentInputConnection?.deleteSurroundingText(0, boundary)
+            cursorBarView?.post { cursorBarView?.refresh() }
         }
     }
 
@@ -2052,6 +2312,186 @@ class AzooKeyInputMethodService : InputMethodService() {
         val special: Boolean = false,
         val customTarget: String? = null,
     )
+
+    /** Reflect-style cursor bar used by azooKey's new cursor-bar setting. */
+    private inner class CursorBarView : View(this@AzooKeyInputMethodService) {
+        private val handler = Handler(Looper.getMainLooper())
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val symbolPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private var line = emptyList<String>()
+        private var displayLeftIndex = 0
+        private var displayRightIndex = 0
+        private var itemCount = 0
+        private var itemWidth = dp(20).toFloat()
+        private var downX = 0f
+        private var downY = 0f
+        private var lastX = 0f
+        private var last2X = 0f
+        private var last3X = 0f
+        private var swipeCount = 0.0
+        private var moving = false
+        private var arrowOffset = 0
+        private var arrowLongPressed = false
+        private var arrowDownAt = 0L
+        private var autoDismiss: Runnable? = null
+        private val arrowRepeat = object : Runnable {
+            override fun run() {
+                if (!arrowLongPressed) return
+                move(arrowOffset)
+                handler.postDelayed(this, 100)
+            }
+        }
+        private val arrowLongPress = Runnable {
+            if (arrowOffset == 0) return@Runnable
+            arrowLongPressed = true
+            move(arrowOffset)
+            handler.post(arrowRepeat)
+            feedback(this)
+        }
+
+        init {
+            isClickable = true
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.typeface = Typeface.DEFAULT_BOLD
+            symbolPaint.textAlign = Paint.Align.CENTER
+            symbolPaint.typeface = Typeface.DEFAULT_BOLD
+            setWillNotDraw(false)
+        }
+
+        fun refresh() {
+            val before = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
+            val after = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
+            val left = before.substringAfterLast('\n')
+            line = (left + after).map { it.toString() } + listOf("⏎")
+            val half = itemCount / 2
+            displayLeftIndex = line.size - half
+            displayRightIndex = displayLeftIndex + itemCount
+            invalidate()
+        }
+
+        fun scheduleAutoDismiss() {
+            autoDismiss?.let(handler::removeCallbacks)
+            val task = Runnable {
+                if (cursorBarVisible) {
+                    cursorBarVisible = false
+                    cursorBarView = null
+                    renderCandidates()
+                }
+            }
+            autoDismiss = task
+            handler.postDelayed(task, 10_000)
+        }
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            val size = settings.optDouble("result_view_font_size", 16.0).toFloat().coerceAtLeast(12f)
+            itemWidth = size * 1.3f * resources.displayMetrics.scaledDensity
+            itemCount = ((w / itemWidth).toInt() shr 1) shl 1
+            refresh()
+        }
+
+        private fun move(count: Int) {
+            val center = displayLeftIndex + itemCount / 2
+            if (center + count < -1 || line.size < center + count) return
+            displayLeftIndex += count
+            displayRightIndex += count
+            moveCursor(count)
+            invalidate()
+        }
+
+        private fun tap(x: Float) {
+            if (width <= 0 || itemWidth <= 0) return
+            val offset = ((x - width / 2f) / itemWidth).roundToInt()
+            move(offset)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val center = width / 2f
+            val radius = width / 2f
+            val gradient = RadialGradient(center, height / 2f, radius, palette.key, palette.background, Shader.TileMode.CLAMP)
+            canvas.drawPaint(Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient })
+            val size = settings.optDouble("result_view_font_size", 16.0).toFloat().coerceAtLeast(12f)
+            textPaint.textSize = size * resources.displayMetrics.scaledDensity
+            textPaint.color = Color.argb(105, Color.red(palette.text), Color.green(palette.text), Color.blue(palette.text))
+            val start = displayLeftIndex - 4
+            for (index in start until displayRightIndex + 4) {
+                val value = line.getOrNull(index) ?: ""
+                if (value.isEmpty()) continue
+                val x = center + (index - (displayLeftIndex + itemCount / 2)) * itemWidth
+                canvas.drawText(value, x, height / 2f - (textPaint.ascent() + textPaint.descent()) / 2f, textPaint)
+            }
+            symbolPaint.textSize = dp(18).toFloat()
+            symbolPaint.color = palette.text
+            canvas.drawText("‹‹", dp(22).toFloat(), height / 2f - (symbolPaint.ascent() + symbolPaint.descent()) / 2f, symbolPaint)
+            canvas.drawText("››", width - dp(22).toFloat(), height / 2f - (symbolPaint.ascent() + symbolPaint.descent()) / 2f, symbolPaint)
+            symbolPaint.textSize = (size + 4) * resources.displayMetrics.scaledDensity
+            canvas.drawText("│", center, height / 2f - (symbolPaint.ascent() + symbolPaint.descent()) / 2f, symbolPaint)
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    lastX = downX
+                    last2X = downX
+                    last3X = downX
+                    swipeCount = 0.0
+                    moving = false
+                    arrowLongPressed = false
+                    arrowDownAt = System.currentTimeMillis()
+                    arrowOffset = when {
+                        event.x < dp(48) -> -1
+                        event.x > width - dp(48) -> 1
+                        else -> 0
+                    }
+                    if (arrowOffset != 0) handler.postDelayed(arrowLongPress, 400)
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val distance = kotlin.math.hypot(event.x - downX, event.y - downY)
+                    if (distance > dp(20)) {
+                        handler.removeCallbacks(arrowLongPress)
+                        if (arrowOffset == 0) moving = true
+                    }
+                    if (arrowOffset == 0 && moving) {
+                        var direction = 0
+                        if (event.x - lastX > 0) direction -= 1 else direction += 1
+                        if (lastX - last2X > 0) direction -= 1 else direction += 1
+                        if (last2X - last3X > 0) direction -= 1 else direction += 1
+                        if (direction > 0 && event.x < last3X) swipeCount += (direction / 3.0) * (last3X - event.x) / 3.0
+                        else if (direction < 0 && event.x > last3X) swipeCount -= (direction / 3.0) * (last3X - event.x) / 3.0
+                        while (swipeCount >= 15) { move(1); swipeCount -= 15 }
+                        while (swipeCount <= -15) { move(-1); swipeCount += 15 }
+                    }
+                    last3X = last2X
+                    last2X = lastX
+                    lastX = event.x
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(arrowLongPress)
+                    handler.removeCallbacks(arrowRepeat)
+                    val elapsed = System.currentTimeMillis() - arrowDownAt
+                    if (arrowOffset != 0) {
+                        if (!arrowLongPressed && elapsed < 400 && kotlin.math.hypot(event.x - downX, event.y - downY) <= dp(20)) move(arrowOffset)
+                    } else if (!moving) {
+                        tap(downX)
+                    }
+                    arrowOffset = 0
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(arrowLongPress)
+                    handler.removeCallbacks(arrowRepeat)
+                    arrowOffset = 0
+                    return true
+                }
+            }
+            return true
+        }
+    }
 
     private data class FlickGuide(
         val popup: PopupWindow,
