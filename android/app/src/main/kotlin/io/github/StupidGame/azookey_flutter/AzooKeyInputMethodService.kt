@@ -459,18 +459,22 @@ class AzooKeyInputMethodService : InputMethodService() {
         keyStyle: String,
         scale: Double,
     ) {
-        // Custard coordinates use x/width across columns and y/height down
-        // rows.  Keep those axes aligned with the source definition.
-        val rows = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 20)
-        val columns = layoutData.optDouble("column_count", 5.0).toInt().coerceIn(1, 20)
+        // Custard's row_count is the horizontal cell count and column_count
+        // is the vertical cell count. Coordinates outside that declared grid
+        // are not part of the layout; ignore them instead of moving them to
+        // the last row/column. This is important for layouts that include
+        // optional keys for another tab or version.
+        val columns = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 40)
+        val rows = layoutData.optDouble("column_count", 5.0).toInt().coerceIn(1, 40)
         val grid = CustardGridLayout(this, columns, rows)
         val cellHeight = (dp(47) * scale).toInt().coerceAtLeast(dp(32))
         for (index in 0 until keys.length()) {
             val element = keys.optJSONObject(index) ?: continue
             if (element.optString("specifier_type") != "grid_fit") continue
             val specifier = element.optJSONObject("specifier") ?: continue
-            val x = specifier.optDouble("x").coerceIn(0.0, columns - 0.01)
-            val y = specifier.optDouble("y").coerceIn(0.0, rows - 0.01)
+            val x = specifier.optDouble("x", 0.0)
+            val y = specifier.optDouble("y", 0.0)
+            if (x < 0.0 || y < 0.0 || x >= columns || y >= rows) continue
             val width = specifier.optDouble("width", 1.0).coerceIn(0.01, columns - x)
             val height = specifier.optDouble("height", 1.0).coerceIn(0.01, rows - y)
             val view = createCustardKey(element, keyStyle, scale)
@@ -782,12 +786,16 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun systemImageLabel(name: String): String = when (name) {
         "delete.left" -> "⌫"
         "xmark" -> "×"
-        "globe" -> "🌐"
+        "globe", "globe.europe.africa" -> "🌐"
         "return", "return.left" -> "↵"
         "space" -> "空白"
         "list.bullet" -> "☰"
-        "arrow.left", "chevron.left" -> "←"
-        "arrow.right", "chevron.right" -> "→"
+        "arrow.left", "chevron.left", "chevron.left.2" -> "←"
+        "arrow.right", "chevron.right", "chevron.right.2" -> "→"
+        "arrowtriangle.left.and.line.vertical.and.arrowtriangle.right" -> "↔"
+        "textformat.123" -> "123"
+        "face.smiling" -> "🙂"
+        "doc.on.clipboard", "list.bullet.clipboard" -> "📋"
         "shift", "shift.fill" -> "⇧"
         else -> name
     }

@@ -291,15 +291,18 @@ final class KeyboardViewController: UIInputViewController {
                 custardView.append(makeCustardKey(element, keyStyle: keyStyle, variationsEnabled: false))
             }
         } else {
-            // Custard coordinates use x/width across columns and y/height
-            // down rows. Keep those axes aligned with the source definition.
-            let columns = max(1, Int(columnCount))
-            let rows = max(1, Int(rowCount))
+            // Custard's row_count is the horizontal cell count and
+            // column_count is the vertical cell count. Coordinates outside
+            // that declared grid are not part of the layout; skip them
+            // instead of moving them to the last row/column.
+            let columns = min(40, max(1, Int(rowCount)))
+            let rows = min(40, max(1, Int(columnCount)))
             custardView = CustardLayoutView(columns: columns, rows: rows)
             for element in elements where element["specifier_type"] as? String == "grid_fit" {
                 guard let specifier = element["specifier"] as? [String: Any] else { continue }
-                let x = min(max(0, CGFloat((specifier["x"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(columns) - 0.01)
-                let y = min(max(0, CGFloat((specifier["y"] as? NSNumber)?.doubleValue ?? 0)), CGFloat(rows) - 0.01)
+                let x = CGFloat((specifier["x"] as? NSNumber)?.doubleValue ?? 0)
+                let y = CGFloat((specifier["y"] as? NSNumber)?.doubleValue ?? 0)
+                guard x >= 0, y >= 0, x < CGFloat(columns), y < CGFloat(rows) else { continue }
                 let width = min(max(0.01, CGFloat((specifier["width"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(columns) - x)
                 let height = min(max(0.01, CGFloat((specifier["height"] as? NSNumber)?.doubleValue ?? 1)), CGFloat(rows) - y)
                 custardView.append(
@@ -412,12 +415,16 @@ final class KeyboardViewController: UIInputViewController {
         switch name {
         case "delete.left": return "⌫"
         case "xmark": return "×"
-        case "globe": return "🌐"
+        case "globe", "globe.europe.africa": return "🌐"
         case "return", "return.left": return "↵"
         case "space": return "空白"
         case "list.bullet": return "☰"
-        case "arrow.left", "chevron.left": return "←"
-        case "arrow.right", "chevron.right": return "→"
+        case "arrow.left", "chevron.left", "chevron.left.2": return "←"
+        case "arrow.right", "chevron.right", "chevron.right.2": return "→"
+        case "arrowtriangle.left.and.line.vertical.and.arrowtriangle.right": return "↔"
+        case "textformat.123": return "123"
+        case "face.smiling": return "🙂"
+        case "doc.on.clipboard", "list.bullet.clipboard": return "📋"
         case "shift", "shift.fill": return "⇧"
         default: return name
         }
