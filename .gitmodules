@@ -1,3 +1,6 @@
 [submodule "android/app/src/main/cpp/llama.cpp"]
 	path = android/app/src/main/cpp/llama.cpp
 	url = https://github.com/azooKey/llama.cpp.git
+[submodule "third_party/azookey_dictionary_storage"]
+	path = third_party/azookey_dictionary_storage
+	url = https://github.com/azooKey/azooKey_dictionary_storage.git

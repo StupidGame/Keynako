@@ -33,6 +33,7 @@ const Map<String, dynamic> defaultKeyboardSettings = {
   'result_view_font_size': -1.0,
   'key_view_font_size': -1.0,
   'flick_sensitivity_setting': 1.0,
+  'long_press_duration_ms': 400.0,
   'keyboard_height_scale': 1.0,
   'memory_learining_styple_setting': 0,
   'marked_text_setting_beta': 'disabled',

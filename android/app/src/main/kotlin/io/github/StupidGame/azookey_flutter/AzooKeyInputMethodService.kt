@@ -24,7 +24,6 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -34,17 +33,25 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
-import com.kazumaproject.zenz.ZenzEngine
+import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
+import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
+import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
+import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
+import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
+import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
+import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
+import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
+import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
+import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
+import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
+import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
+import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
+import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileOutputStream
-import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -71,6 +78,13 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var flickGuide: FlickGuide? = null
     private var cursorBarVisible = false
     private var cursorBarView: CursorBarView? = null
+    private val azooKeyDictionary by lazy {
+        AzooKeyDictionary(
+            DictionaryAssetSource { path ->
+                assets.open("Dictionary/$path").use { it.readBytes() }
+            },
+        )
+    }
     private val zenzaiRuntime by lazy { AndroidZenzaiRuntime(this) }
 
     override fun onCreate() {
@@ -146,16 +160,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         renderKeyboard()
         prepareZenzaiIfNeeded()
         return inputViewFrame
-    }
-
-    override fun onWindowShown() {
-        super.onWindowShown()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Keynako always provides its own keyboard switcher. Hiding the
-            // system IME caption bar avoids it covering the bottom key row.
-            window?.window?.insetsController?.hide(WindowInsets.Type.captionBar())
-            if (::inputViewFrame.isInitialized) inputViewFrame.requestApplyInsets()
-        }
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -276,7 +280,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("GHI", "g", "h", "i", "4", null),
                 FlickKey("JKL", "j", "k", "l", "5", null),
                 FlickKey("MNO", "m", "n", "o", "6", null),
-                FlickKey("空白", "空白", "←", "　", "", "\t", action = "space", special = true),
+                FlickKey("空白", "空白", "←", "　", "→", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -286,11 +290,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("改行", action = "enter", special = true),
             ),
             listOf(
-                FlickKey("🌐", action = "nextKeyboard", special = true),
+                FlickKey(""),
                 FlickKey(if (shift || capsLock) "A/a" else "a/A", action = "shiftEnglish", special = true),
                 FlickKey("'\"()", "'", "\"", "(", ")", null),
                 FlickKey(".,?!", ".", ",", "?", "!", "'", customTarget = "kana_symbols"),
-                FlickKey("改行", action = "enter", special = true),
+                FlickKey(""),
             ),
         ) else listOf(
             listOf(
@@ -305,7 +309,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("た", "た", "ち", "つ", "て", "と"),
                 FlickKey("な", "な", "に", "ぬ", "ね", "の"),
                 FlickKey("は", "は", "ひ", "ふ", "へ", "ほ"),
-                FlickKey("空白", "空白", "←", "　", "", "\t", action = "space", special = true),
+                FlickKey("空白", "空白", "←", "　", "→", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -315,24 +319,38 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("改行", action = "enter", special = true),
             ),
             listOf(
-                FlickKey("🌐", action = "nextKeyboard", special = true),
+                FlickKey(""),
                 FlickKey("小ﾞﾟ", action = "kogana", special = true, customTarget = "kogana"),
                 FlickKey("わ", "わ", "を", "ん", "ー", "〜"),
                 FlickKey("､｡?!", "、", "。", "？", "！", null, customTarget = "kana_symbols"),
-                FlickKey("改行", action = "enter", special = true),
+                FlickKey(""),
             ),
         )
-        for (row in keys) {
-            val rowView = newRow(scale)
-            for (key in row) {
+        val grid = CustardGridLayout(this, columns = 5, rows = 4).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (dp(47) * scale * 4).toInt(),
+            )
+        }
+        for ((rowIndex, row) in keys.withIndex()) {
+            for ((columnIndex, key) in row.withIndex()) {
+                if (rowIndex == 3 && columnIndex == 4) continue
                 val custom = key.customTarget?.let(::customKeyForTarget)
-                rowView.addView(
-                    if (custom == null) createFlickKey(key, scale) else createCustomKey(custom, scale),
-                    weightParams(),
+                val keyView = when {
+                    custom != null -> createCustomKey(custom, scale)
+                    key.label.isEmpty() && key.action == null -> View(this)
+                    else -> createFlickKey(key, scale)
+                }
+                grid.addPositionedView(
+                    keyView,
+                    x = columnIndex.toDouble(),
+                    y = rowIndex.toDouble(),
+                    width = 1.0,
+                    height = if (rowIndex == 2 && columnIndex == 4) 2.0 else 1.0,
                 )
             }
-            keyboardContainer.addView(rowView)
         }
+        keyboardContainer.addView(grid)
     }
 
     private fun renderQwerty(scale: Double) {
@@ -356,7 +374,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val bottom = newRow(scale)
         bottom.addView(createKey("☆123", true, scale) { setMode("symbols") }, weightParams(1.5f))
-        bottom.addView(createKey("🌐", true, scale) { nextKeyboard() }, weightParams(1.2f))
+        bottom.addView(View(this), weightParams(1.2f))
         bottom.addView(createKey("space", false, scale) { space() }, weightParams(4f))
         bottom.addView(createKey("return", true, scale) { enter() }, weightParams(2f))
         keyboardContainer.addView(bottom)
@@ -669,7 +687,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
                     target.isPressed = true
                     selectedDirection = null
-                    val delay = if (longPressData.optString("duration") == "light") 125L else 400L
+                    val delay = longPressDelay(longPressData.optString("duration"))
                     if (handlesLongPress) handler.postDelayed(longPress, delay)
                     showFlickGuide(target, centerLabel, leftLabel, upLabel, rightLabel, downLabel)
                     true
@@ -737,7 +755,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
-                            handler.postDelayed(longPress, if (longPressData.optString("duration") == "light") 125L else 400L)
+                            handler.postDelayed(longPress, longPressDelay(longPressData.optString("duration")))
                         }
                     }
                     true
@@ -925,7 +943,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     longPressed = false
                     longPressFlicked = false
                     target.isPressed = true
-                    val delay = if (key.optString("longPressDuration", key.optString("duration")) == "light") 125L else 400L
+                    val delay = longPressDelay(key.optString("longPressDuration", key.optString("duration")))
                     handler.postDelayed(longPress, delay)
                     runCatching {
                         showFlickGuide(
@@ -1000,8 +1018,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         var longPressed = false
         var repeating = false
         var longPressFlicked = false
-        var cursorLongPressed = false
-        var cursorLongPressScheduled = false
+        var textDragSession: TextSelectionSession? = null
+        var textDragStep = 0
+        var textDragMoved = false
         val isDelete = key.action == "delete"
         val isSpace = key.action == "space"
         val repeat = object : Runnable {
@@ -1011,34 +1030,25 @@ class AzooKeyInputMethodService : InputMethodService() {
                 handler.postDelayed(this, 70)
             }
         }
-        val cursorRepeat = object : Runnable {
-            override fun run() {
-                if (!cursorLongPressed) return
-                moveCursor(-1)
-                handler.postDelayed(this, 70)
-            }
-        }
         val longPress = Runnable {
             if (!isDelete && !isSpace) return@Runnable
             longPressed = true
-            if (isDelete) {
+            if (composing.isEmpty() && rawRoman.isEmpty()) {
+                textDragSession = TextSelectionSession.capture(currentInputConnection)
+                textDragStep = 0
+                textDragMoved = false
+                if (textDragSession == null) {
+                    if (isDelete) delete() else toggleCursorBar()
+                }
+            } else if (isDelete) {
                 repeating = true
                 delete()
                 handler.postDelayed(repeat, 70)
-            } else if (composing.isEmpty() && rawRoman.isEmpty()) {
-                toggleCursorBar()
             } else {
                 repeating = true
                 selectNextCandidate()
                 handler.postDelayed(repeat, 70)
             }
-            feedback(view)
-        }
-        val cursorLongPress = Runnable {
-            if (!isSpace) return@Runnable
-            cursorLongPressed = true
-            moveCursor(-1)
-            handler.post(cursorRepeat)
             feedback(view)
         }
         view.setOnTouchListener { target, event ->
@@ -1049,14 +1059,35 @@ class AzooKeyInputMethodService : InputMethodService() {
                     longPressed = false
                     repeating = false
                     longPressFlicked = false
-                    cursorLongPressed = false
-                    cursorLongPressScheduled = false
-                    if (isDelete || isSpace) handler.postDelayed(longPress, 400)
+                    textDragSession = null
+                    textDragStep = 0
+                    textDragMoved = false
+                    if (isDelete || isSpace) handler.postDelayed(longPress, longPressDelay())
                     target.isPressed = true
                     showFlickGuide(target, key.label, key.left, key.up, key.right, key.down)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    textDragSession?.let { session ->
+                        val step = ((event.x - startX) / dp(18).toFloat()).roundToInt()
+                        if (step != textDragStep) {
+                            val changed = if (isDelete) session.select(step) else session.moveCursor(step)
+                            if (changed) {
+                                textDragStep = step
+                                textDragMoved = textDragMoved || step != 0
+                                feedback(target)
+                                cursorBarView?.post { cursorBarView?.refresh() }
+                            }
+                        }
+                        updateFlickGuide(
+                            when {
+                                step < 0 -> "left"
+                                step > 0 -> "right"
+                                else -> null
+                            },
+                        )
+                        return@setOnTouchListener true
+                    }
                     val direction = flickDirection(event.x - startX, event.y - startY)
                     if (direction != null) {
                         handler.removeCallbacks(longPress)
@@ -1066,22 +1097,25 @@ class AzooKeyInputMethodService : InputMethodService() {
                             repeating = false
                             handler.removeCallbacks(repeat)
                         }
-                        if (isSpace && direction == "left" && !cursorLongPressScheduled) {
-                            cursorLongPressScheduled = true
-                            handler.postDelayed(cursorLongPress, 400)
-                        }
                     }
                     updateFlickGuide(direction)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(longPress)
-                    handler.removeCallbacks(cursorLongPress)
-                    cursorLongPressScheduled = false
                     repeating = false
                     handler.removeCallbacks(repeat)
-                    handler.removeCallbacks(cursorRepeat)
                     target.isPressed = false
+                    textDragSession?.let { session ->
+                        if (isDelete && textDragMoved) {
+                            session.deleteSelection()
+                        } else if (!textDragMoved) {
+                            if (isDelete) delete() else toggleCursorBar()
+                        }
+                        textDragSession = null
+                        dismissFlickGuide()
+                        return@setOnTouchListener true
+                    }
                     val dx = event.x - startX
                     val dy = event.y - startY
                     val direction = flickDirection(dx, dy)
@@ -1093,9 +1127,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                         else -> key.center
                     }
                     dismissFlickGuide()
-                    if ((!longPressed || longPressFlicked) && !cursorLongPressed) {
+                    if (!longPressed || longPressFlicked) {
                         if (isSpace && direction == "left") {
                             moveCursor(-1)
+                        } else if (isSpace && direction == "right") {
+                            moveCursor(1)
                         } else if (isSpace && direction == "up") {
                             inputText("　")
                         } else if (isSpace && direction == "down") {
@@ -1113,11 +1149,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(longPress)
-                    handler.removeCallbacks(cursorLongPress)
-                    cursorLongPressScheduled = false
                     repeating = false
                     handler.removeCallbacks(repeat)
-                    handler.removeCallbacks(cursorRepeat)
+                    textDragSession?.cancel()
+                    textDragSession = null
                     target.isPressed = false
                     dismissFlickGuide()
                     true
@@ -1264,6 +1299,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                 val handler = Handler(Looper.getMainLooper())
                 var longPressed = false
                 var repeating = false
+                var textDragSession: TextSelectionSession? = null
+                var textDragStep = 0
+                var textDragMoved = false
+                var textDragStartX = 0f
                 val repeat = object : Runnable {
                     override fun run() {
                         if (!repeating) return
@@ -1273,8 +1312,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 val longPress = Runnable {
                     longPressed = true
-                    repeating = true
-                    if (isDelete) {
+                    if (!isNextCandidate && composing.isEmpty() && rawRoman.isEmpty()) {
+                        textDragSession = TextSelectionSession.capture(currentInputConnection)
+                        textDragStep = 0
+                        textDragMoved = false
+                        repeating = false
+                        if (textDragSession == null) {
+                            if (isDelete) action() else toggleCursorBar()
+                        }
+                    } else if (isDelete) {
+                        repeating = true
                         action()
                         handler.postDelayed(repeat, 70)
                     } else if (isNextCandidate) {
@@ -1292,10 +1339,29 @@ class AzooKeyInputMethodService : InputMethodService() {
                 setOnTouchListener { target, event ->
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
+                            textDragStartX = event.x
                             longPressed = false
                             repeating = false
-                            handler.postDelayed(longPress, 400)
+                            textDragSession = null
+                            textDragStep = 0
+                            textDragMoved = false
+                            handler.postDelayed(longPress, longPressDelay())
                             target.isPressed = true
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            textDragSession?.let { session ->
+                                val step = ((event.x - textDragStartX) / dp(18).toFloat()).roundToInt()
+                                if (step != textDragStep) {
+                                    val changed = if (isDelete) session.select(step) else session.moveCursor(step)
+                                    if (changed) {
+                                        textDragStep = step
+                                        textDragMoved = textDragMoved || step != 0
+                                        feedback(target)
+                                        cursorBarView?.post { cursorBarView?.refresh() }
+                                    }
+                                }
+                            }
                             true
                         }
                         MotionEvent.ACTION_UP -> {
@@ -1303,6 +1369,15 @@ class AzooKeyInputMethodService : InputMethodService() {
                             repeating = false
                             handler.removeCallbacks(repeat)
                             target.isPressed = false
+                            textDragSession?.let { session ->
+                                if (isDelete && textDragMoved) {
+                                    session.deleteSelection()
+                                } else if (!textDragMoved) {
+                                    if (isDelete) action() else toggleCursorBar()
+                                }
+                                textDragSession = null
+                                return@setOnTouchListener true
+                            }
                             if (!longPressed) {
                                 action()
                                 feedback(target)
@@ -1313,6 +1388,8 @@ class AzooKeyInputMethodService : InputMethodService() {
                             handler.removeCallbacks(longPress)
                             repeating = false
                             handler.removeCallbacks(repeat)
+                            textDragSession?.cancel()
+                            textDragSession = null
                             target.isPressed = false
                             true
                         }
@@ -1675,7 +1752,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
-        val completionStrength = settings.optInt("automatic_completion_strength", 1).coerceIn(0, 3)
+        val completionStrength = settings.optInt("automatic_completion_strength", 1).coerceIn(0, 4)
         val predictionLimit = completionStrength * 8
         for (index in 0 until dictionary.length()) {
             val entry = dictionary.optJSONObject(index) ?: continue
@@ -1688,11 +1765,24 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (ruby == reading) values.add(value)
             else if (predictionLimit > 0 && ruby.startsWith(reading)) predictedValues.add(value)
         }
-        systemDictionary[reading]?.let(values::addAll)
+        val officialCandidates = runCatching {
+            azooKeyDictionary.candidates(reading, predictionLimit)
+        }.onFailure {
+            Log.e("AzooKeyDictionary", "Failed to read the bundled dictionary", it)
+        }.getOrElse {
+            DictionaryCandidates(emptyList(), emptyList())
+        }
+        values.addAll(officialCandidates.conversions)
+        if (officialCandidates.conversions.isEmpty()) {
+            systemDictionary[reading]?.let(values::addAll)
+        }
         values.add(reading)
         if (predictionLimit > 0) {
-            for ((ruby, predictions) in systemDictionary) {
-                if (ruby != reading && ruby.startsWith(reading)) predictedValues.addAll(predictions)
+            predictedValues.addAll(officialCandidates.predictions)
+            if (officialCandidates.predictions.isEmpty()) {
+                for ((ruby, predictions) in systemDictionary) {
+                    if (ruby != reading && ruby.startsWith(reading)) predictedValues.addAll(predictions)
+                }
             }
             values.addAll(predictedValues.take(predictionLimit))
         }
@@ -2287,6 +2377,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         setStroke(dp(1), Color.argb(32, 0, 0, 0))
     }
 
+    private fun longPressDelay(explicitDuration: String? = null): Long {
+        if (explicitDuration == "light") return 125L
+        return settings.optDouble("long_press_duration_ms", 400.0)
+            .coerceIn(150.0, 1000.0)
+            .toLong()
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun renderTemplate(value: String): String {
@@ -2446,7 +2543,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         event.x > width - dp(48) -> 1
                         else -> 0
                     }
-                    if (arrowOffset != 0) handler.postDelayed(arrowLongPress, 400)
+                    if (arrowOffset != 0) handler.postDelayed(arrowLongPress, longPressDelay())
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -2475,7 +2572,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     handler.removeCallbacks(arrowRepeat)
                     val elapsed = System.currentTimeMillis() - arrowDownAt
                     if (arrowOffset != 0) {
-                        if (!arrowLongPressed && elapsed < 400 && kotlin.math.hypot(event.x - downX, event.y - downY) <= dp(20)) move(arrowOffset)
+                        if (!arrowLongPressed && elapsed < longPressDelay() && kotlin.math.hypot(event.x - downX, event.y - downY) <= dp(20)) move(arrowOffset)
                     } else if (!moving) {
                         tap(downX)
                     }
@@ -2627,337 +2724,3 @@ class AzooKeyInputMethodService : InputMethodService() {
         )
     }
 }
-
-private class CustardGridLayout(
-    context: Context,
-    private val columns: Int,
-    private val rows: Int,
-) : ViewGroup(context) {
-    private data class Position(
-        val x: Double,
-        val y: Double,
-        val width: Double,
-        val height: Double,
-    )
-
-    private val positions = linkedMapOf<View, Position>()
-    private val gap = (2 * resources.displayMetrics.density).toInt()
-
-    fun addPositionedView(
-        view: View,
-        x: Double,
-        y: Double,
-        width: Double,
-        height: Double,
-    ) {
-        positions[view] = Position(x, y, width, height)
-        addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-    }
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val measuredWidth = MeasureSpec.getSize(widthMeasureSpec)
-        val measuredHeight = MeasureSpec.getSize(heightMeasureSpec)
-        setMeasuredDimension(measuredWidth, measuredHeight)
-        for ((view, position) in positions) {
-            val childWidth = ((position.width / columns) * measuredWidth).toInt() - gap * 2
-            val childHeight = ((position.height / rows) * measuredHeight).toInt() - gap * 2
-            view.measure(
-                MeasureSpec.makeMeasureSpec(childWidth.coerceAtLeast(1), MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(childHeight.coerceAtLeast(1), MeasureSpec.EXACTLY),
-            )
-        }
-    }
-
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val availableWidth = right - left
-        val availableHeight = bottom - top
-        for ((view, position) in positions) {
-            val childLeft = ((position.x / columns) * availableWidth).toInt() + gap
-            val childTop = ((position.y / rows) * availableHeight).toInt() + gap
-            view.layout(childLeft, childTop, childLeft + view.measuredWidth, childTop + view.measuredHeight)
-        }
-    }
-}
-
-private class AndroidZenzaiRuntime(context: Context) {
-    private val appContext = context.applicationContext
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "KeynakoZenzai")
-    }
-    private val requestSequence = AtomicLong(0)
-
-    @Volatile
-    private var loadedModelPath: String? = null
-
-    @Volatile
-    private var closed = false
-
-    fun prepare(modelSize: String) {
-        if (closed) return
-        executor.execute {
-            runCatching { ensureModel(modelSize) }
-                .onSuccess { ready ->
-                    if (ready) Log.i(LOG_TAG, "Prepared $modelSize model")
-                    else Log.w(LOG_TAG, "Could not prepare $modelSize model")
-                }
-                .onFailure { error -> Log.e(LOG_TAG, "Failed to prepare $modelSize model", error) }
-        }
-    }
-
-    fun rank(
-        modelSize: String,
-        reading: String,
-        leftContext: String,
-        rightContext: String,
-        baseCandidates: List<String>,
-        maxTokens: Int,
-        callback: (List<String>) -> Unit,
-    ) {
-        if (closed) return
-        val request = requestSequence.incrementAndGet()
-        runCatching { ZenzEngine.cancelCurrent() }
-        executor.execute {
-            if (closed || request != requestSequence.get()) return@execute
-            val startedAt = System.nanoTime()
-            val result = runCatching {
-                if (!ensureModel(modelSize)) return@runCatching emptyList()
-                if (request != requestSequence.get()) return@runCatching emptyList()
-
-                val generated = ZenzEngine.generateWithContextAndConditionsV32(
-                    "",
-                    "",
-                    "",
-                    "",
-                    leftContext,
-                    rightContext,
-                    reading,
-                    maxTokens,
-                ).trim().takeIf { it.isPlausibleZenzaiCandidate(reading) }.orEmpty()
-                if (request != requestSequence.get()) return@runCatching emptyList()
-
-                val values = linkedSetOf<String>()
-                if (generated.isNotEmpty()) values.add(generated)
-                values.addAll(baseCandidates.filter { it.isNotBlank() })
-                if (values.isEmpty()) return@runCatching emptyList()
-
-                val candidates = values.toList()
-                val scores = ZenzEngine.scoreCandidatesV32(
-                    null,
-                    null,
-                    null,
-                    null,
-                    leftContext,
-                    rightContext,
-                    reading,
-                    candidates.toTypedArray(),
-                )
-                candidates.withIndex().sortedWith(
-                    compareByDescending<IndexedValue<String>> { indexed ->
-                        scores.getOrNull(indexed.index)
-                            ?.takeIf { it.isFinite() }
-                            ?: Float.NEGATIVE_INFINITY
-                    }.thenBy { it.index },
-                ).map { it.value }
-            }.getOrElse { error ->
-                Log.e(LOG_TAG, "Candidate ranking failed", error)
-                emptyList()
-            }
-
-            if (result.isEmpty() || closed || request != requestSequence.get()) {
-                if (request == requestSequence.get()) Log.w(LOG_TAG, "Candidate ranking returned no result")
-                return@execute
-            }
-            Log.i(
-                LOG_TAG,
-                "Ranked ${result.size} candidates with $modelSize in " +
-                    "${(System.nanoTime() - startedAt) / 1_000_000} ms",
-            )
-            mainHandler.post {
-                if (!closed && request == requestSequence.get()) callback(result)
-            }
-        }
-    }
-
-    fun cancel() {
-        requestSequence.incrementAndGet()
-        runCatching { ZenzEngine.cancelCurrent() }
-    }
-
-    fun close() {
-        if (closed) return
-        closed = true
-        requestSequence.incrementAndGet()
-        runCatching { ZenzEngine.cancelCurrent() }
-        executor.execute {
-            runCatching { ZenzEngine.closeModel() }
-            loadedModelPath = null
-        }
-        executor.shutdown()
-    }
-
-    private fun ensureModel(modelSize: String): Boolean {
-        if (closed) return false
-        val model = ZenzaiModelManager(appContext).prepare(modelSize) ?: return false
-        if (loadedModelPath != model.absolutePath) {
-            if (loadedModelPath != null) ZenzEngine.closeModel()
-            if (!ZenzEngine.initModel(model.absolutePath)) {
-                loadedModelPath = null
-                return false
-            }
-            loadedModelPath = model.absolutePath
-        }
-        val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
-        ZenzEngine.setRuntimeConfig(512, threads)
-        return true
-    }
-
-    companion object {
-        private const val LOG_TAG = "KeynakoZenzai"
-    }
-}
-
-private fun String.isPlausibleZenzaiCandidate(reading: String): Boolean {
-    if (isEmpty()) return false
-    val maximumLength = maxOf(48, reading.length * 3 + 24)
-    if (length > maximumLength) return false
-    return none { char ->
-        char == '\uFFFD' ||
-            char in '\uE000'..'\uF8FF' ||
-            (char.isISOControl() && char != '\n' && char != '\t')
-    }
-}
-
-private class ZenzaiModelManager(private val context: Context) {
-    fun prepare(size: String): File? {
-        val expectedSize = if (size == "xsmall") 20_970_304L else 73_871_936L
-        val folder = "zenz-v3.2-$size-gguf"
-        val destination = File(context.filesDir, "zenzai/$folder/ggml-model-Q5_K_M.gguf")
-        if (destination.length() == expectedSize) return destination
-        return try {
-            destination.parentFile?.mkdirs()
-            val asset = "$folder/ggml-model-Q5_K_M.gguf"
-            context.assets.open(asset).use { input ->
-                FileOutputStream(destination).use { output -> input.copyTo(output, 1024 * 1024) }
-            }
-            if (destination.length() == expectedSize) destination else null
-        } catch (_: Exception) {
-            null
-        }
-    }
-}
-
-private val halfWidthKanaMap: Map<Char, String> = run {
-    val full = "。「」、・ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヰヱヲン゙゚"
-    val half = "｡｢｣､･ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｲｴｦﾝﾞﾟ"
-    full.zip(half).associate { (source, target) -> source to target.toString() } + mapOf(
-        'ヮ' to "ﾜ",
-        'ヵ' to "ｶ",
-        'ヶ' to "ｹ",
-    )
-}
-
-private fun katakanaToHalfWidth(value: String): String = buildString {
-    val decomposed = Normalizer.normalize(value, Normalizer.Form.NFD)
-    for (char in decomposed) append(halfWidthKanaMap[char] ?: char.toString())
-}
-
-private fun asciiToFullWidth(value: String): String = buildString {
-    for (char in value) {
-        append(
-            when (char) {
-                ' ' -> '　'
-                in '!'..'~' -> (char.code + 0xfee0).toChar()
-                else -> char
-            },
-        )
-    }
-}
-
-private fun unicodeCandidate(value: String): String? {
-    val hex = Regex("(?i)^u\\+?([0-9a-f]{1,6})$").matchEntire(value)?.groupValues?.get(1) ?: return null
-    val codePoint = hex.toIntOrNull(16) ?: return null
-    if (!Character.isValidCodePoint(codePoint) || codePoint in 0xd800..0xdfff) return null
-    return String(Character.toChars(codePoint))
-}
-
-private fun toMathematicalBold(value: String): String = buildString {
-    for (char in value) {
-        val codePoint = when (char) {
-            in 'A'..'Z' -> 0x1d400 + (char - 'A')
-            in 'a'..'z' -> 0x1d41a + (char - 'a')
-            in '0'..'9' -> 0x1d7ce + (char - '0')
-            else -> char.code
-        }
-        append(String(Character.toChars(codePoint)))
-    }
-}
-
-private fun romanToHiragana(input: String): String {
-    val result = StringBuilder()
-    var index = 0
-    val lower = input.lowercase()
-    while (index < lower.length) {
-        val current = lower[index]
-        if (index + 1 < lower.length && current == lower[index + 1] && current in "bcdfghjklmpqrstvwxyz" && current != 'n') {
-            result.append('っ')
-            index += 1
-            continue
-        }
-        if (current == 'n' && index + 1 < lower.length && lower[index + 1] !in "aiueoyn") {
-            result.append('ん')
-            index += 1
-            continue
-        }
-        var found: String? = null
-        var consumed = 0
-        for (length in listOf(4, 3, 2, 1)) {
-            if (index + length > lower.length) continue
-            val replacement = romanMap[lower.substring(index, index + length)] ?: continue
-            found = replacement
-            consumed = length
-            break
-        }
-        if (found == null) {
-            result.append(lower[index])
-            index += 1
-        } else {
-            result.append(found)
-            index += consumed
-        }
-    }
-    if (result.endsWith("n")) result.replace(result.length - 1, result.length, "ん")
-    return result.toString()
-}
-
-private fun hiraganaToKatakana(value: String): String = buildString {
-    for (char in value) {
-        append(if (char.code in 0x3041..0x3096) (char.code + 0x60).toChar() else char)
-    }
-}
-
-private fun katakanaToHiragana(value: String): String = buildString {
-    for (char in value) {
-        append(if (char.code in 0x30a1..0x30f6) (char.code - 0x60).toChar() else char)
-    }
-}
-
-private val defaultScanTargets = listOf("、", "。", "！", "？", ".", ",", "．", "，", "\n")
-
-private val romanMap = mapOf(
-    "kya" to "きゃ", "kyu" to "きゅ", "kyo" to "きょ", "gya" to "ぎゃ", "gyu" to "ぎゅ", "gyo" to "ぎょ",
-    "sha" to "しゃ", "shu" to "しゅ", "sho" to "しょ", "sya" to "しゃ", "syu" to "しゅ", "syo" to "しょ",
-    "jya" to "じゃ", "jyu" to "じゅ", "jyo" to "じょ", "cha" to "ちゃ", "chu" to "ちゅ", "cho" to "ちょ",
-    "nya" to "にゃ", "nyu" to "にゅ", "nyo" to "にょ", "hya" to "ひゃ", "hyu" to "ひゅ", "hyo" to "ひょ",
-    "mya" to "みゃ", "myu" to "みゅ", "myo" to "みょ", "rya" to "りゃ", "ryu" to "りゅ", "ryo" to "りょ",
-    "fa" to "ふぁ", "fi" to "ふぃ", "fe" to "ふぇ", "fo" to "ふぉ", "she" to "しぇ", "che" to "ちぇ", "je" to "じぇ",
-    "ka" to "か", "ki" to "き", "ku" to "く", "ke" to "け", "ko" to "こ", "ga" to "が", "gi" to "ぎ", "gu" to "ぐ", "ge" to "げ", "go" to "ご",
-    "sa" to "さ", "si" to "し", "shi" to "し", "su" to "す", "se" to "せ", "so" to "そ", "za" to "ざ", "zi" to "じ", "ji" to "じ", "zu" to "ず", "ze" to "ぜ", "zo" to "ぞ",
-    "ta" to "た", "ti" to "ち", "chi" to "ち", "tu" to "つ", "tsu" to "つ", "te" to "て", "to" to "と", "da" to "だ", "di" to "ぢ", "du" to "づ", "de" to "で", "do" to "ど",
-    "na" to "な", "ni" to "に", "nu" to "ぬ", "ne" to "ね", "no" to "の", "ha" to "は", "hi" to "ひ", "hu" to "ふ", "fu" to "ふ", "he" to "へ", "ho" to "ほ",
-    "ba" to "ば", "bi" to "び", "bu" to "ぶ", "be" to "べ", "bo" to "ぼ", "pa" to "ぱ", "pi" to "ぴ", "pu" to "ぷ", "pe" to "ぺ", "po" to "ぽ",
-    "ma" to "ま", "mi" to "み", "mu" to "む", "me" to "め", "mo" to "も", "ya" to "や", "yu" to "ゆ", "yo" to "よ",
-    "ra" to "ら", "ri" to "り", "ru" to "る", "re" to "れ", "ro" to "ろ", "wa" to "わ", "wo" to "を", "nn" to "ん",
-    "la" to "ぁ", "li" to "ぃ", "lu" to "ぅ", "le" to "ぇ", "lo" to "ぉ", "ltu" to "っ", "xtu" to "っ",
-    "a" to "あ", "i" to "い", "u" to "う", "e" to "え", "o" to "お", "-" to "ー", "," to "、", "." to "。",
-)

@@ -382,6 +382,10 @@ static llama_context *ensure_session_context_locked() {
     cparams.n_threads = config.n_threads;
     cparams.n_threads_batch = config.n_threads_batch;
     cparams.n_batch = config.n_batch;
+    cparams.n_ubatch = std::min<uint32_t>(64, cparams.n_batch);
+    cparams.offload_kqv = false;
+    cparams.flash_attn = true;
+    cparams.no_perf = true;
 
     g_session.ctx = llama_init_from_model(g_model, cparams);
     if (!g_session.ctx) {
@@ -432,9 +436,10 @@ static std::string pure_greedy_decoding(
         );
         int rc = llama_decode(ctx, batch);
         if (rc != 0) {
-            LOGE("llama_decode(prompt) failed: %d", rc);
             if (is_request_stale(request_seq)) {
                 LOGI("pure_greedy_decoding aborted while decoding prompt");
+            } else {
+                LOGE("llama_decode(prompt) failed: %d", rc);
             }
             llama_set_abort_callback(ctx, never_abort, nullptr);
             return "";
@@ -1224,7 +1229,11 @@ static jfloatArray score_candidates_with_context(
         }
 
         if (!prefill_prompt_prefix_locked(ctx, prompt_tokens)) {
-            LOGE("scoreCandidates: failed to prefill prompt prefix");
+            if (is_request_stale(request_seq)) {
+                LOGI("scoreCandidates aborted while prefilling prompt prefix");
+            } else {
+                LOGE("scoreCandidates: failed to prefill prompt prefix");
+            }
             llama_set_abort_callback(ctx, never_abort, nullptr);
             env->SetFloatArrayRegion(result_array, 0, candidate_count, scores.data());
             return result_array;
