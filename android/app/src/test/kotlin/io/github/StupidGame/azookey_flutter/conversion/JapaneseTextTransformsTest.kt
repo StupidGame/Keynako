@@ -10,6 +10,11 @@ class JapaneseTextTransformsTest {
         listOf("、", "。", "？", "！", "「」", "　", "\t", "😊", "＋").forEach { value ->
             assertTrue("$value should bypass conversion", shouldDirectCommitJapaneseInput(value))
         }
+        val fullWidthSymbols = "！＂＃＄％＆＇（）＊＋，－．／：；＜＝＞？＠［＼］＾＿｀｛｜｝～￥"
+        assertTrue(
+            "full-width symbols should bypass conversion",
+            shouldDirectCommitJapaneseInput(fullWidthSymbols),
+        )
     }
 
     @Test
