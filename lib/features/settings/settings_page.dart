@@ -388,7 +388,11 @@ class _SliderSetting extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              Text(automatic ? '自動' : value.toStringAsFixed(1)),
+              Text(
+                automatic
+                    ? '自動'
+                    : '${value.toStringAsFixed(descriptor.decimalPlaces)}${descriptor.valueSuffix}',
+              ),
             ],
           ),
           Text(

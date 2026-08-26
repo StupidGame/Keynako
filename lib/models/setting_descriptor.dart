@@ -19,6 +19,8 @@ class SettingDescriptor {
     this.maximum,
     this.divisions,
     this.automaticValue,
+    this.valueSuffix = '',
+    this.decimalPlaces = 1,
     this.requiresFullAccess = false,
   });
 
@@ -32,6 +34,8 @@ class SettingDescriptor {
   final double? maximum;
   final int? divisions;
   final double? automaticValue;
+  final String valueSuffix;
+  final int decimalPlaces;
   final bool requiresFullAccess;
 
   bool matches(String query) {
@@ -206,6 +210,18 @@ const List<SettingDescriptor> settingCatalog = [
     minimum: 0.5,
     maximum: 2,
     divisions: 15,
+  ),
+  SettingDescriptor(
+    group: '操作性',
+    key: 'long_press_duration_ms',
+    title: '長押しの判定時間',
+    explanation: '値が小さいほど早く長押しとして判定します。',
+    kind: SettingKind.slider,
+    minimum: 150,
+    maximum: 1000,
+    divisions: 17,
+    valueSuffix: ' ms',
+    decimalPlaces: 0,
   ),
   SettingDescriptor(
     group: '変換',

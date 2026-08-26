@@ -60,6 +60,9 @@ android {
             // Zenzai is consumed by the IME service, not by Flutter. Keeping the
             // files as native Android assets avoids a duplicate iOS app bundle copy.
             assets.srcDir("../../assets")
+            // Android cannot consume the Swift converter package directly. Its
+            // Apache-2.0 default dictionary is read by the native IME instead.
+            assets.srcDir("../../third_party/azookey_dictionary_storage")
         }
     }
 
@@ -93,6 +96,10 @@ android {
             signingConfig = signingConfigs.findByName("release")
         }
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
 
 kotlin {
