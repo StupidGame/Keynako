@@ -26,6 +26,18 @@ internal fun unicodeCandidate(value: String): String? {
     return String(Character.toChars(codePoint))
 }
 
+/** Symbols and spacing controls are committed verbatim instead of sent to conversion. */
+internal fun shouldDirectCommitJapaneseInput(value: String): Boolean {
+    if (value.isEmpty()) return false
+    var index = 0
+    while (index < value.length) {
+        val codePoint = Character.codePointAt(value, index)
+        if (Character.getType(codePoint) !in nonConvertibleCharacterTypes) return false
+        index += Character.charCount(codePoint)
+    }
+    return true
+}
+
 internal fun toMathematicalBold(value: String): String = buildString {
     for (character in value) {
         val codePoint = when (character) {
@@ -98,6 +110,25 @@ private val halfWidthKanaMap: Map<Char, String> = run {
         'ヶ' to "ｹ",
     )
 }
+
+private val nonConvertibleCharacterTypes = setOf(
+    Character.CONNECTOR_PUNCTUATION.toInt(),
+    Character.DASH_PUNCTUATION.toInt(),
+    Character.START_PUNCTUATION.toInt(),
+    Character.END_PUNCTUATION.toInt(),
+    Character.INITIAL_QUOTE_PUNCTUATION.toInt(),
+    Character.FINAL_QUOTE_PUNCTUATION.toInt(),
+    Character.OTHER_PUNCTUATION.toInt(),
+    Character.MATH_SYMBOL.toInt(),
+    Character.CURRENCY_SYMBOL.toInt(),
+    Character.MODIFIER_SYMBOL.toInt(),
+    Character.OTHER_SYMBOL.toInt(),
+    Character.SPACE_SEPARATOR.toInt(),
+    Character.LINE_SEPARATOR.toInt(),
+    Character.PARAGRAPH_SEPARATOR.toInt(),
+    Character.CONTROL.toInt(),
+    Character.FORMAT.toInt(),
+)
 
 private val romanMap = mapOf(
     "kya" to "きゃ", "kyu" to "きゅ", "kyo" to "きょ", "gya" to "ぎゃ", "gyu" to "ぎゅ", "gyo" to "ぎょ",
