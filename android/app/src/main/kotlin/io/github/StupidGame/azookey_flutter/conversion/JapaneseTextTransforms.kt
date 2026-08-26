@@ -26,9 +26,21 @@ internal fun unicodeCandidate(value: String): String? {
     return String(Character.toChars(codePoint))
 }
 
+internal enum class JapaneseInputContext {
+    STANDALONE,
+    CUSTARD_ACTION_SEQUENCE,
+}
+
 /** Symbols and spacing controls are committed verbatim instead of sent to conversion. */
-internal fun shouldDirectCommitJapaneseInput(value: String): Boolean {
+internal fun shouldDirectCommitJapaneseInput(
+    value: String,
+    context: JapaneseInputContext = JapaneseInputContext.STANDALONE,
+): Boolean {
     if (value.isEmpty()) return false
+    // Custard input actions can intentionally insert a symbol as a temporary
+    // marker and replace it in the next action (for example, "き・" -> "ぎ").
+    // Keep that marker in the composition until the whole action list runs.
+    if (context == JapaneseInputContext.CUSTARD_ACTION_SEQUENCE) return false
     var index = 0
     while (index < value.length) {
         val codePoint = Character.codePointAt(value, index)

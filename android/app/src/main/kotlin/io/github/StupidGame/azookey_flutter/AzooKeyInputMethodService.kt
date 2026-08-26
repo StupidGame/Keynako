@@ -37,6 +37,7 @@ import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
+import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
@@ -2160,7 +2161,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             directCommit(value)
             return
         }
-        if (shouldDirectCommitJapaneseInput(value)) {
+        if (
+            shouldDirectCommitJapaneseInput(
+                value,
+                JapaneseInputContext.CUSTARD_ACTION_SEQUENCE,
+            )
+        ) {
             directCommit(value)
             return
         }

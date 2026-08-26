@@ -23,4 +23,17 @@ class JapaneseTextTransformsTest {
             assertFalse("$value should remain convertible", shouldDirectCommitJapaneseInput(value))
         }
     }
+
+    @Test
+    fun keepsCustardSymbolMarkersInTheActionSequence() {
+        listOf("・", "？", "＋").forEach { value ->
+            assertFalse(
+                "$value must remain available to a following replace_last_characters action",
+                shouldDirectCommitJapaneseInput(
+                    value,
+                    JapaneseInputContext.CUSTARD_ACTION_SEQUENCE,
+                ),
+            )
+        }
+    }
 }
