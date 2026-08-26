@@ -37,12 +37,14 @@ import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
+import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
+import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
@@ -1692,6 +1694,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             return
         }
+        if (shouldDirectCommitJapaneseInput(value)) {
+            directCommit(value)
+            return
+        }
         if (layout == "qwerty") rawRoman += value.lowercase() else composing += value
         updateComposition()
     }
@@ -1710,7 +1716,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun requestZenzaiCandidates(reading: String, baseCandidates: List<String>) {
-        if (!settings.optBoolean("enable_zenzai", true) || reading.isBlank()) return
+        if (!settings.optBoolean("enable_zenzai", true) ||
+            reading.isBlank() ||
+            shouldDirectCommitJapaneseInput(reading)
+        ) return
         val effort = settings.optInt("zenzai_effort", 1).coerceIn(0, 2)
         val size = if (effort == 0) "xsmall" else "small"
         val modelInput = hiraganaToKatakana(reading)
@@ -1749,6 +1758,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun buildCandidates(): List<String> {
         val reading = displayReading()
         if (reading.isEmpty()) return emptyList()
+        if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
@@ -2148,6 +2158,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         val language = custard?.optString("language", "undefined") ?: "undefined"
         val inputStyle = custard?.optString("input_style", "direct") ?: "direct"
         if (language != "ja_JP") {
+            directCommit(value)
+            return
+        }
+        if (
+            shouldDirectCommitJapaneseInput(
+                value,
+                JapaneseInputContext.CUSTARD_ACTION_SEQUENCE,
+            )
+        ) {
             directCommit(value)
             return
         }
