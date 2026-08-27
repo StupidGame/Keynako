@@ -333,8 +333,15 @@ final class KeyboardViewController: UIInputViewController {
             return makeCustardSystemKey(key["type"] as? String ?? "")
         }
         let design = key["design"] as? [String: Any] ?? [:]
+        let label = design["label"] as? [String: Any]
+        let directionTitles = custardFlickDirectionLabels(
+            key: key,
+            label: label,
+            variationsEnabled: variationsEnabled
+        )
         let button = CustardButton(
-            title: custardLabel(design["label"] as? [String: Any]),
+            title: directionTitles.isEmpty ? custardLabel(label) : custardPrimaryLabel(label),
+            directionTitles: directionTitles,
             key: key,
             keyStyle: keyStyle,
             variationsEnabled: variationsEnabled,
@@ -416,6 +423,57 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private func custardPrimaryLabel(_ label: [String: Any]?) -> String {
+        guard let label else { return "" }
+        switch label["type"] as? String {
+        case "main_and_sub", "main_and_directions": return label["main"] as? String ?? ""
+        default: return custardLabel(label)
+        }
+    }
+
+    private func custardFlickDirectionLabels(
+        key: [String: Any],
+        label: [String: Any]?,
+        variationsEnabled: Bool
+    ) -> [String: String] {
+        guard variationsEnabled else { return [:] }
+        let variations = (key["variations"] as? [[String: Any]] ?? [])
+            .filter { $0["type"] as? String == "flick_variation" }
+        let declaredDirections: [String: Any]?
+        if label?["type"] as? String == "main_and_directions" {
+            declaredDirections = label?["directions"] as? [String: Any]
+        } else {
+            declaredDirections = nil
+        }
+        var values: [String: String] = [:]
+        for direction in ["left", "top", "right", "bottom"] {
+            let variation = variations.first(where: { $0["direction"] as? String == direction })
+            let variationKey = variation?["key"] as? [String: Any]
+            let design = variationKey?["design"] as? [String: Any]
+            let variationLabel = custardLabel(design?["label"] as? [String: Any])
+            let actions = variationKey?["press_actions"] as? [[String: Any]] ?? []
+            let actionLabel = actionDisplayLabel(actions.first)
+            let declaredLabel = declaredDirections?[direction] as? String
+            let candidates: [String?] = [variationLabel, declaredLabel, actionLabel]
+            if let value = candidates.compactMap({ $0 }).first(where: { !$0.isEmpty }) {
+                values[direction] = value
+            }
+        }
+        return values
+    }
+
+    private func actionDisplayLabel(_ action: [String: Any]?) -> String? {
+        guard let action else { return nil }
+        let value: String?
+        switch action["type"] as? String ?? "input" {
+        case "input": value = action["text"] as? String ?? action["value"] as? String
+        case "directInput": value = action["value"] as? String
+        case "direct_input": value = action["text"] as? String
+        default: value = nil
+        }
+        return value?.isEmpty == false ? value : nil
+    }
+
     private func systemImageLabel(_ name: String) -> String {
         switch name {
         case "delete.left": return "⌫"
@@ -456,8 +514,15 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func makeCustomButton(_ key: [String: Any]) -> UIButton {
+        let directionTitles = [
+            "left": actionDisplayLabel(key["left"] as? [String: Any]),
+            "top": actionDisplayLabel(key["up"] as? [String: Any]),
+            "right": actionDisplayLabel(key["right"] as? [String: Any]),
+            "bottom": actionDisplayLabel(key["down"] as? [String: Any]),
+        ].compactMapValues { $0 }
         let button = CustomFlickButton(
             key: key,
+            directionTitles: directionTitles,
             sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
         ) { [weak self] action in
             self?.dispatch(action)
@@ -1302,7 +1367,12 @@ final class KeyboardViewController: UIInputViewController {
         button.backgroundColor = special ? palette.special : palette.key
         button.layer.cornerRadius = 6
         let fontSize = doubleSetting("key_view_font_size", fallback: -1)
-        button.titleLabel?.font = .systemFont(ofSize: fontSize > 0 ? fontSize : 17)
+        let resolvedFontSize = fontSize > 0 ? fontSize : 17
+        button.titleLabel?.font = .systemFont(ofSize: resolvedFontSize)
+        (button as? DirectionalKeyButton)?.styleDirectionLabels(
+            color: palette.text,
+            fontSize: max(8, resolvedFontSize * 0.62)
+        )
     }
 
     private func makeCandidateButton(_ title: String, action: @escaping () -> Void) -> ClosureButton {
@@ -1807,7 +1877,59 @@ private final class FlickButton: UIButton {
     }
 }
 
-private final class CustomFlickButton: UIButton {
+private class DirectionalKeyButton: UIButton {
+    private var directionLabels: [String: UILabel] = [:]
+
+    init(title: String, directionTitles: [String: String]) {
+        super.init(frame: .zero)
+        setTitle(title, for: .normal)
+        titleLabel?.numberOfLines = 2
+        titleLabel?.textAlignment = .center
+        for (direction, value) in directionTitles where !value.isEmpty {
+            let label = UILabel()
+            label.text = value
+            label.textAlignment = .center
+            label.numberOfLines = 1
+            label.adjustsFontSizeToFitWidth = true
+            label.minimumScaleFactor = 0.65
+            label.isUserInteractionEnabled = false
+            label.accessibilityElementsHidden = true
+            directionLabels[direction] = label
+            addSubview(label)
+        }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func styleDirectionLabels(color: UIColor, fontSize: CGFloat) {
+        for label in directionLabels.values {
+            label.textColor = color
+            label.font = .systemFont(ofSize: fontSize)
+        }
+    }
+
+    override func titleRect(forContentRect contentRect: CGRect) -> CGRect {
+        guard !directionLabels.isEmpty else { return super.titleRect(forContentRect: contentRect) }
+        return CGRect(
+            x: contentRect.width * 0.25,
+            y: contentRect.height * 0.25,
+            width: contentRect.width * 0.50,
+            height: contentRect.height * 0.50
+        )
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        let height = bounds.height
+        directionLabels["left"]?.frame = CGRect(x: 0, y: height * 0.27, width: width * 0.35, height: height * 0.46)
+        directionLabels["top"]?.frame = CGRect(x: width * 0.19, y: 0, width: width * 0.62, height: height * 0.34)
+        directionLabels["right"]?.frame = CGRect(x: width * 0.65, y: height * 0.27, width: width * 0.35, height: height * 0.46)
+        directionLabels["bottom"]?.frame = CGRect(x: width * 0.19, y: height * 0.66, width: width * 0.62, height: height * 0.34)
+    }
+}
+
+private final class CustomFlickButton: DirectionalKeyButton {
     private let key: [String: Any]
     private let sensitivity: CGFloat
     private let callback: ([String: Any]?) -> Void
@@ -1819,14 +1941,17 @@ private final class CustomFlickButton: UIButton {
 
     init(
         key: [String: Any],
+        directionTitles: [String: String],
         sensitivity: CGFloat,
         callback: @escaping ([String: Any]?) -> Void
     ) {
         self.key = key
         self.sensitivity = sensitivity
         self.callback = callback
-        super.init(frame: .zero)
-        setTitle(key["label"] as? String ?? key["name"] as? String ?? "", for: .normal)
+        super.init(
+            title: key["label"] as? String ?? key["name"] as? String ?? "",
+            directionTitles: directionTitles
+        )
     }
 
     required init?(coder: NSCoder) { nil }
@@ -2005,7 +2130,7 @@ private final class CustardLayoutView: UIView {
     }
 }
 
-private final class CustardButton: UIButton {
+private final class CustardButton: DirectionalKeyButton {
     private let key: [String: Any]
     private let keyStyle: String
     private let variationsEnabled: Bool
@@ -2023,6 +2148,7 @@ private final class CustardButton: UIButton {
 
     init(
         title: String,
+        directionTitles: [String: String],
         key: [String: Any],
         keyStyle: String,
         variationsEnabled: Bool,
@@ -2034,10 +2160,7 @@ private final class CustardButton: UIButton {
         self.variationsEnabled = variationsEnabled
         self.sensitivity = sensitivity
         self.callback = callback
-        super.init(frame: .zero)
-        setTitle(title, for: .normal)
-        titleLabel?.numberOfLines = 2
-        titleLabel?.textAlignment = .center
+        super.init(title: title, directionTitles: directionTitles)
     }
 
     required init?(coder: NSCoder) { nil }
