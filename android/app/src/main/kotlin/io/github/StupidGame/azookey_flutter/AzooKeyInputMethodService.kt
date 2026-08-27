@@ -48,6 +48,7 @@ import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapanes
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
+import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -774,7 +775,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
-                            handler.postDelayed(longPress, longPressDelay(longPressData.optString("duration")))
+                            // A flick variation has its own duration. Ogura-style
+                            // layouts use light here even when the center is normal.
+                            handler.postDelayed(longPress, longPressDelay(variationLongPress?.optString("duration")))
                         }
                     }
                     true
@@ -2438,10 +2441,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun longPressDelay(explicitDuration: String? = null): Long {
-        if (explicitDuration == "light") return 125L
-        return settings.optDouble("long_press_duration_ms", 400.0)
-            .coerceIn(150.0, 1000.0)
-            .toLong()
+        return longPressDelayMillis(
+            explicitDuration,
+            settings.optDouble("long_press_duration_ms", 400.0),
+        )
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
