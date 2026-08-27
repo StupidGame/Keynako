@@ -2224,16 +2224,18 @@ private final class CustardButton: DirectionalKeyButton {
         let dx = current.x - start.x
         let dy = current.y - start.y
         if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
-            longPressWorkItem?.cancel()
-            if didLongPress {
-                longPressFlicked = true
-                didLongPress = false
-                variationDidLongPress = false
-                repeatTimer?.invalidate()
-                repeatTimer = nil
-            }
             let direction: String = abs(dx) > abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "top" : "bottom")
-            if !didLongPress, direction != longPressDirection, variationsEnabled, keyStyle != "pc_style" {
+            if direction != longPressDirection, variationsEnabled, keyStyle != "pc_style" {
+                // Keep the selected variation's timer alive while the finger
+                // jitters within the same flick direction.
+                longPressWorkItem?.cancel()
+                if didLongPress {
+                    longPressFlicked = true
+                    didLongPress = false
+                    variationDidLongPress = false
+                    repeatTimer?.invalidate()
+                    repeatTimer = nil
+                }
                 longPressDirection = direction
                 let variation = variations(type: "flick_variation").first { $0["direction"] as? String == direction }
                 let variationKey = variation?["key"] as? [String: Any] ?? [:]
@@ -2255,6 +2257,15 @@ private final class CustardButton: DirectionalKeyButton {
                     longPressWorkItem = work
                     let delay = variationLongPress["duration"] as? String == "light" ? 0.125 : 0.4
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+                }
+            } else if keyStyle == "pc_style" || !variationsEnabled {
+                longPressWorkItem?.cancel()
+                if didLongPress {
+                    longPressFlicked = true
+                    didLongPress = false
+                    variationDidLongPress = false
+                    repeatTimer?.invalidate()
+                    repeatTimer = nil
                 }
             }
         }
