@@ -198,9 +198,11 @@ final class KeyboardViewController: UIInputViewController {
            let attributes = try? FileManager.default.attributesOfItem(atPath: path) {
             modificationDate = attributes[.modificationDate] as? Date
         }
-        let signature = path.flatMap { value in
-            guard FileManager.default.fileExists(atPath: value) else { return nil }
-            return "\(value):\(modificationDate?.timeIntervalSince1970 ?? 0)"
+        let signature: String?
+        if let path, FileManager.default.fileExists(atPath: path) {
+            signature = "\(path):\(modificationDate?.timeIntervalSince1970 ?? 0)"
+        } else {
+            signature = nil
         }
         if signature != backgroundImageSignature {
             backgroundImageView.image = path.flatMap { UIImage(contentsOfFile: $0) }
