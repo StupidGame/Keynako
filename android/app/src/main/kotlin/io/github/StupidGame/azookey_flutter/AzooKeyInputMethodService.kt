@@ -50,6 +50,7 @@ import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
+import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -841,11 +842,11 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun custardLabel(label: JSONObject?): String {
         if (label == null) return ""
         if (label.has("text")) return label.optString("text")
-        if (label.has("system_image")) return systemImageLabel(label.optString("system_image"))
+        if (label.has("system_image")) return custardSystemImageLabel(label.optString("system_image"))
         return when (label.optString("type")) {
             "main_and_sub" -> "${label.optString("main")}\n${label.optString("sub")}"
             "main_and_directions" -> label.optString("main")
-            "system_image" -> systemImageLabel(label.optString("system_image"))
+            "system_image" -> custardSystemImageLabel(label.optString("system_image"))
             else -> label.optString("text")
         }
     }
@@ -865,23 +866,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             "direct_input" -> action.optString("text")
             else -> null
         }?.takeIf(String::isNotEmpty)
-    }
-
-    private fun systemImageLabel(name: String): String = when (name) {
-        "delete.left" -> "⌫"
-        "xmark" -> "×"
-        "globe", "globe.europe.africa" -> "🌐"
-        "return", "return.left" -> "↵"
-        "space" -> "空白"
-        "list.bullet" -> "☰"
-        "arrow.left", "chevron.left", "chevron.left.2" -> "←"
-        "arrow.right", "chevron.right", "chevron.right.2" -> "→"
-        "arrowtriangle.left.and.line.vertical.and.arrowtriangle.right" -> "↔"
-        "textformat.123" -> "123"
-        "face.smiling" -> "🙂"
-        "doc.on.clipboard", "list.bullet.clipboard" -> "📋"
-        "shift", "shift.fill" -> "⇧"
-        else -> name
     }
 
     private fun findCustardVariation(key: JSONObject, type: String, direction: String?): JSONObject? {
@@ -2094,14 +2078,9 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun enter() {
         commitComposition()
-        val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
-            ?: EditorInfo.IME_ACTION_NONE
-        val handled = action != EditorInfo.IME_ACTION_NONE &&
-            currentInputConnection?.performEditorAction(action) == true
-        if (!handled) {
-            val before = currentInputConnection?.getTextBeforeCursor(1, 0)?.toString().orEmpty()
-            if (!before.endsWith("\n")) currentInputConnection?.commitText("\n", 1)
-        }
+        // This respects IME_FLAG_NO_ENTER_ACTION, which multiline editors such as
+        // chat compose boxes use to request a newline instead of their send action.
+        if (!sendDefaultEditorAction(true)) currentInputConnection?.commitText("\n", 1)
     }
 
     private fun toggleShift() {
