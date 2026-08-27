@@ -49,6 +49,7 @@ import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
+import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
@@ -857,8 +858,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun findCustardVariation(key: JSONObject, type: String, direction: String?): JSONObject? {
-        if (direction == null) return null
-        return custardVariations(key, type).firstOrNull { it.optString("direction") == direction }
+        val normalizedDirection = custardFlickDirection(direction) ?: return null
+        return custardVariations(key, type).firstOrNull { it.optString("direction") == normalizedDirection }
             ?.optJSONObject("key")
     }
 

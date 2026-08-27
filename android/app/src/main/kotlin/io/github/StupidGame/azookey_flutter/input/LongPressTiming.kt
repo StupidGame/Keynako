@@ -8,6 +8,12 @@ internal fun longPressDelayMillis(
     return configuredDurationMs.coerceIn(150.0, 1000.0).toLong()
 }
 
+internal fun custardFlickDirection(direction: String?): String? = when (direction) {
+    "up" -> "top"
+    "down" -> "bottom"
+    else -> direction
+}
+
 /**
  * Keeps the flick variation that owns a pending long-press gesture selected.
  *

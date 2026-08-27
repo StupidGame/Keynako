@@ -23,14 +23,24 @@ class LongPressTimingTest {
     }
 
     @Test
-    fun oguraLargeKanaLongPressSurvivesJitterBackInsideTheFlickThreshold() {
+    fun oguraTopVariationUsesCustardDirectionAndSurvivesNeutralJitter() {
         val selection = FlickLongPressSelection(center = listOf("し"))
         val largeYaActions = listOf("ゃ", "しゃ→しや")
+        val variations = mapOf("top" to largeYaActions)
 
-        assertTrue(selection.update("top") { largeYaActions })
+        assertTrue(selection.update("up") { variations[custardFlickDirection(it)] })
         assertFalse(selection.update(null) { error("a neutral jitter must keep the selected variation") })
 
-        assertEquals("top", selection.direction)
+        assertEquals("up", selection.direction)
         assertEquals(largeYaActions, selection.target)
+    }
+
+    @Test
+    fun mapsAndroidVerticalDirectionsToCustardNames() {
+        assertEquals("top", custardFlickDirection("up"))
+        assertEquals("bottom", custardFlickDirection("down"))
+        assertEquals("left", custardFlickDirection("left"))
+        assertEquals("right", custardFlickDirection("right"))
+        assertEquals(null, custardFlickDirection(null))
     }
 }
