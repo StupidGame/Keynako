@@ -18,8 +18,22 @@ class JapaneseTextTransformsTest {
     }
 
     @Test
+    fun commitsDecimalDigitsWithoutConversion() {
+        listOf("123", "１２３", "٣٤٥").forEach { value ->
+            assertTrue("$value should bypass conversion", shouldDirectCommitJapaneseInput(value))
+            assertTrue(
+                "$value from a Custard input action should bypass conversion",
+                shouldDirectCommitJapaneseInput(
+                    value,
+                    JapaneseInputContext.CUSTARD_ACTION_SEQUENCE,
+                ),
+            )
+        }
+    }
+
+    @Test
     fun keepsJapaneseReadingsInTheConversionPipeline() {
-        listOf("きょう", "キョウ", "ー", "きょう？").forEach { value ->
+        listOf("きょう", "キョウ", "ー", "きょう？", "第3", "12a").forEach { value ->
             assertFalse("$value should remain convertible", shouldDirectCommitJapaneseInput(value))
         }
     }

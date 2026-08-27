@@ -31,12 +31,16 @@ internal enum class JapaneseInputContext {
     CUSTARD_ACTION_SEQUENCE,
 }
 
-/** Symbols and spacing controls are committed verbatim instead of sent to conversion. */
+/** Numbers, symbols, and spacing controls are committed verbatim instead of sent to conversion. */
 internal fun shouldDirectCommitJapaneseInput(
     value: String,
     context: JapaneseInputContext = JapaneseInputContext.STANDALONE,
 ): Boolean {
     if (value.isEmpty()) return false
+    // Numeric custard tabs commonly use `input` instead of `direct_input` even
+    // though their digits must not enter kana-kanji conversion. Handle them
+    // before preserving symbol markers for Custard replacement sequences.
+    if (value.codePoints().allMatch(Character::isDigit)) return true
     // Custard input actions can intentionally insert a symbol as a temporary
     // marker and replace it in the next action (for example, "き・" -> "ぎ").
     // Keep that marker in the composition until the whole action list runs.
