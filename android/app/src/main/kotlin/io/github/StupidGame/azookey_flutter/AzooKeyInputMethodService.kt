@@ -49,6 +49,7 @@ import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
+import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -596,13 +597,40 @@ class AzooKeyInputMethodService : InputMethodService() {
         val design = key.optJSONObject("design") ?: JSONObject()
         val color = design.optString("color", "normal")
         val label = design.optJSONObject("label")
-        val centerLabel = custardLabel(label)
-        val view = createKey(
-            centerLabel,
-            color == "special" || color == "unimportant",
-            scale,
-            null,
-        )
+        val fullCenterLabel = custardLabel(label)
+        val flickVariations = if (variationsEnabled) custardVariations(key, "flick_variation") else emptyList()
+        fun variationLabel(direction: String): String? {
+            val variationKey = flickVariations
+                .firstOrNull { it.optString("direction") == direction }
+                ?.optJSONObject("key")
+                ?: return null
+            return variationKey.optJSONObject("design")
+                ?.optJSONObject("label")
+                ?.let(::custardLabel)
+                ?.takeIf(String::isNotEmpty)
+                ?: variationKey.optJSONArray("press_actions")
+                    ?.optJSONObject(0)
+                    ?.let(::actionDisplayLabel)
+        }
+        val leftLabel = variationLabel("left") ?: custardDirectionLabel(label, "left")
+        val upLabel = variationLabel("top") ?: custardDirectionLabel(label, "top")
+        val rightLabel = variationLabel("right") ?: custardDirectionLabel(label, "right")
+        val downLabel = variationLabel("bottom") ?: custardDirectionLabel(label, "bottom")
+        val special = color == "special" || color == "unimportant"
+        val hasDirectionLabels = listOf(leftLabel, upLabel, rightLabel, downLabel).any { !it.isNullOrEmpty() }
+        val centerLabel = if (hasDirectionLabels) custardPrimaryLabel(label) else fullCenterLabel
+        val view = if (hasDirectionLabels) {
+            createDirectionalKey(
+                centerLabel,
+                leftLabel,
+                upLabel,
+                rightLabel,
+                downLabel,
+                special,
+            )
+        } else {
+            createKey(centerLabel, special, scale, null)
+        }
         if (color == "selected") view.background = roundedDrawable(palette.accent, dp(6).toFloat())
         val handler = Handler(Looper.getMainLooper())
         var startX = 0f
@@ -617,18 +645,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
         val startActions = longPressData.optJSONArray("start") ?: JSONArray()
         var activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
-        val flickVariations = if (variationsEnabled) custardVariations(key, "flick_variation") else emptyList()
-        fun variationLabel(direction: String): String? = flickVariations
-            .firstOrNull { it.optString("direction") == direction }
-            ?.optJSONObject("key")
-            ?.optJSONObject("design")
-            ?.optJSONObject("label")
-            ?.let(::custardLabel)
-            ?.takeIf(String::isNotEmpty)
-        val leftLabel = variationLabel("left") ?: custardDirectionLabel(label, "left")
-        val upLabel = variationLabel("top") ?: custardDirectionLabel(label, "top")
-        val rightLabel = variationLabel("right") ?: custardDirectionLabel(label, "right")
-        val downLabel = variationLabel("bottom") ?: custardDirectionLabel(label, "bottom")
         val pcVariations = if (variationsEnabled && keyStyle == "pc_style") {
             custardVariations(key, "longpress_variation")
         } else {
@@ -906,17 +922,22 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun createCustomKey(key: JSONObject, scale: Double): View {
-        val view = createKey(key.optString("label", key.optString("name", "")), false, scale, null)
+        val centerLabel = key.optString("label", key.optString("name", ""))
+        val leftLabel = actionDisplayLabel(key.optJSONObject("left"))
+        val upLabel = actionDisplayLabel(key.optJSONObject("up"))
+        val rightLabel = actionDisplayLabel(key.optJSONObject("right"))
+        val downLabel = actionDisplayLabel(key.optJSONObject("down"))
+        val view = if (listOf(leftLabel, upLabel, rightLabel, downLabel).any { !it.isNullOrEmpty() }) {
+            createDirectionalKey(centerLabel, leftLabel, upLabel, rightLabel, downLabel, special = false)
+        } else {
+            createKey(centerLabel, false, scale, null)
+        }
         val handler = Handler(Looper.getMainLooper())
         var startX = 0f
         var startY = 0f
         var longPressed = false
         var repeating = false
         var longPressFlicked = false
-        val leftLabel = actionDisplayLabel(key.optJSONObject("left"))
-        val upLabel = actionDisplayLabel(key.optJSONObject("up"))
-        val rightLabel = actionDisplayLabel(key.optJSONObject("right"))
-        val downLabel = actionDisplayLabel(key.optJSONObject("down"))
         val repeatAction = object : Runnable {
             override fun run() {
                 if (!repeating) return
@@ -1404,6 +1425,47 @@ class AzooKeyInputMethodService : InputMethodService() {
                     feedback(this)
                 }
             }
+        }
+    }
+
+    private fun createDirectionalKey(
+        center: String,
+        left: String?,
+        up: String?,
+        right: String?,
+        down: String?,
+        special: Boolean,
+    ): DirectionalKeyView {
+        val configuredSize = settings.optDouble("key_view_font_size", -1.0)
+        val centerSize = if (configuredSize > 0) configuredSize.toFloat() else keyTextSize(center)
+        val longestDirection = listOfNotNull(left, up, right, down).maxOfOrNull(String::length) ?: 1
+        val directionSize = if (configuredSize > 0) {
+            (configuredSize * 0.62).toFloat().coerceAtLeast(8f)
+        } else if (longestDirection > 2) {
+            8f
+        } else {
+            10f
+        }
+        return DirectionalKeyView(
+            context = this,
+            center = center,
+            left = left,
+            up = up,
+            right = right,
+            down = down,
+            textColor = palette.text,
+            centerTextSize = centerSize,
+            directionTextSize = directionSize,
+        ).apply {
+            background = roundedDrawable(if (special) palette.special else palette.key, dp(6).toFloat())
+        }
+    }
+
+    private fun custardPrimaryLabel(label: JSONObject?): String {
+        if (label == null) return ""
+        return when (label.optString("type")) {
+            "main_and_sub", "main_and_directions" -> label.optString("main")
+            else -> custardLabel(label)
         }
     }
 

@@ -650,7 +650,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('この単語をKeynakoと共有'),
+              title: const Text('この単語をazooKeyと共有'),
               subtitle: const Text('読み・単語・選択した品詞を、元アプリと同じ投稿先へ送信します。'),
               value: _shared,
               onChanged: (value) => setState(() => _shared = value),
