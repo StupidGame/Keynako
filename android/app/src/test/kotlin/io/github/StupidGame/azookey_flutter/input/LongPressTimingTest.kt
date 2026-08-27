@@ -1,6 +1,8 @@
 package io.github.StupidGame.azookey_flutter.input
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LongPressTimingTest {
@@ -18,5 +20,17 @@ class LongPressTimingTest {
         assertEquals(400L, longPressDelayMillis("normal", configuredDurationMs = 400.0))
         assertEquals(150L, longPressDelayMillis(null, configuredDurationMs = 100.0))
         assertEquals(1_000L, longPressDelayMillis("normal", configuredDurationMs = 1_500.0))
+    }
+
+    @Test
+    fun oguraLargeKanaLongPressSurvivesJitterBackInsideTheFlickThreshold() {
+        val selection = FlickLongPressSelection(center = listOf("し"))
+        val largeYaActions = listOf("ゃ", "しゃ→しや")
+
+        assertTrue(selection.update("top") { largeYaActions })
+        assertFalse(selection.update(null) { error("a neutral jitter must keep the selected variation") })
+
+        assertEquals("top", selection.direction)
+        assertEquals(largeYaActions, selection.target)
     }
 }

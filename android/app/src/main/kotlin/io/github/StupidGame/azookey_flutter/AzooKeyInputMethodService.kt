@@ -47,6 +47,7 @@ import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
+import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
@@ -637,13 +638,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         val handler = Handler(Looper.getMainLooper())
         var startX = 0f
         var startY = 0f
-        var currentX = 0f
-        var currentY = 0f
         var didLongPress = false
         var repeating = false
-        var selectedDirection: String? = null
         var longPressFlicked = false
         var variationDidLongPress = false
+        val longPressSelection = FlickLongPressSelection(key)
         val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
         val startActions = longPressData.optJSONArray("start") ?: JSONArray()
         var activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
@@ -651,17 +650,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             custardVariations(key, "longpress_variation")
         } else {
             emptyList()
-        }
-        fun selectedGestureKey(): JSONObject {
-            if (!variationsEnabled || keyStyle == "pc_style") return key
-            val dx = currentX - startX
-            val dy = currentY - startY
-            val threshold = dp(20).toFloat() *
-                settings.optDouble("flick_sensitivity_setting", 1.0).toFloat()
-            val direction = if (abs(dx) < threshold && abs(dy) < threshold) null
-            else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
-            else if (dy < 0) "top" else "bottom"
-            return findCustardVariation(key, "flick_variation", direction) ?: key
         }
         val handlesLongPress = startActions.length() > 0 || activeRepeatActions.length() > 0 ||
             pcVariations.isNotEmpty() || flickVariations.any { variation ->
@@ -677,14 +665,15 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
         val longPress = Runnable {
-            val selectedLongPress = selectedGestureKey().optJSONObject("longpress_actions") ?: JSONObject()
+            val selectedKey = longPressSelection.target ?: return@Runnable
+            val selectedLongPress = selectedKey.optJSONObject("longpress_actions") ?: JSONObject()
             val selectedStartActions = selectedLongPress.optJSONArray("start") ?: JSONArray()
             activeRepeatActions = selectedLongPress.optJSONArray("repeat") ?: JSONArray()
             if (selectedStartActions.length() == 0 && activeRepeatActions.length() == 0 && pcVariations.isEmpty()) {
                 return@Runnable
             }
             didLongPress = true
-            variationDidLongPress = selectedDirection != null
+            variationDidLongPress = longPressSelection.direction != null
             dismissFlickGuide()
             dispatchActions(selectedStartActions)
             if (activeRepeatActions.length() > 0) {
@@ -698,23 +687,19 @@ class AzooKeyInputMethodService : InputMethodService() {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.x
                     startY = event.y
-                    currentX = event.x
-                    currentY = event.y
                     didLongPress = false
                     repeating = false
                     longPressFlicked = false
                     variationDidLongPress = false
                     activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
                     target.isPressed = true
-                    selectedDirection = null
+                    longPressSelection.reset()
                     val delay = longPressDelay(longPressData.optString("duration"))
                     if (handlesLongPress) handler.postDelayed(longPress, delay)
                     showFlickGuide(target, centerLabel, leftLabel, upLabel, rightLabel, downLabel)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    currentX = event.x
-                    currentY = event.y
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
@@ -754,15 +739,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    currentX = event.x
-                    currentY = event.y
                     val direction = flickDirection(event.x - startX, event.y - startY)
                     updateFlickGuide(direction)
-                    if (direction != null && direction != selectedDirection) {
+                    if (
+                        longPressSelection.update(direction) {
+                            findCustardVariation(key, "flick_variation", it)
+                        }
+                    ) {
                         // azooKey cancels the center long-press as soon as a
                         // flick direction is selected, then reserves the
                         // variation's own long-press from that point.
-                        selectedDirection = direction
                         handler.removeCallbacks(longPress)
                         if (didLongPress) {
                             longPressFlicked = true
@@ -770,8 +756,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                             repeating = false
                             handler.removeCallbacks(repeatAction)
                         }
-                        val variation = findCustardVariation(key, "flick_variation", direction)
-                        val variationLongPress = variation?.optJSONObject("longpress_actions")
+                        val variationLongPress = longPressSelection.target?.optJSONObject("longpress_actions")
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
