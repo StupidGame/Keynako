@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -28,6 +29,7 @@ import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -35,6 +37,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
+import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEntry
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
@@ -60,6 +63,7 @@ import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,6 +73,7 @@ import kotlin.random.Random
 
 class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var inputViewFrame: FrameLayout
+    private lateinit var backgroundImageView: ImageView
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
     private lateinit var keyboardContainer: LinearLayout
@@ -85,6 +90,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var oneHandedMode = "full"
     private var candidates = mutableListOf<String>()
     private var pendingReport: WrongConversionReport? = null
+    private var hotfixDictionaryEntries = emptyList<AzooKeyHotfixDictionaryEntry>()
+    private var hotfixDictionaryVersion = "none"
+    private var backgroundImageSignature: String? = null
     private var palette = KeyboardPalette.default()
     private var flickGuide: FlickGuide? = null
     private var cursorBarVisible = false
@@ -114,8 +122,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     fun refreshFromApp() {
         if (!::root.isInitialized) return
         reloadState()
-        inputViewFrame.setBackgroundColor(palette.background)
-        root.setBackgroundColor(palette.background)
+        applyKeyboardBackground()
         renderCandidates()
         renderKeyboard()
         prepareZenzaiIfNeeded()
@@ -126,9 +133,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         inputViewFrame = FrameLayout(this).apply {
             setBackgroundColor(palette.background)
         }
+        backgroundImageView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            imageAlpha = 217
+            visibility = View.GONE
+        }
+        inputViewFrame.addView(
+            backgroundImageView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(palette.background)
         }
         inputViewFrame.addView(
             root,
@@ -137,6 +155,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ),
         )
+        applyKeyboardBackground()
         applyKeyboardWidth()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             inputViewFrame.setOnApplyWindowInsetsListener { view, insets ->
@@ -198,8 +217,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "qwerty"
         }
         if (::root.isInitialized) {
-            inputViewFrame.setBackgroundColor(palette.background)
-            root.setBackgroundColor(palette.background)
+            applyKeyboardBackground()
             applyKeyboardWidth()
             renderCandidates()
             renderKeyboard()
@@ -222,6 +240,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             JSONObject()
         }
         settings = state.optJSONObject("settings") ?: JSONObject()
+        reloadAzooKeyHotfixDictionary()
         if (settings.has("memory_reset_setting") && settings.opt("memory_reset_setting") != false) {
             state.put("learning", JSONObject())
             settings.put("memory_reset_setting", false)
@@ -229,6 +248,39 @@ class AzooKeyInputMethodService : InputMethodService() {
             persistState()
         }
         palette = loadPalette()
+    }
+
+    private fun reloadAzooKeyHotfixDictionary() {
+        val tag = state.optString(AZOOKEY_HOTFIX_LATEST_TAG_KEY, "none")
+        val dictionary = state.optJSONObject(AZOOKEY_HOTFIX_STORAGE_KEY)
+        val metadata = dictionary?.optJSONObject("metadata")
+        val values = dictionary?.optJSONArray("data")
+        if (metadata?.optString("status") != "active" || values == null) {
+            hotfixDictionaryEntries = emptyList()
+            hotfixDictionaryVersion = "$tag|disabled"
+            return
+        }
+        hotfixDictionaryEntries = buildList {
+            for (index in 0 until values.length()) {
+                val value = values.optJSONObject(index) ?: continue
+                val word = value.optString("word")
+                val ruby = value.optString("ruby")
+                val wordWeight = value.optDouble("word_weight", Double.NaN)
+                if (word.isEmpty() || ruby.isEmpty() || !wordWeight.isFinite()) continue
+                add(
+                    AzooKeyHotfixDictionaryEntry(
+                        word = word,
+                        ruby = ruby,
+                        wordWeight = wordWeight,
+                        lcid = value.optInt("lcid"),
+                        rcid = value.optInt("rcid"),
+                        mid = value.optInt("mid"),
+                    ),
+                )
+            }
+        }
+        hotfixDictionaryVersion =
+            "$tag|${metadata.optString("last_update", "unknown")}|${hotfixDictionaryEntries.size}"
     }
 
     private fun loadPalette(): KeyboardPalette {
@@ -248,10 +300,26 @@ class AzooKeyInputMethodService : InputMethodService() {
                     special = theme.optLong("specialKeyColor", 0xffadb5bdL).toInt(),
                     text = theme.optLong("textColor", 0xff111827L).toInt(),
                     accent = theme.optLong("accentColor", 0xff2563ebL).toInt(),
+                    backgroundImage = theme.optString("backgroundImage")
+                        .takeIf(String::isNotBlank),
                 )
             }
         }
         return KeyboardPalette.default(night)
+    }
+
+    private fun applyKeyboardBackground() {
+        inputViewFrame.setBackgroundColor(palette.background)
+        val file = palette.backgroundImage?.let(::File)?.takeIf { it.isFile }
+        val signature = file?.let { "${it.absolutePath}:${it.lastModified()}" }
+        if (signature != backgroundImageSignature) {
+            val bitmap = file?.let { runCatching { BitmapFactory.decodeFile(it.absolutePath) }.getOrNull() }
+            backgroundImageView.setImageBitmap(bitmap)
+            backgroundImageSignature = signature
+        }
+        val hasImage = signature != null && backgroundImageView.drawable != null
+        backgroundImageView.visibility = if (hasImage) View.VISIBLE else View.GONE
+        root.setBackgroundColor(if (hasImage) Color.TRANSPARENT else palette.background)
     }
 
     private fun renderKeyboard() {
@@ -1851,7 +1919,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             else if (predictionLimit > 0 && ruby.startsWith(reading)) predictedValues.add(value)
         }
         val officialCandidates = runCatching {
-            azooKeyDictionary.candidates(reading, predictionLimit)
+            azooKeyDictionary.candidates(
+                reading,
+                predictionLimit,
+                additionalEntries = hotfixDictionaryEntries,
+                additionalDictionaryVersion = hotfixDictionaryVersion,
+            )
         }.onFailure {
             Log.e("AzooKeyDictionary", "Failed to read the bundled dictionary", it)
         }.getOrElse {
@@ -2768,6 +2841,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val special: Int,
         val text: Int,
         val accent: Int,
+        val backgroundImage: String? = null,
     ) {
         companion object {
             fun default(dark: Boolean = false) = if (dark) {
@@ -2779,6 +2853,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     companion object {
+        private const val AZOOKEY_HOTFIX_STORAGE_KEY =
+            "azooKey_hotfix_dictionary_storage"
+        private const val AZOOKEY_HOTFIX_LATEST_TAG_KEY =
+            "azooKey_hotfix_dictionary_storage_latest_tag"
         private const val IME_LOG_TAG = "KeynakoIME"
         private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
         @Volatile

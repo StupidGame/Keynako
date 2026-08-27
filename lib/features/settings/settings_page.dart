@@ -95,6 +95,30 @@ class _SettingsPageState extends State<SettingsPage> {
                               ),
                             ),
                           ),
+                          const Divider(height: 1, indent: 16, endIndent: 16),
+                          ListTile(
+                            leading: const Icon(Icons.sync),
+                            title: const Text('azooKey共有変換辞書'),
+                            subtitle: Text(
+                              controller.azooKeyHotfixSyncing
+                                  ? '最新の共有語を確認しています…'
+                                  : controller.azooKeyHotfixSyncError != null
+                                  ? '前回の同期に失敗しました。タップして再試行できます。'
+                                  : '${controller.data.azooKeyHotfixDictionary?.entries.length ?? 0}件'
+                                        '${controller.data.azooKeyHotfixLatestTag == null ? '・未同期' : '・${controller.data.azooKeyHotfixLatestTag}'}',
+                            ),
+                            trailing: controller.azooKeyHotfixSyncing
+                                ? const SizedBox.square(
+                                    dimension: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.refresh),
+                            onTap: controller.azooKeyHotfixSyncing
+                                ? null
+                                : () => _syncAzooKeyHotfix(context),
+                          ),
                         ],
                         if (group.key == '学習機能') ...[
                           const Divider(height: 1, indent: 16, endIndent: 16),
@@ -173,6 +197,24 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('$count件の連絡先をユーザ辞書へ追加しました。')));
+  }
+
+  Future<void> _syncAzooKeyHotfix(BuildContext context) async {
+    try {
+      final updated = await AppControllerScope.of(context)
+          .syncAzooKeyHotfixDictionary(force: true);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(updated ? 'azooKey共有変換辞書を更新しました。' : 'すでに最新の共有変換辞書です。'),
+        ),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('azooKey共有変換辞書を取得できませんでした。')),
+      );
+    }
   }
 
   Future<void> _confirmLearningReset(BuildContext context) async {
@@ -663,8 +705,9 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
 
   Future<void> _save() async {
     final ruby = _ruby.text.trim();
+    final word = _word.text.trim();
     if (ruby.isEmpty ||
-        (!_template && _word.text.isEmpty) ||
+        (!_template && word.isEmpty) ||
         (_template && _format.text.isEmpty)) {
       ScaffoldMessenger.of(
         context,
@@ -672,15 +715,25 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
       return;
     }
     final controller = AppControllerScope.of(context);
-    var shared = widget.entry?.shared ?? false;
-    if (_shared && !shared) {
+    final wantsShare = _shared && !_template;
+    final payloadAlreadyShared =
+        widget.entry?.hasSameSharedPayload(
+          ruby: ruby,
+          word: word,
+          isVerb: _verb,
+          isPersonName: _person,
+          isPlaceName: _place,
+        ) ??
+        false;
+    var shared = wantsShare && payloadAlreadyShared;
+    if (wantsShare && !payloadAlreadyShared) {
       final categories = <String>[
         if (_person) '人・動物・会社などの名前',
         if (_place) '場所・建物などの名前',
         if (_verb) '五段活用',
       ];
       shared = await controller.platform.submitSharedWord(
-        word: _word.text,
+        word: word,
         ruby: ruby,
         categories: categories,
       );
@@ -695,7 +748,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
       UserDictionaryEntry(
         id: widget.entry?.id ?? controller.nextDictionaryId(),
         ruby: ruby,
-        word: _word.text,
+        word: word,
         isVerb: _verb,
         isPersonName: _person,
         isPlaceName: _place,

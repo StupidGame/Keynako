@@ -45,6 +45,7 @@ Android InputMethodService <---- shared JSON state ----> iOS Keyboard Extension
 | フリック／QWERTY | Android/iOSネイティブキーボードcontroller |
 | 変換候補／ライブ変換 | ネイティブ候補バー + かな漢字変換engine |
 | ユーザー辞書／テンプレート | Flutter CRUD + 共有JSON |
+| キーボード背景画像 | Flutter画像選択 + Androidアプリ領域／iOS App Group + ネイティブ背景描画 |
 | 学習／リセット | 共有learning map + iOS converter memory |
 | テーマ／配色 | Flutter editor + ネイティブrenderer |
 | Custard 1.0〜1.2（座標、複数アクション、長押し反復、variation） | URL importer + ネイティブrenderer |
@@ -53,13 +54,14 @@ Android InputMethodService <---- shared JSON state ----> iOS Keyboard Extension
 | 音／触覚／片手設定 | ネイティブキーボードbehavior |
 | import/export/share | JSON + OS share sheet |
 | 変換報告／単語共有 | 元アプリと同一Google Forms endpoint |
+| 共有変換辞書 | 元アプリと同一GitHub Releases latest API + `data_v1.json`（24時間キャッシュ） |
 
 ## Zenzai
 
 中／高エフォートは`zenz-v3.2-small-gguf`、低エフォートは`zenz-v3.2-xsmall-gguf`を利用します。
 
 - Android: モデルをAPK assetsからアプリ専用領域へ一度だけ展開し、azooKey forkのllama.cppをJNI経由で実行します。生成候補と既存候補をv3.2 scoringで再順位付けします。不正Unicode、制御文字、異常な長さの生成結果は候補に採用しません。
-- iOS: `AzooKeyKanaKanjiConverter`の固定commit `8e3a6eb89e088efd868aa28dadb74c697df4e6fb`と`ZenzaiCPU` traitを使い、モデルをKeyboard Extension resourceとして参照します。
+- iOS: azooKey本体と同じ`AzooKeyKanaKanjiConverter`の固定commit `93766c46e31fa6a18b7ced49dab31337780f6f45`と`ZenzaiCPU` traitを使い、モデルをKeyboard Extension resourceとして参照します。
 
 モデルの正確なサイズとSHA-256は`assets/ZENZAI_MODELS.md`に記録しています。推論は端末内で完結します。
 

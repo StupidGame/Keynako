@@ -74,6 +74,30 @@ import UIKit
       ) { success in
         DispatchQueue.main.async { result(success) }
       }
+    case "saveKeyboardBackgroundImage":
+      let arguments = call.arguments as? [String: Any]
+      guard let themeId = arguments?["themeId"] as? String,
+            !themeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let typedData = arguments?["bytes"] as? FlutterStandardTypedData,
+            !typedData.data.isEmpty else {
+        result(FlutterError(code: "invalid_image", message: "themeId and image bytes are required", details: nil))
+        return
+      }
+      guard typedData.data.count <= 8 * 1024 * 1024 else {
+        result(FlutterError(code: "image_too_large", message: "background image exceeds 8 MB", details: nil))
+        return
+      }
+      do {
+        result(try saveKeyboardBackgroundImage(themeId: themeId, data: typedData.data))
+      } catch {
+        result(FlutterError(code: "image_save_failed", message: error.localizedDescription, details: nil))
+      }
+    case "deleteKeyboardBackgroundImage":
+      let arguments = call.arguments as? [String: Any]
+      if let path = arguments?["path"] as? String {
+        try? deleteKeyboardBackgroundImage(path: path)
+      }
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -90,6 +114,38 @@ import UIKit
       popover.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.midY, width: 1, height: 1)
     }
     root.present(activity, animated: true)
+  }
+
+  private func saveKeyboardBackgroundImage(themeId: String, data: Data) throws -> String {
+    let directory = try backgroundImageDirectory()
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    let safeId = String(themeId.unicodeScalars.map { scalar in
+      allowed.contains(scalar) ? Character(String(scalar)) : "_"
+    }.prefix(80))
+    let target = directory.appendingPathComponent("\(safeId.isEmpty ? "theme" : safeId).image")
+    try data.write(to: target, options: .atomic)
+    return target.path
+  }
+
+  private func deleteKeyboardBackgroundImage(path: String) throws {
+    let directory = try backgroundImageDirectory().resolvingSymlinksInPath()
+    let target = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    guard target.deletingLastPathComponent() == directory else { return }
+    try? FileManager.default.removeItem(at: target)
+  }
+
+  private func backgroundImageDirectory() throws -> URL {
+    guard let container = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
+    ) else {
+      throw CocoaError(.fileNoSuchFile)
+    }
+    let directory = container.appendingPathComponent("ThemeBackgrounds", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    return directory
   }
 
   private func importContacts(result: @escaping FlutterResult) {
@@ -141,7 +197,7 @@ import UIKit
       string: "https://docs.google.com/forms/d/e/1FAIpQLSceGtIHH8P-KbrB2ownprap3cUVVJegbhGekfz1xCiwPxBNfg/formResponse"
     )!
     let noteText = (note ?? "備考記入なし")
-      + "\nアプリ内フォームから送信\nKeynako 3.0.1"
+      + "\nアプリ内フォームから送信\nKeynakoのバージョン: 3.0.1"
     var components = URLComponents()
     components.queryItems = [
       URLQueryItem(name: "entry.1129894332", value: "3"),

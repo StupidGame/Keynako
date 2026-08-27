@@ -4,21 +4,40 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 
+import '../input/azookey_hotfix_sync.dart';
 import '../models/app_data.dart';
 import '../models/custard.dart';
 import 'platform_service.dart';
 
 class AppController extends ChangeNotifier {
-  AppController({StateStorage? storage, PlatformService? platform})
-    : platform = platform ?? PlatformService(),
-      _storage = storage ?? platform ?? PlatformService();
+  AppController({
+    StateStorage? storage,
+    PlatformService? platform,
+    AzooKeyHotfixSynchronizer? azooKeyHotfixSynchronizer,
+    DateTime Function()? now,
+  }) {
+    final resolvedPlatform = platform ?? PlatformService();
+    this.platform = resolvedPlatform;
+    _storage = storage ?? resolvedPlatform;
+    _azooKeyHotfixSynchronizer =
+        azooKeyHotfixSynchronizer ??
+        (storage == null && platform == null
+            ? AzooKeyHotfixSyncClient()
+            : null);
+    _now = now ?? DateTime.now;
+  }
 
-  final StateStorage _storage;
-  final PlatformService platform;
+  late final StateStorage _storage;
+  late final PlatformService platform;
+  late final AzooKeyHotfixSynchronizer? _azooKeyHotfixSynchronizer;
+  late final DateTime Function() _now;
   AppData data = AppData.defaults();
   bool initialized = false;
   Object? loadError;
+  bool azooKeyHotfixSyncing = false;
+  Object? azooKeyHotfixSyncError;
   Timer? _saveTimer;
+  Future<bool>? _azooKeyHotfixSyncTask;
 
   Future<void> initialize() async {
     try {
@@ -31,6 +50,63 @@ class AppController extends ChangeNotifier {
       data = AppData.defaults();
     } finally {
       initialized = true;
+      notifyListeners();
+    }
+    if (_azooKeyHotfixSynchronizer != null) {
+      unawaited(_runAutomaticAzooKeyHotfixSync());
+    }
+  }
+
+  Future<void> _runAutomaticAzooKeyHotfixSync() async {
+    try {
+      await syncAzooKeyHotfixDictionary();
+    } catch (_) {
+      // A maintenance failure must not interrupt app launch. The error remains
+      // available to the settings UI and a later launch can retry it.
+    }
+  }
+
+  Future<bool> syncAzooKeyHotfixDictionary({bool force = false}) {
+    final running = _azooKeyHotfixSyncTask;
+    if (running != null) return running;
+    final task = _performAzooKeyHotfixSync(force: force);
+    _azooKeyHotfixSyncTask = task;
+    return task.whenComplete(() {
+      _azooKeyHotfixSyncTask = null;
+    });
+  }
+
+  Future<bool> _performAzooKeyHotfixSync({required bool force}) async {
+    final synchronizer = _azooKeyHotfixSynchronizer;
+    if (synchronizer == null ||
+        (!force &&
+            !isAzooKeyHotfixCheckDue(
+              data.azooKeyHotfixLastCheckDate,
+              _now(),
+            ))) {
+      return false;
+    }
+
+    azooKeyHotfixSyncing = true;
+    azooKeyHotfixSyncError = null;
+    notifyListeners();
+    try {
+      final result = await synchronizer.checkAndUpdate(
+        cachedTag: data.azooKeyHotfixLatestTag,
+      );
+      if (result.dictionaryChanged) {
+        data.azooKeyHotfixDictionary = result.dictionary;
+        data.azooKeyHotfixLatestTag = result.latestTag;
+      }
+      data.azooKeyHotfixLastCheckDate = _now();
+      notifyListeners();
+      await flush();
+      return result.dictionaryChanged;
+    } catch (error) {
+      azooKeyHotfixSyncError = error;
+      rethrow;
+    } finally {
+      azooKeyHotfixSyncing = false;
       notifyListeners();
     }
   }

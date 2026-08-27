@@ -44,6 +44,12 @@ jobs:
       - name: Install Flutter packages
         run: flutter pub get
 
+      - name: Validate Flutter and Android code
+        run: |
+          flutter analyze
+          flutter test
+          (cd android && ./gradlew testDebugUnitTest)
+
       - name: Restore the stable CI signing key
         uses: actions/cache@v4
         with:

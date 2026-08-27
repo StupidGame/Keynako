@@ -1,6 +1,31 @@
 import Foundation
 import KanaKanjiConverterModuleWithDefaultDictionary
 
+public struct AzooKeyHotfixDictionaryEntry: Sendable {
+    public init(
+        word: String,
+        ruby: String,
+        wordWeight: Double,
+        lcid: Int,
+        rcid: Int,
+        mid: Int
+    ) {
+        self.word = word
+        self.ruby = ruby
+        self.wordWeight = wordWeight
+        self.lcid = lcid
+        self.rcid = rcid
+        self.mid = mid
+    }
+
+    public let word: String
+    public let ruby: String
+    public let wordWeight: Double
+    public let lcid: Int
+    public let rcid: Int
+    public let mid: Int
+}
+
 /// A small, stable boundary between the native keyboard and azooKey's pinned
 /// conversion engine. The package revision and ZenzaiCPU trait match the Swift
 /// application this Flutter port was derived from.
@@ -9,6 +34,7 @@ public final class AzooKeyConversionEngine {
     private let sharedContainerURL: URL
     private let memoryDirectoryURL: URL
     private var lastCandidates: [String: Candidate] = [:]
+    private var hotfixDictionaryVersion: String?
 
     public init(sharedContainerURL: URL) {
         self.sharedContainerURL = sharedContainerURL
@@ -21,6 +47,25 @@ public final class AzooKeyConversionEngine {
             withIntermediateDirectories: true
         )
         converter.setKeyboardLanguage(.ja_JP)
+    }
+
+    public func updateHotfixDictionary(
+        _ entries: [AzooKeyHotfixDictionaryEntry],
+        version: String
+    ) {
+        guard hotfixDictionaryVersion != version else { return }
+        converter.importDynamicUserDictionary(entries.map { entry in
+            DicdataElement(
+                word: entry.word,
+                ruby: Self.toKatakana(entry.ruby),
+                lcid: entry.lcid,
+                rcid: entry.rcid,
+                mid: entry.mid,
+                value: PValue(entry.wordWeight)
+            )
+        })
+        hotfixDictionaryVersion = version
+        lastCandidates = [:]
     }
 
     public func candidates(
@@ -126,5 +171,15 @@ public final class AzooKeyConversionEngine {
     public func resetLearning() {
         converter.resetMemory()
         lastCandidates = [:]
+    }
+
+    private static func toKatakana(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar in
+            if (0x3041 ... 0x3096).contains(scalar.value),
+               let converted = UnicodeScalar(scalar.value + 0x60) {
+                return Character(converted)
+            }
+            return Character(scalar)
+        })
     }
 }

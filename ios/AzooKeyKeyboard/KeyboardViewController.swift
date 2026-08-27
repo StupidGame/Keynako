@@ -2,6 +2,7 @@ import UIKit
 import AzooKeyConverterBridge
 
 final class KeyboardViewController: UIInputViewController {
+    private let backgroundImageView = UIImageView()
     private let rootStack = UIStackView()
     private let candidateScroll = UIScrollView()
     private let candidateStack = UIStackView()
@@ -24,6 +25,7 @@ final class KeyboardViewController: UIInputViewController {
     private weak var cursorBarView: CursorBarView?
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
+    private var backgroundImageSignature: String?
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
@@ -60,11 +62,22 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func configureView() {
+        backgroundImageView.contentMode = .scaleAspectFill
+        backgroundImageView.clipsToBounds = true
+        backgroundImageView.alpha = 0.85
+        backgroundImageView.isUserInteractionEnabled = false
+        backgroundImageView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backgroundImageView)
+
         rootStack.axis = .vertical
         rootStack.spacing = 0
         rootStack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(rootStack)
         NSLayoutConstraint.activate([
+            backgroundImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backgroundImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backgroundImageView.topAnchor.constraint(equalTo: view.topAnchor),
+            backgroundImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             rootStack.topAnchor.constraint(equalTo: view.topAnchor),
@@ -106,10 +119,12 @@ final class KeyboardViewController: UIInputViewController {
             state = [:]
             settings = [:]
             palette = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            applyKeyboardBackground()
             return
         }
         state = object
         settings = object["settings"] as? [String: Any] ?? [:]
+        reloadAzooKeyHotfixDictionary()
         if settings["memory_reset_setting"] != nil,
            settings["memory_reset_setting"] as? Bool != false {
             conversionEngine?.resetLearning()
@@ -118,10 +133,43 @@ final class KeyboardViewController: UIInputViewController {
             saveState()
         }
         palette = loadPalette()
-        view.backgroundColor = palette.background
-        keyboardStack.backgroundColor = palette.background
+        applyKeyboardBackground()
         let scale = doubleSetting("keyboard_height_scale", fallback: 1).clamped(to: 0.7 ... 1.4)
         heightConstraint?.constant = 42 + 216 * scale
+    }
+
+    private func reloadAzooKeyHotfixDictionary() {
+        let storageKey = "azooKey_hotfix_dictionary_storage"
+        let tagKey = "azooKey_hotfix_dictionary_storage_latest_tag"
+        let tag = state[tagKey] as? String ?? "none"
+        guard let dictionary = state[storageKey] as? [String: Any],
+              let metadata = dictionary["metadata"] as? [String: Any],
+              metadata["status"] as? String == "active",
+              let values = dictionary["data"] as? [[String: Any]] else {
+            conversionEngine?.updateHotfixDictionary([], version: "\(tag)|disabled")
+            return
+        }
+        let entries = values.compactMap { value -> AzooKeyHotfixDictionaryEntry? in
+            guard let word = value["word"] as? String,
+                  let ruby = value["ruby"] as? String,
+                  let wordWeight = value["word_weight"] as? Double,
+                  let lcid = value["lcid"] as? Int,
+                  let rcid = value["rcid"] as? Int,
+                  let mid = value["mid"] as? Int else { return nil }
+            return AzooKeyHotfixDictionaryEntry(
+                word: word,
+                ruby: ruby,
+                wordWeight: wordWeight,
+                lcid: lcid,
+                rcid: rcid,
+                mid: mid
+            )
+        }
+        let lastUpdate = metadata["last_update"] as? String ?? "unknown"
+        conversionEngine?.updateHotfixDictionary(
+            entries,
+            version: "\(tag)|\(lastUpdate)|\(entries.count)"
+        )
     }
 
     private func loadPalette() -> KeyboardPalette {
@@ -137,8 +185,31 @@ final class KeyboardViewController: UIInputViewController {
             key: color(theme["keyColor"], fallback: dark ? 0xff374151 : 0xffffffff),
             special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd),
             text: color(theme["textColor"], fallback: dark ? 0xfff9fafb : 0xff111827),
-            accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb)
+            accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb),
+            backgroundImage: theme["backgroundImage"] as? String
         )
+    }
+
+    private func applyKeyboardBackground() {
+        view.backgroundColor = palette.background
+        let path = palette.backgroundImage
+        var modificationDate: Date?
+        if let path,
+           let attributes = try? FileManager.default.attributesOfItem(atPath: path) {
+            modificationDate = attributes[.modificationDate] as? Date
+        }
+        let signature = path.flatMap { value in
+            guard FileManager.default.fileExists(atPath: value) else { return nil }
+            return "\(value):\(modificationDate?.timeIntervalSince1970 ?? 0)"
+        }
+        if signature != backgroundImageSignature {
+            backgroundImageView.image = path.flatMap { UIImage(contentsOfFile: $0) }
+            backgroundImageSignature = signature
+        }
+        let hasImage = signature != nil && backgroundImageView.image != nil
+        backgroundImageView.isHidden = !hasImage
+        rootStack.backgroundColor = hasImage ? .clear : palette.background
+        keyboardStack.backgroundColor = hasImage ? .clear : palette.background
     }
 
     private func renderKeyboard() {
@@ -2431,9 +2502,10 @@ private struct KeyboardPalette {
     let special: UIColor
     let text: UIColor
     let accent: UIColor
+    let backgroundImage: String?
 
-    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb))
-    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa))
+    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb), backgroundImage: nil)
+    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa), backgroundImage: nil)
 }
 
 private extension UIColor {

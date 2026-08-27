@@ -87,7 +87,7 @@ object ReportClient {
                             "entry.1129894332" to "3",
                             "entry.813756984" to word,
                             "entry.688013311" to ruby.ifBlank { "読み記入なし" },
-                            "entry.1136445695" to ((note ?: "備考記入なし") + "\nアプリ内フォームから送信\nKeynako 3.0.1"),
+                            "entry.1136445695" to ((note ?: "備考記入なし") + "\nアプリ内フォームから送信\nKeynakoのバージョン: 3.0.1"),
                             "entry.2110887544" to "__other_option__",
                             "entry.2110887544.other_option_response" to categories.joinToString("、").ifEmpty { "品詞記入無し" },
                         ),

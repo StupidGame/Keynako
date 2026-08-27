@@ -1,8 +1,9 @@
 import 'dart:convert';
 
+import 'azookey_hotfix_dictionary.dart';
 import 'custard.dart';
 
-const int currentSchemaVersion = 3;
+const int currentSchemaVersion = 4;
 
 const Map<String, dynamic> defaultKeyboardSettings = {
   'keyboard_type': 'flick',
@@ -120,6 +121,22 @@ class UserDictionaryEntry {
     'isTemplateMode': isTemplateMode,
     'formatLiteral': formatLiteral,
   };
+
+  bool hasSameSharedPayload({
+    required String ruby,
+    required String word,
+    required bool isVerb,
+    required bool isPersonName,
+    required bool isPlaceName,
+  }) {
+    return shared &&
+        !isTemplateMode &&
+        this.ruby == ruby &&
+        this.word == word &&
+        this.isVerb == isVerb &&
+        this.isPersonName == isPersonName &&
+        this.isPlaceName == isPlaceName;
+  }
 }
 
 class KeyboardThemeConfig {
@@ -363,6 +380,9 @@ class AppData {
     required this.tabBar,
     required this.clipboardHistory,
     required this.learning,
+    required this.azooKeyHotfixDictionary,
+    required this.azooKeyHotfixLatestTag,
+    required this.azooKeyHotfixLastCheckDate,
     required this.onboardingCompleted,
   });
 
@@ -378,6 +398,9 @@ class AppData {
   final List<String> tabBar;
   final List<String> clipboardHistory;
   final Map<String, int> learning;
+  AzooKeyHotfixDictionary? azooKeyHotfixDictionary;
+  String? azooKeyHotfixLatestTag;
+  DateTime? azooKeyHotfixLastCheckDate;
   bool onboardingCompleted;
 
   factory AppData.defaults() {
@@ -430,6 +453,9 @@ class AppData {
       tabBar: ['dismiss', 'resize', 'emoji', 'japanese', 'english'],
       clipboardHistory: [],
       learning: {},
+      azooKeyHotfixDictionary: null,
+      azooKeyHotfixLatestTag: null,
+      azooKeyHotfixLastCheckDate: null,
       onboardingCompleted: false,
     );
   }
@@ -458,6 +484,23 @@ class AppData {
     final rawLearning = json['learning'];
     final rawTabBar = json['tabBar'];
     final rawClipboard = json['clipboardHistory'];
+    AzooKeyHotfixDictionary? hotfixDictionary;
+    final rawHotfixDictionary = json[azooKeyHotfixStorageKey];
+    if (rawHotfixDictionary is Map) {
+      try {
+        final decoded = AzooKeyHotfixDictionary.fromJson(
+          Map<String, dynamic>.from(rawHotfixDictionary),
+        );
+        if (decoded.metadata.isActive) hotfixDictionary = decoded;
+      } on FormatException {
+        // A corrupt downloaded cache must not make the rest of the app state
+        // unreadable. The next maintenance check can replace it.
+      }
+    }
+    final rawLastCheckDate = json[azooKeyHotfixLastCheckDateKey];
+    final lastCheckDate = rawLastCheckDate is String
+        ? DateTime.tryParse(rawLastCheckDate)
+        : null;
 
     final storedSchemaVersion =
         (json['schemaVersion'] as num?)?.toInt() ?? currentSchemaVersion;
@@ -485,6 +528,9 @@ class AppData {
                   MapEntry(key.toString(), value is num ? value.toInt() : 0),
             )
           : <String, int>{},
+      azooKeyHotfixDictionary: hotfixDictionary,
+      azooKeyHotfixLatestTag: json[azooKeyHotfixLatestTagKey] as String?,
+      azooKeyHotfixLastCheckDate: lastCheckDate,
       onboardingCompleted: json['onboardingCompleted'] as bool? ?? false,
     )..schemaVersion = currentSchemaVersion;
 
@@ -539,6 +585,14 @@ class AppData {
     'tabBar': tabBar,
     'clipboardHistory': clipboardHistory,
     'learning': learning,
+    if (azooKeyHotfixDictionary != null)
+      azooKeyHotfixStorageKey: azooKeyHotfixDictionary!.toJson(),
+    if (azooKeyHotfixLatestTag != null)
+      azooKeyHotfixLatestTagKey: azooKeyHotfixLatestTag,
+    if (azooKeyHotfixLastCheckDate != null)
+      azooKeyHotfixLastCheckDateKey: azooKeyHotfixLastCheckDate!
+          .toUtc()
+          .toIso8601String(),
     'onboardingCompleted': onboardingCompleted,
   };
 

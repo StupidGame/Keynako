@@ -138,4 +138,32 @@ class PlatformService implements StateStorage {
       return false;
     }
   }
+
+  Future<String?> saveKeyboardBackgroundImage({
+    required String themeId,
+    required Uint8List bytes,
+  }) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'saveKeyboardBackgroundImage',
+        {'themeId': themeId, 'bytes': bytes},
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  Future<void> deleteKeyboardBackgroundImage(String path) async {
+    try {
+      await _channel.invokeMethod<void>('deleteKeyboardBackgroundImage', {
+        'path': path,
+      });
+    } on MissingPluginException {
+      return;
+    } on PlatformException {
+      return;
+    }
+  }
 }

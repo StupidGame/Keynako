@@ -44,4 +44,32 @@ class AzooKeyDictionaryTest {
             predictions.any { it.length > "こんに".length },
         )
     }
+
+    @Test
+    fun includesAzooKeyHotfixEntriesInConversionAndPrediction() {
+        val entry = AzooKeyHotfixDictionaryEntry(
+            word = "KeynakoHotfix",
+            ruby = "ほっとふぃっくてすと",
+            wordWeight = -5.0,
+            lcid = 1288,
+            rcid = 1288,
+            mid = 501,
+        )
+
+        val conversion = dictionary.candidates(
+            "ほっとふぃっくてすと",
+            predictionLimit = 0,
+            additionalEntries = listOf(entry),
+            additionalDictionaryVersion = "test-v1",
+        ).conversions
+        val prediction = dictionary.candidates(
+            "ほっとふぃっく",
+            predictionLimit = 16,
+            additionalEntries = listOf(entry),
+            additionalDictionaryVersion = "test-v1",
+        ).predictions
+
+        assertTrue("hotfix conversion should be included: $conversion", "KeynakoHotfix" in conversion)
+        assertTrue("hotfix prediction should be included: $prediction", "KeynakoHotfix" in prediction)
+    }
 }
