@@ -48,9 +48,13 @@ import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapanes
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
+import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
+import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
+import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
+import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -643,6 +647,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var repeating = false
         var longPressFlicked = false
         var variationDidLongPress = false
+        var centerLongPressCheckpoint: CompositionSnapshot? = null
         val longPressSelection = FlickLongPressSelection(key)
         val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
         val startActions = longPressData.optJSONArray("start") ?: JSONArray()
@@ -673,6 +678,14 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (selectedStartActions.length() == 0 && activeRepeatActions.length() == 0 && pcVariations.isEmpty()) {
                 return@Runnable
             }
+            centerLongPressCheckpoint = if (
+                longPressSelection.direction == null &&
+                canRollbackCustardInputActions(selectedStartActions, activeRepeatActions)
+            ) {
+                compositionSnapshot()
+            } else {
+                null
+            }
             didLongPress = true
             variationDidLongPress = longPressSelection.direction != null
             dismissFlickGuide()
@@ -692,6 +705,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     repeating = false
                     longPressFlicked = false
                     variationDidLongPress = false
+                    centerLongPressCheckpoint = null
                     activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
                     target.isPressed = true
                     longPressSelection.reset()
@@ -704,6 +718,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
+                    centerLongPressCheckpoint = null
                     target.isPressed = false
                     dismissFlickGuide()
                     val dx = event.x - startX
@@ -751,11 +766,35 @@ class AzooKeyInputMethodService : InputMethodService() {
                         // flick direction is selected, then reserves the
                         // variation's own long-press from that point.
                         handler.removeCallbacks(longPress)
-                        if (didLongPress) {
-                            longPressFlicked = true
-                            didLongPress = false
-                            repeating = false
-                            handler.removeCallbacks(repeatAction)
+                        when (
+                            firedLongPressTransition(
+                                didLongPress = didLongPress,
+                                variationDidLongPress = variationDidLongPress,
+                                canRollbackCenter = centerLongPressCheckpoint != null,
+                            )
+                        ) {
+                            FiredLongPressTransition.KEEP_CENTER -> {
+                                // The first action cannot be reversed safely. Once
+                                // it fires, keep it as the result instead of also
+                                // dispatching a flick action.
+                                return@setOnTouchListener true
+                            }
+                            FiredLongPressTransition.ROLLBACK_CENTER -> {
+                                restoreComposition(checkNotNull(centerLongPressCheckpoint))
+                                centerLongPressCheckpoint = null
+                                longPressFlicked = true
+                                didLongPress = false
+                                repeating = false
+                                handler.removeCallbacks(repeatAction)
+                            }
+                            FiredLongPressTransition.CONTINUE -> {
+                                if (didLongPress) {
+                                    longPressFlicked = true
+                                    didLongPress = false
+                                    repeating = false
+                                    handler.removeCallbacks(repeatAction)
+                                }
+                            }
                         }
                         val variationLongPress = longPressSelection.target?.optJSONObject("longpress_actions")
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
@@ -772,6 +811,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
+                    centerLongPressCheckpoint = null
                     target.isPressed = false
                     dismissFlickGuide()
                     true
@@ -2019,21 +2059,33 @@ class AzooKeyInputMethodService : InputMethodService() {
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
+    private fun clearComposition() {
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        composing = ""
+        rawRoman = ""
+        selectedCandidate = 0
+        candidates.clear()
+        // finishComposingText() alone commits the visible composing candidate.
+        // Replace it with an empty composition first so deletion is reflected
+        // in the editor as well as in our internal buffers.
+        currentInputConnection?.setComposingText("", 1)
+        currentInputConnection?.finishComposingText()
+        renderCandidates()
+    }
+
     private fun delete() {
         when {
             layout == "qwerty" && rawRoman.isNotEmpty() -> {
                 rawRoman = rawRoman.dropLast(1)
                 composing = romanToHiragana(rawRoman)
                 if (rawRoman.isEmpty()) {
-                    currentInputConnection?.finishComposingText()
-                    renderCandidates()
+                    clearComposition()
                 } else updateComposition()
             }
             composing.isNotEmpty() -> {
                 composing = composing.dropLast(1)
                 if (composing.isEmpty()) {
-                    currentInputConnection?.finishComposingText()
-                    renderCandidates()
+                    clearComposition()
                 } else updateComposition()
             }
             else -> {
@@ -2041,6 +2093,15 @@ class AzooKeyInputMethodService : InputMethodService() {
                 cursorBarView?.post { cursorBarView?.refresh() }
             }
         }
+    }
+
+    private fun deleteForward() {
+        // The local composition cursor is always at its trailing edge, matching
+        // azooKey's behavior: a forward delete has nothing to remove until the
+        // composition is committed or cleared.
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) return
+        currentInputConnection?.deleteSurroundingText(0, 1)
+        cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun space() {
@@ -2127,10 +2188,13 @@ class AzooKeyInputMethodService : InputMethodService() {
             "input" -> if (action.has("text")) custardInput(action.optString("text")) else directCommit(value)
             "directInput" -> directCommit(value)
             "direct_input" -> directCommit(action.optString("text"))
-            "delete" -> repeat(
-                if (action.has("count")) action.optInt("count", 1).coerceIn(1, 100)
-                else value.toIntOrNull()?.coerceIn(1, 100) ?: 1,
-            ) { delete() }
+            "delete" -> {
+                val count = if (action.has("count")) action.optInt("count", 1)
+                else value.toIntOrNull() ?: 1
+                val deletion = surroundingDeleteFor(count)
+                repeat(deletion.beforeCursor) { delete() }
+                repeat(deletion.afterCursor) { deleteForward() }
+            }
             "enter" -> enter()
             "space" -> space()
             "moveCursor" -> moveCursor(value.toIntOrNull() ?: 0)
@@ -2180,6 +2244,41 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (custard.optString("identifier") == id) return custard
         }
         return null
+    }
+
+    private fun compositionSnapshot() = CompositionSnapshot(
+        composing = composing,
+        rawRoman = rawRoman,
+        mode = mode,
+        layout = layout,
+    )
+
+    private fun restoreComposition(snapshot: CompositionSnapshot) {
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        composing = snapshot.composing
+        rawRoman = snapshot.rawRoman
+        mode = snapshot.mode
+        layout = snapshot.layout
+        if (composing.isEmpty() && rawRoman.isEmpty()) clearComposition() else updateComposition()
+    }
+
+    private fun canRollbackCustardInputActions(vararg actionGroups: JSONArray): Boolean {
+        val custard = activeCustard() ?: return false
+        if (custard.optString("language", "undefined") != "ja_JP") return false
+        var foundInput = false
+        for (actions in actionGroups) {
+            for (index in 0 until actions.length()) {
+                val action = actions.optJSONObject(index) ?: return false
+                if (action.optString("type", "input") != "input" || !action.has("text")) return false
+                val text = action.optString("text")
+                if (
+                    text.isEmpty() ||
+                    shouldDirectCommitJapaneseInput(text, JapaneseInputContext.CUSTARD_ACTION_SEQUENCE)
+                ) return false
+                foundInput = true
+            }
+        }
+        return foundInput
     }
 
     private fun custardInput(value: String) {
@@ -2255,10 +2354,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun smartDeleteDefault() {
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            composing = ""
-            rawRoman = ""
-            currentInputConnection?.finishComposingText()
-            renderCandidates()
+            clearComposition()
             return
         }
         smartDelete(JSONObject().put("direction", "backward").put("targets", JSONArray(defaultScanTargets)))
@@ -2266,21 +2362,35 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun smartDelete(action: JSONObject) {
         val targets = actionTargets(action)
-        if (action.optString("direction", "forward") == "backward") {
+        val backward = action.optString("direction", "forward") == "backward"
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
+            // The local composition cursor is at the trailing edge. Apply the
+            // requested boundaries to direct kana input so an Ogura word-delete
+            // removes only the current token, not the complete composition.
+            if (backward && rawRoman.isEmpty()) {
+                val count = smartDeleteCount(composing, targets, backward = true)
+                composing = composing.dropLast(count.coerceAtMost(composing.length))
+                if (composing.isEmpty()) clearComposition() else updateComposition()
+            } else if (backward) {
+                // A roman buffer cannot be sliced safely by its converted kana
+                // length, so match azooKey and clear that active composition.
+                clearComposition()
+            }
+            return
+        }
+        if (backward) {
             val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
-            val boundary = targets.mapNotNull { target ->
-                val index = text.lastIndexOf(target)
-                if (index < 0) null else index + target.length
-            }.maxOrNull() ?: 0
-            currentInputConnection?.deleteSurroundingText(text.length - boundary, 0)
+            currentInputConnection?.deleteSurroundingText(
+                smartDeleteCount(text, targets, backward = true),
+                0,
+            )
             cursorBarView?.post { cursorBarView?.refresh() }
         } else {
             val text = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
-            val boundary = targets.mapNotNull { target ->
-                val index = text.indexOf(target)
-                if (index < 0) null else index
-            }.minOrNull() ?: text.length
-            currentInputConnection?.deleteSurroundingText(0, boundary)
+            currentInputConnection?.deleteSurroundingText(
+                0,
+                smartDeleteCount(text, targets, backward = false),
+            )
             cursorBarView?.post { cursorBarView?.refresh() }
         }
     }
@@ -2643,6 +2753,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         val popup: PopupWindow,
         val centerCell: TextView,
         val directionCells: Map<String, TextView>,
+    )
+
+    private data class CompositionSnapshot(
+        val composing: String,
+        val rawRoman: String,
+        val mode: String,
+        val layout: String,
     )
 
     data class KeyboardPalette(

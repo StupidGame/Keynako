@@ -345,7 +345,10 @@ final class KeyboardViewController: UIInputViewController {
             key: key,
             keyStyle: keyStyle,
             variationsEnabled: variationsEnabled,
-            sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
+            sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1)),
+            makeCenterLongPressRollback: { [weak self] start, repeated in
+                self?.makeCustardInputRollback(startActions: start, repeatActions: repeated)
+            }
         ) { [weak self] actions in
             self?.dispatch(actions)
             self?.feedback()
@@ -745,6 +748,14 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private func deleteForward() {
+        guard composing.isEmpty, rawRoman.isEmpty,
+              !(textDocumentProxy.documentContextAfterInput ?? "").isEmpty else { return }
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: 1)
+        textDocumentProxy.deleteBackward()
+        refreshCursorBar()
+    }
+
     private func space() {
         if composing.isEmpty, rawRoman.isEmpty {
             textDocumentProxy.insertText(" ")
@@ -835,7 +846,12 @@ final class KeyboardViewController: UIInputViewController {
         case "direct_input": directCommit(action["text"] as? String ?? "")
         case "delete":
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
-            for _ in 0 ..< count.clamped(to: 1 ... 100) { delete() }
+            let boundedCount = min(100, max(-100, count))
+            if boundedCount > 0 {
+                for _ in 0 ..< boundedCount { delete() }
+            } else if boundedCount < 0 {
+                for _ in 0 ..< -boundedCount { deleteForward() }
+            }
         case "enter": enter()
         case "space": space()
         case "moveCursor":
@@ -883,6 +899,39 @@ final class KeyboardViewController: UIInputViewController {
     private func activeCustard() -> [String: Any]? {
         guard let id = activeCustomTab else { return nil }
         return (state["custards"] as? [[String: Any]])?.first { $0["identifier"] as? String == id }
+    }
+
+    private func makeCustardInputRollback(
+        startActions: [[String: Any]],
+        repeatActions: [[String: Any]]
+    ) -> (() -> Void)? {
+        guard activeCustard()?["language"] as? String == "ja_JP" else { return nil }
+        let actions = startActions + repeatActions
+        guard !actions.isEmpty, actions.allSatisfy({ action in
+            guard (action["type"] as? String ?? "input") == "input",
+                  let text = action["text"] as? String,
+                  !text.isEmpty else { return false }
+            return !text.unicodeScalars.allSatisfy(CharacterSet.decimalDigits.contains)
+        }) else { return nil }
+
+        let savedComposing = composing
+        let savedRawRoman = rawRoman
+        let savedMode = mode
+        let savedLayout = layout
+        return { [weak self] in
+            guard let self else { return }
+            self.composing = savedComposing
+            self.rawRoman = savedRawRoman
+            self.mode = savedMode
+            self.layout = savedLayout
+            if savedComposing.isEmpty, savedRawRoman.isEmpty {
+                self.replaceDisplayed(with: "", commit: true)
+                self.candidates = []
+                self.renderCandidates()
+            } else {
+                self.updateComposition()
+            }
+        }
     }
 
     private func custardInput(_ value: String) {
@@ -955,13 +1004,40 @@ final class KeyboardViewController: UIInputViewController {
 
     private func smartDelete(_ action: [String: Any]) {
         let targets = actionTargets(action)
-        if action["direction"] as? String == "backward" {
+        let backward = action["direction"] as? String == "backward"
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            if backward, rawRoman.isEmpty {
+                let boundaries = targets.compactMap { target -> String.Index? in
+                    composing.range(of: target, options: .backwards)?.upperBound
+                }
+                let boundary = boundaries.max() ?? composing.startIndex
+                let distance = composing.distance(from: boundary, to: composing.endIndex)
+                let count = distance == 0 && !composing.isEmpty ? 1 : distance
+                if count > 0 { composing.removeLast(min(count, composing.count)) }
+                if composing.isEmpty {
+                    replaceDisplayed(with: "", commit: true)
+                    resetComposition()
+                    renderCandidates()
+                } else {
+                    updateComposition()
+                }
+            } else if backward {
+                smartDeleteDefault()
+            }
+            return
+        }
+        if backward {
             let text = textDocumentProxy.documentContextBeforeInput ?? ""
             let boundaries = targets.compactMap { target -> String.Index? in
                 text.range(of: target, options: .backwards)?.upperBound
             }
             let boundary = boundaries.max() ?? text.startIndex
-            for _ in text[boundary...] { textDocumentProxy.deleteBackward() }
+            let count = text.distance(from: boundary, to: text.endIndex)
+            if count == 0, !text.isEmpty {
+                textDocumentProxy.deleteBackward()
+            } else {
+                for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+            }
             refreshCursorBar()
         } else {
             let text = textDocumentProxy.documentContextAfterInput ?? ""
@@ -969,7 +1045,8 @@ final class KeyboardViewController: UIInputViewController {
                 guard let range = text.range(of: target) else { return nil }
                 return text.distance(from: text.startIndex, to: range.lowerBound)
             }
-            let count = distances.min() ?? text.count
+            let distance = distances.min() ?? text.count
+            let count = distance == 0 && !text.isEmpty ? 1 : distance
             textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
             for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
             refreshCursorBar()
@@ -2146,6 +2223,7 @@ private final class CustardButton: DirectionalKeyButton {
     private let keyStyle: String
     private let variationsEnabled: Bool
     private let sensitivity: CGFloat
+    private let makeCenterLongPressRollback: ([[String: Any]], [[String: Any]]) -> (() -> Void)?
     private let callback: ([[String: Any]]) -> Void
     private var start = CGPoint.zero
     private var current = CGPoint.zero
@@ -2156,6 +2234,7 @@ private final class CustardButton: DirectionalKeyButton {
     private var longPressFlicked = false
     private var variationDidLongPress = false
     private var longPressDirection: String?
+    private var centerLongPressRollback: (() -> Void)?
 
     init(
         title: String,
@@ -2164,12 +2243,14 @@ private final class CustardButton: DirectionalKeyButton {
         keyStyle: String,
         variationsEnabled: Bool,
         sensitivity: CGFloat,
+        makeCenterLongPressRollback: @escaping ([[String: Any]], [[String: Any]]) -> (() -> Void)?,
         callback: @escaping ([[String: Any]]) -> Void
     ) {
         self.key = key
         self.keyStyle = keyStyle
         self.variationsEnabled = variationsEnabled
         self.sensitivity = sensitivity
+        self.makeCenterLongPressRollback = makeCenterLongPressRollback
         self.callback = callback
         super.init(title: title, directionTitles: directionTitles)
     }
@@ -2185,6 +2266,7 @@ private final class CustardButton: DirectionalKeyButton {
         longPressFlicked = false
         variationDidLongPress = false
         longPressDirection = nil
+        centerLongPressRollback = nil
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let startActions = longPress["start"] as? [[String: Any]] ?? []
         let repeated = longPress["repeat"] as? [[String: Any]] ?? []
@@ -2204,8 +2286,13 @@ private final class CustardButton: DirectionalKeyButton {
             let selectedStart = selectedLongPress["start"] as? [[String: Any]] ?? []
             let selectedRepeat = selectedLongPress["repeat"] as? [[String: Any]] ?? []
             guard !selectedStart.isEmpty || !selectedRepeat.isEmpty || handlesPCVariation else { return }
+            if self.longPressDirection == nil {
+                self.centerLongPressRollback = self.makeCenterLongPressRollback(selectedStart, selectedRepeat)
+            } else {
+                self.centerLongPressRollback = nil
+            }
             self.didLongPress = true
-            self.variationDidLongPress = self.current.x != self.start.x || self.current.y != self.start.y
+            self.variationDidLongPress = self.longPressDirection != nil
             self.repeatedLongPress = !selectedRepeat.isEmpty
             self.callback(selectedStart)
             if !selectedRepeat.isEmpty {
@@ -2226,10 +2313,18 @@ private final class CustardButton: DirectionalKeyButton {
         if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
             let direction: String = abs(dx) > abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "top" : "bottom")
             if direction != longPressDirection, variationsEnabled, keyStyle != "pc_style" {
+                if didLongPress, !variationDidLongPress, centerLongPressRollback == nil {
+                    // A non-input center action cannot be reversed safely. Keep
+                    // that result instead of firing a second variation action.
+                    super.touchesMoved(touches, with: event)
+                    return
+                }
                 // Keep the selected variation's timer alive while the finger
                 // jitters within the same flick direction.
                 longPressWorkItem?.cancel()
                 if didLongPress {
+                    centerLongPressRollback?()
+                    centerLongPressRollback = nil
                     longPressFlicked = true
                     didLongPress = false
                     variationDidLongPress = false
@@ -2277,6 +2372,7 @@ private final class CustardButton: DirectionalKeyButton {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
+        centerLongPressRollback = nil
         let end = touches.first?.location(in: self) ?? start
         current = end
         if didLongPress && !longPressFlicked {
@@ -2301,6 +2397,7 @@ private final class CustardButton: DirectionalKeyButton {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
+        centerLongPressRollback = nil
         super.touchesCancelled(touches, with: event)
     }
 
