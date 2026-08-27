@@ -475,21 +475,27 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func systemImageLabel(_ name: String) -> String {
-        switch name {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmedName.lowercased() {
         case "delete.left": return "⌫"
+        case "delete.right": return "⌦"
         case "xmark": return "×"
         case "globe", "globe.europe.africa": return "🌐"
         case "return", "return.left": return "↵"
         case "space": return "空白"
         case "list.bullet": return "☰"
         case "arrow.left", "chevron.left", "chevron.left.2": return "←"
+        case "arrow.up": return "↑"
         case "arrow.right", "chevron.right", "chevron.right.2": return "→"
+        case "arrow.down": return "↓"
         case "arrowtriangle.left.and.line.vertical.and.arrowtriangle.right": return "↔"
+        case "keyboard.chevron.compact.down.fill": return "⌄"
         case "textformat.123": return "123"
+        case "textformat.superscript": return "x²"
         case "face.smiling": return "🙂"
         case "doc.on.clipboard", "list.bullet.clipboard": return "📋"
         case "shift", "shift.fill": return "⇧"
-        default: return name
+        default: return trimmedName
         }
     }
 
@@ -749,9 +755,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func enter() {
         commitComposition()
-        if !(textDocumentProxy.documentContextBeforeInput ?? "").hasSuffix("\n") {
-            textDocumentProxy.insertText("\n")
-        }
+        textDocumentProxy.insertText("\n")
     }
 
     private func toggleShift() {
