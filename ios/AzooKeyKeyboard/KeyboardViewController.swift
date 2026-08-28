@@ -1403,7 +1403,7 @@ final class KeyboardViewController: UIInputViewController {
         let current = (learning[key] as? NSNumber)?.intValue ?? (learning[key] as? Int ?? 0)
         learning[key] = min(current + 1, 1_000_000)
         state["learning"] = learning
-        persistState()
+        saveState()
     }
 
     private func zenzaiConfiguration() -> (url: URL, inferenceLimit: Int)? {
