@@ -57,4 +57,17 @@ class CustardEditingTest {
             ),
         )
     }
+
+    @Test
+    fun oguraWordDeleteContinuesWhenTheCenterDeleteAlreadyFired() {
+        assertEquals(
+            FiredLongPressTransition.CONTINUE_AFTER_CENTER_DELETE,
+            firedLongPressTransition(
+                didLongPress = true,
+                variationDidLongPress = false,
+                canRollbackCenter = false,
+                canContinueAfterCenterDelete = true,
+            ),
+        )
+    }
 }

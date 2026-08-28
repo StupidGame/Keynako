@@ -3,6 +3,8 @@ package io.github.StupidGame.azookey_flutter
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -11,6 +13,8 @@ import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.github.StupidGame.azookey_flutter.input.centeredCropRectangle
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 class MainActivity : FlutterActivity() {
@@ -174,12 +178,45 @@ class MainActivity : FlutterActivity() {
         val target = File(directory, "$safeId.image")
         val temporary = File.createTempFile(".$safeId-", ".tmp", directory)
         try {
-            temporary.writeBytes(bytes)
+            temporary.writeBytes(cropKeyboardBackground(bytes))
             temporary.copyTo(target, overwrite = true)
         } finally {
             temporary.delete()
         }
         return target.absolutePath
+    }
+
+    private fun cropKeyboardBackground(bytes: ByteArray): ByteArray {
+        val source = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: error("Could not decode the background image")
+        val rectangle = centeredCropRectangle(source.width, source.height)
+        val cropped = if (
+            rectangle.left == 0 &&
+            rectangle.top == 0 &&
+            rectangle.width == source.width &&
+            rectangle.height == source.height
+        ) {
+            source
+        } else {
+            Bitmap.createBitmap(
+                source,
+                rectangle.left,
+                rectangle.top,
+                rectangle.width,
+                rectangle.height,
+            )
+        }
+        return try {
+            ByteArrayOutputStream().use { output ->
+                check(cropped.compress(Bitmap.CompressFormat.WEBP, 90, output)) {
+                    "Could not encode the cropped background image"
+                }
+                output.toByteArray()
+            }
+        } finally {
+            if (cropped !== source) cropped.recycle()
+            source.recycle()
+        }
     }
 
     private fun deleteKeyboardBackgroundImage(path: String) {

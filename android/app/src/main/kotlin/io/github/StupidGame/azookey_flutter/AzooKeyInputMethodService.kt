@@ -46,6 +46,8 @@ import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
+import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionValues
+import io.github.StupidGame.azookey_flutter.conversion.prioritizePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
@@ -734,6 +736,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var repeating = false
         var longPressFlicked = false
         var variationDidLongPress = false
+        var skipLeadingDeleteOnVariationRelease = false
         var centerLongPressCheckpoint: CompositionSnapshot? = null
         val longPressSelection = FlickLongPressSelection(key)
         val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
@@ -792,6 +795,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     repeating = false
                     longPressFlicked = false
                     variationDidLongPress = false
+                    skipLeadingDeleteOnVariationRelease = false
                     centerLongPressCheckpoint = null
                     activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
                     target.isPressed = true
@@ -817,8 +821,18 @@ class AzooKeyInputMethodService : InputMethodService() {
                             val direction = if (!variationsEnabled || abs(dx) < threshold && abs(dy) < threshold) null
                             else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
                             else if (dy < 0) "top" else "bottom"
-                            val variation = findCustardVariation(key, "flick_variation", direction)
-                            dispatchActions(variation?.optJSONArray("press_actions") ?: key.optJSONArray("press_actions"))
+                            val variation = if (skipLeadingDeleteOnVariationRelease) {
+                                longPressSelection.target
+                            } else {
+                                findCustardVariation(key, "flick_variation", direction)
+                            }
+                            val pressActions = variation?.optJSONArray("press_actions")
+                                ?: key.optJSONArray("press_actions")
+                            val startIndex = if (
+                                skipLeadingDeleteOnVariationRelease &&
+                                isBackwardWordDeleteVariation(pressActions)
+                            ) 1 else 0
+                            dispatchActions(pressActions, startIndex)
                             feedback(target)
                         }
                     } else if (!didLongPress) {
@@ -853,11 +867,18 @@ class AzooKeyInputMethodService : InputMethodService() {
                         // flick direction is selected, then reserves the
                         // variation's own long-press from that point.
                         handler.removeCallbacks(longPress)
+                        val variationPressActions = longPressSelection.target
+                            ?.optJSONArray("press_actions")
                         when (
                             firedLongPressTransition(
                                 didLongPress = didLongPress,
                                 variationDidLongPress = variationDidLongPress,
                                 canRollbackCenter = centerLongPressCheckpoint != null,
+                                canContinueAfterCenterDelete = canContinueDeleteLongPressIntoVariation(
+                                    startActions,
+                                    longPressData.optJSONArray("repeat") ?: JSONArray(),
+                                    variationPressActions,
+                                ),
                             )
                         ) {
                             FiredLongPressTransition.KEEP_CENTER -> {
@@ -868,6 +889,19 @@ class AzooKeyInputMethodService : InputMethodService() {
                             }
                             FiredLongPressTransition.ROLLBACK_CENTER -> {
                                 restoreComposition(checkNotNull(centerLongPressCheckpoint))
+                                centerLongPressCheckpoint = null
+                                longPressFlicked = true
+                                didLongPress = false
+                                repeating = false
+                                handler.removeCallbacks(repeatAction)
+                            }
+                            FiredLongPressTransition.CONTINUE_AFTER_CENTER_DELETE -> {
+                                // Ogura's delete key begins its light long press
+                                // before a slower left flick crosses the threshold.
+                                // That first delete is also the first variation
+                                // action, so keep it and run the remaining word
+                                // delete action when the finger is released.
+                                skipLeadingDeleteOnVariationRelease = true
                                 centerLongPressCheckpoint = null
                                 longPressFlicked = true
                                 didLongPress = false
@@ -1786,7 +1820,13 @@ class AzooKeyInputMethodService : InputMethodService() {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             horizontalGravity or Gravity.BOTTOM,
         )
+        backgroundImageView.layoutParams = FrameLayout.LayoutParams(
+            width,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            horizontalGravity or Gravity.BOTTOM,
+        )
         root.requestLayout()
+        backgroundImageView.requestLayout()
         inputViewFrame.requestLayout()
     }
 
@@ -1924,8 +1964,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
-        val completionStrength = settings.optInt("automatic_completion_strength", 1).coerceIn(0, 4)
-        val predictionLimit = completionStrength * 8
+        // Prefix predictions are independent from automatic commit strength.
+        // A user who disables automatic commit must still see completions while
+        // composing a word.
+        val predictionLimit = PREDICTION_LIMIT
         val userEntries = (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
             .sortedByDescending { it.optInt("importance", 3).coerceIn(1, 5) }
         for (entry in userEntries) {
@@ -1956,13 +1998,21 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         values.add(reading)
         if (predictionLimit > 0) {
+            predictedValues.addAll(
+                prefixPredictionValues(
+                    reading,
+                    systemDictionary.map { (ruby, predictions) -> ruby to predictions },
+                    predictionLimit,
+                ),
+            )
             predictedValues.addAll(officialCandidates.predictions)
-            if (officialCandidates.predictions.isEmpty()) {
-                for ((ruby, predictions) in systemDictionary) {
-                    if (ruby != reading && ruby.startsWith(reading)) predictedValues.addAll(predictions)
-                }
-            }
-            values.addAll(predictedValues.take(predictionLimit))
+            val prioritized = prioritizePrefixPredictions(
+                conversions = values.toList(),
+                predictions = predictedValues.take(predictionLimit),
+                insertIndex = PREDICTION_INSERT_INDEX,
+            )
+            values.clear()
+            values.addAll(prioritized)
         }
         val katakana = hiraganaToKatakana(reading)
         if (katakana != reading) values.add(katakana)
@@ -2324,9 +2374,45 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
-    private fun dispatchActions(actions: JSONArray?) {
+    private fun dispatchActions(actions: JSONArray?, startIndex: Int = 0) {
         if (actions == null) return
-        for (index in 0 until actions.length()) dispatchAction(actions.optJSONObject(index))
+        for (index in startIndex.coerceAtLeast(0) until actions.length()) {
+            dispatchAction(actions.optJSONObject(index))
+        }
+    }
+
+    private fun positiveBackwardDelete(action: JSONObject?): Boolean {
+        val value = action ?: return false
+        if (value.optString("type") != "delete") return false
+        val count = if (value.has("count")) value.optInt("count", 1)
+        else value.optString("value").toIntOrNull() ?: 1
+        return count > 0
+    }
+
+    private fun isBackwardWordDeleteVariation(actions: JSONArray?): Boolean =
+        actions != null &&
+            actions.length() >= 2 &&
+            positiveBackwardDelete(actions.optJSONObject(0)) &&
+            actions.optJSONObject(1)?.let {
+                it.optString("type") == "smart_delete" &&
+                    it.optString("direction", "forward") == "backward"
+            } == true
+
+    private fun canContinueDeleteLongPressIntoVariation(
+        startActions: JSONArray,
+        repeatActions: JSONArray,
+        variationActions: JSONArray?,
+    ): Boolean {
+        if (!isBackwardWordDeleteVariation(variationActions)) return false
+        val centerActions = listOf(startActions, repeatActions)
+        var foundDelete = false
+        for (actions in centerActions) {
+            for (index in 0 until actions.length()) {
+                if (!positiveBackwardDelete(actions.optJSONObject(index))) return false
+                foundDelete = true
+            }
+        }
+        return foundDelete
     }
 
     private fun activeCustard(): JSONObject? {
@@ -2889,6 +2975,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         var activeInstance: AzooKeyInputMethodService? = null
 
         private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
+        private const val PREDICTION_INSERT_INDEX = 2
+        private const val PREDICTION_LIMIT = 32
 
         internal fun withOpacity(color: Int, opacity: Double): Int {
             val alpha = (Color.alpha(color) * opacity).toInt().coerceIn(0, 255)
@@ -2902,6 +2990,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "ありがとう" to listOf("ありがとう", "有難う"),
             "いま" to listOf("今", "居間"),
             "おねがい" to listOf("お願い"),
+            "かめんらいだー" to listOf("仮面ライダー"),
             "きょう" to listOf("今日", "京"),
             "こんにちは" to listOf("今日は", "こんにちは"),
             "じかん" to listOf("時間"),

@@ -55,6 +55,7 @@ internal fun replaceLastCharactersIn(
 internal enum class FiredLongPressTransition {
     CONTINUE,
     ROLLBACK_CENTER,
+    CONTINUE_AFTER_CENTER_DELETE,
     KEEP_CENTER,
 }
 
@@ -63,8 +64,10 @@ internal fun firedLongPressTransition(
     didLongPress: Boolean,
     variationDidLongPress: Boolean,
     canRollbackCenter: Boolean,
+    canContinueAfterCenterDelete: Boolean = false,
 ): FiredLongPressTransition = when {
     !didLongPress || variationDidLongPress -> FiredLongPressTransition.CONTINUE
     canRollbackCenter -> FiredLongPressTransition.ROLLBACK_CENTER
+    canContinueAfterCenterDelete -> FiredLongPressTransition.CONTINUE_AFTER_CENTER_DELETE
     else -> FiredLongPressTransition.KEEP_CENTER
 }

@@ -1230,15 +1230,25 @@ final class KeyboardViewController: UIInputViewController {
     private func buildCandidates() -> [String] {
         guard !composing.isEmpty else { return [] }
         var result: [String] = []
+        var prefixPredictions: [String] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
             let ranked = dictionary.sorted {
                 ($0["importance"] as? Int ?? 3) > ($1["importance"] as? Int ?? 3)
             }
-            for entry in ranked where entry["ruby"] as? String == composing {
+            for entry in ranked {
+                guard let ruby = entry["ruby"] as? String,
+                      ruby == composing || ruby.hasPrefix(composing) else { continue }
+                let value: String?
                 if entry["isTemplateMode"] as? Bool == true {
-                    result.append(renderTemplate(entry["formatLiteral"] as? String ?? ""))
-                } else if let word = entry["word"] as? String {
-                    result.append(word)
+                    value = renderTemplate(entry["formatLiteral"] as? String ?? "")
+                } else {
+                    value = entry["word"] as? String
+                }
+                guard let value, !value.isEmpty else { continue }
+                if ruby == composing {
+                    result.append(value)
+                } else {
+                    prefixPredictions.append(value)
                 }
             }
         }
@@ -1258,8 +1268,16 @@ final class KeyboardViewController: UIInputViewController {
         ) ?? [])
         if boolSetting("use_OS_user_dict", fallback: true) {
             result.append(contentsOf: osLexicon[composing] ?? [])
+            for (ruby, values) in osLexicon where ruby.count > composing.count && ruby.hasPrefix(composing) {
+                prefixPredictions.append(contentsOf: values)
+            }
         }
         result.append(contentsOf: Self.systemDictionary[composing] ?? [])
+        for (ruby, values) in Self.systemDictionary
+            where ruby.count > composing.count && ruby.hasPrefix(composing) {
+            prefixPredictions.append(contentsOf: values)
+        }
+        result.insert(contentsOf: prefixPredictions, at: min(2, result.count))
         result.append(composing)
         let katakana = hiraganaToKatakana(composing)
         if katakana != composing { result.append(katakana) }
@@ -1575,6 +1593,7 @@ final class KeyboardViewController: UIInputViewController {
     private static let systemDictionary: [String: [String]] = [
         "あい": ["愛", "藍", "相"], "あした": ["明日"], "ありがとう": ["ありがとう", "有難う"],
         "いま": ["今", "居間"], "おねがい": ["お願い"], "きょう": ["今日", "京", "きょう"],
+        "かめんらいだー": ["仮面ライダー"],
         "こんにちは": ["今日は", "こんにちは"], "じかん": ["時間"], "せってい": ["設定"],
         "だいじょうぶ": ["大丈夫"], "でんわ": ["電話"], "にほん": ["日本", "二本"],
         "にほんご": ["日本語"], "へんかん": ["変換"], "ほんじつ": ["本日"], "わたし": ["私"],
@@ -2319,6 +2338,7 @@ private final class CustardButton: DirectionalKeyButton {
     private var variationDidLongPress = false
     private var longPressDirection: String?
     private var centerLongPressRollback: (() -> Void)?
+    private var skipLeadingDeleteOnVariationRelease = false
 
     init(
         title: String,
@@ -2351,6 +2371,7 @@ private final class CustardButton: DirectionalKeyButton {
         variationDidLongPress = false
         longPressDirection = nil
         centerLongPressRollback = nil
+        skipLeadingDeleteOnVariationRelease = false
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let startActions = longPress["start"] as? [[String: Any]] ?? []
         let repeated = longPress["repeat"] as? [[String: Any]] ?? []
@@ -2383,7 +2404,6 @@ private final class CustardButton: DirectionalKeyButton {
                 self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
                     self?.callback(selectedRepeat)
                 }
-                self.repeatTimer?.fire()
             }
         }
         longPressWorkItem = work
@@ -2397,7 +2417,14 @@ private final class CustardButton: DirectionalKeyButton {
         if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
             let direction: String = abs(dx) > abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "top" : "bottom")
             if direction != longPressDirection, variationsEnabled, keyStyle != "pc_style" {
-                if didLongPress, !variationDidLongPress, centerLongPressRollback == nil {
+                let variation = variations(type: "flick_variation").first { $0["direction"] as? String == direction }
+                let variationKey = variation?["key"] as? [String: Any] ?? [:]
+                let variationPressActions = variationKey["press_actions"] as? [[String: Any]] ?? []
+                let canContinueAfterDelete = canContinueDeleteLongPress(
+                    into: variationPressActions
+                )
+                if didLongPress, !variationDidLongPress,
+                   centerLongPressRollback == nil, !canContinueAfterDelete {
                     // A non-input center action cannot be reversed safely. Keep
                     // that result instead of firing a second variation action.
                     super.touchesMoved(touches, with: event)
@@ -2408,6 +2435,8 @@ private final class CustardButton: DirectionalKeyButton {
                 longPressWorkItem?.cancel()
                 if didLongPress {
                     centerLongPressRollback?()
+                    skipLeadingDeleteOnVariationRelease =
+                        centerLongPressRollback == nil && canContinueAfterDelete
                     centerLongPressRollback = nil
                     longPressFlicked = true
                     didLongPress = false
@@ -2416,8 +2445,6 @@ private final class CustardButton: DirectionalKeyButton {
                     repeatTimer = nil
                 }
                 longPressDirection = direction
-                let variation = variations(type: "flick_variation").first { $0["direction"] as? String == direction }
-                let variationKey = variation?["key"] as? [String: Any] ?? [:]
                 let variationLongPress = variationKey["longpress_actions"] as? [String: Any] ?? [:]
                 let startActions = variationLongPress["start"] as? [[String: Any]] ?? []
                 let repeatActions = variationLongPress["repeat"] as? [[String: Any]] ?? []
@@ -2430,7 +2457,6 @@ private final class CustardButton: DirectionalKeyButton {
                         self.callback(startActions)
                         if !repeatActions.isEmpty {
                             self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.callback(repeatActions) }
-                            self.repeatTimer?.fire()
                         }
                     }
                     longPressWorkItem = work
@@ -2473,8 +2499,23 @@ private final class CustardButton: DirectionalKeyButton {
             return
         }
         if longPressFlicked && variationDidLongPress { return }
-        let selected = selectedGestureKey(at: end)
-        callback(selected["press_actions"] as? [[String: Any]] ?? [])
+        let continuedVariation: [String: Any]?
+        if skipLeadingDeleteOnVariationRelease, let longPressDirection {
+            let variation = variations(type: "flick_variation").first {
+                $0["direction"] as? String == longPressDirection
+            }
+            continuedVariation = variation?["key"] as? [String: Any]
+        } else {
+            continuedVariation = nil
+        }
+        let selected = continuedVariation ?? selectedGestureKey(at: end)
+        let actions = selected["press_actions"] as? [[String: Any]] ?? []
+        if skipLeadingDeleteOnVariationRelease,
+           isBackwardWordDeleteVariation(actions) {
+            callback(Array(actions.dropFirst()))
+        } else {
+            callback(actions)
+        }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -2487,6 +2528,30 @@ private final class CustardButton: DirectionalKeyButton {
 
     private func variations(type: String) -> [[String: Any]] {
         (key["variations"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == type }
+    }
+
+    private func positiveBackwardDelete(_ action: [String: Any]) -> Bool {
+        guard action["type"] as? String == "delete" else { return false }
+        let count = (action["count"] as? NSNumber)?.intValue
+            ?? Int(action["value"] as? String ?? "")
+            ?? 1
+        return count > 0
+    }
+
+    private func isBackwardWordDeleteVariation(_ actions: [[String: Any]]) -> Bool {
+        guard actions.count >= 2,
+              positiveBackwardDelete(actions[0]) else { return false }
+        return actions[1]["type"] as? String == "smart_delete" &&
+            actions[1]["direction"] as? String == "backward"
+    }
+
+    private func canContinueDeleteLongPress(into variationActions: [[String: Any]]) -> Bool {
+        guard isBackwardWordDeleteVariation(variationActions) else { return false }
+        let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
+        let centerActions =
+            (longPress["start"] as? [[String: Any]] ?? []) +
+            (longPress["repeat"] as? [[String: Any]] ?? [])
+        return !centerActions.isEmpty && centerActions.allSatisfy(positiveBackwardDelete)
     }
 
     private func selectedGestureKey(at point: CGPoint) -> [String: Any] {
