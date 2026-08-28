@@ -45,6 +45,7 @@ import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
+import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
@@ -2288,8 +2289,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (composing.isEmpty() && rawRoman.isEmpty()) return
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         val reading = displayReading()
-        val text = if (useCandidate) candidates.firstOrNull() ?: buildCandidates().firstOrNull() ?: reading else reading
-        learnCandidate(reading, text)
+        val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
+        val text = compositionCommitText(reading, availableCandidates, useCandidate)
+        if (useCandidate) learnCandidate(reading, text)
         currentInputConnection?.commitText(text, 1)
         composing = ""
         rawRoman = ""
@@ -2362,6 +2364,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         } else {
             commitComposition()
         }
+    }
+
+    private fun spaceWithoutConversion() {
+        commitComposition(useCandidate = false)
+        currentInputConnection?.commitText(" ", 1)
+        cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun selectNextCandidate() {
@@ -2444,7 +2452,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 repeat(deletion.afterCursor) { deleteForward() }
             }
             "enter" -> enter()
-            "space" -> space()
+            "space" -> spaceWithoutConversion()
             "moveCursor" -> moveCursor(value.toIntOrNull() ?: 0)
             "move_cursor" -> moveCursor(action.optInt("count"))
             "switchLayout" -> setMode(if (value == "english") "english" else "japanese")

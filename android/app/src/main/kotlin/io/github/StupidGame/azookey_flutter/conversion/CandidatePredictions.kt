@@ -45,6 +45,13 @@ private fun matchEnglishCandidateCase(candidate: String, input: String): String 
     else -> candidate
 }
 
+/** Chooses either the leading conversion candidate or the unconverted reading. */
+internal fun compositionCommitText(
+    reading: String,
+    candidates: List<String>,
+    useCandidate: Boolean,
+): String = if (useCandidate) candidates.firstOrNull() ?: reading else reading
+
 /** Returns dictionary values whose reading extends the text currently being composed. */
 internal fun prefixPredictionValues(
     reading: String,

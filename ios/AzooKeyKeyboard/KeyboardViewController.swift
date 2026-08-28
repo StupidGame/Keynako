@@ -823,14 +823,14 @@ final class KeyboardViewController: UIInputViewController {
         if englishInput == nil { maybeOfferReport(report) }
     }
 
-    private func commitComposition() {
+    private func commitComposition(useCandidate: Bool = true) {
         guard !composing.isEmpty || !rawRoman.isEmpty else { return }
-        let selected = buildCandidates().first ?? composing
+        let selected = useCandidate ? (buildCandidates().first ?? composing) : composing
         let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
-        if let englishInput {
+        if useCandidate, let englishInput {
             learnEnglishCandidate(input: englishInput, candidate: selected)
-        } else {
+        } else if useCandidate {
             conversionEngine?.commit(
                 candidateText: selected,
                 learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
@@ -883,6 +883,12 @@ final class KeyboardViewController: UIInputViewController {
         } else {
             commitComposition()
         }
+    }
+
+    private func spaceWithoutConversion() {
+        commitComposition(useCandidate: false)
+        textDocumentProxy.insertText(" ")
+        refreshCursorBar()
     }
 
     private func enter() {
@@ -974,7 +980,7 @@ final class KeyboardViewController: UIInputViewController {
                 for _ in 0 ..< -boundedCount { deleteForward() }
             }
         case "enter": enter()
-        case "space": space()
+        case "space": spaceWithoutConversion()
         case "moveCursor":
             textDocumentProxy.adjustTextPosition(byCharacterOffset: Int(value) ?? 0)
             refreshCursorBar()

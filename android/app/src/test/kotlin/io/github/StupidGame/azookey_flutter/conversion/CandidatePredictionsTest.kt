@@ -5,6 +5,26 @@ import org.junit.Test
 
 class CandidatePredictionsTest {
     @Test
+    fun commitsTheRawReadingWhenCandidateConversionIsDisabled() {
+        assertEquals(
+            "かめん",
+            compositionCommitText(
+                reading = "かめん",
+                candidates = listOf("仮面", "画面"),
+                useCandidate = false,
+            ),
+        )
+        assertEquals(
+            "仮面",
+            compositionCommitText(
+                reading = "かめん",
+                candidates = listOf("仮面", "画面"),
+                useCandidate = true,
+            ),
+        )
+    }
+
+    @Test
     fun englishPredictionsKeepTypedTextFirstAndCompleteItsPrefix() {
         assertEquals(
             listOf("hel", "hello", "help"),
