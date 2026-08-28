@@ -1682,12 +1682,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                 setPadding(dp(15), 0, dp(15), 0)
                 setTextColor(if (index == selectedCandidate) palette.accent else palette.text)
                 textSize = if (candidateSize > 0) candidateSize.toFloat() else 16f
+                background = roundedDrawable(palette.key, dp(6).toFloat())
                 setOnClickListener { commitCandidate(index) }
                 setOnLongClickListener {
                     showLegacyReportPrompt(candidate, index)
                     true
                 }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(43)))
+            }, candidateButtonLayoutParams())
         }
     }
 
@@ -1710,6 +1711,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 gravity = Gravity.CENTER
                 setTextColor(palette.text)
                 setPadding(dp(16), 0, dp(16), 0)
+                background = roundedDrawable(palette.key, dp(6).toFloat())
                 isClickable = true
                 isFocusable = false
                 if (value.startsWith("custom:")) {
@@ -1720,7 +1722,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 } else {
                     setOnClickListener { selectTab(value) }
                 }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(43)))
+            }, candidateButtonLayoutParams())
         }
         if (settings.optBoolean("enable_clipboard_history_manager_tab", false) &&
             (0 until values.length()).none { values.optString(it) == "clipboard" }
@@ -1728,9 +1730,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             candidateRow.addView(TextView(this).apply {
                 text = "📋"
                 gravity = Gravity.CENTER
+                setTextColor(palette.text)
                 setPadding(dp(16), 0, dp(16), 0)
+                background = roundedDrawable(palette.key, dp(6).toFloat())
                 setOnClickListener { showClipboardHistory() }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(43)))
+            }, candidateButtonLayoutParams())
         }
     }
 
@@ -1915,8 +1919,16 @@ class AzooKeyInputMethodService : InputMethodService() {
             gravity = Gravity.CENTER
             setTextColor(palette.text)
             setPadding(dp(15), 0, dp(15), 0)
+            background = roundedDrawable(palette.key, dp(6).toFloat())
             setOnClickListener { action() }
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(43)))
+        }, candidateButtonLayoutParams())
+    }
+
+    private fun candidateButtonLayoutParams() = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+        dp(43),
+    ).apply {
+        setMargins(dp(2), 0, dp(2), 0)
     }
 
     private fun inputText(value: String?) {

@@ -1577,6 +1577,8 @@ final class KeyboardViewController: UIInputViewController {
         button.action = action
         button.setTitle(title, for: .normal)
         button.setTitleColor(palette.text, for: .normal)
+        button.backgroundColor = palette.key
+        button.layer.cornerRadius = 6
         button.titleLabel?.font = .systemFont(ofSize: CGFloat(doubleSetting("result_view_font_size", fallback: 16).positiveOr(16)))
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 15, bottom: 0, right: 15)
         return button
