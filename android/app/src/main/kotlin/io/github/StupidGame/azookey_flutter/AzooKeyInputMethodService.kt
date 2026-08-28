@@ -4,8 +4,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -35,6 +37,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.exifinterface.media.ExifInterface
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEntry
@@ -55,6 +58,7 @@ import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
+import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
@@ -335,13 +339,36 @@ class AzooKeyInputMethodService : InputMethodService() {
         val file = palette.backgroundImage?.let(::File)?.takeIf { it.isFile }
         val signature = file?.let { "${it.absolutePath}:${it.lastModified()}" }
         if (signature != backgroundImageSignature) {
-            val bitmap = file?.let { runCatching { BitmapFactory.decodeFile(it.absolutePath) }.getOrNull() }
+            val bitmap = file?.let(::decodeKeyboardBackground)
             backgroundImageView.setImageBitmap(bitmap)
             backgroundImageSignature = signature
         }
         val hasImage = signature != null && backgroundImageView.drawable != null
         backgroundImageView.visibility = if (hasImage) View.VISIBLE else View.GONE
         root.setBackgroundColor(if (hasImage) Color.TRANSPARENT else palette.background)
+    }
+
+    private fun decodeKeyboardBackground(file: File): Bitmap? {
+        val source = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+        val exifOrientation = runCatching {
+            ExifInterface(file.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+        val transform = backgroundImageOrientationTransform(exifOrientation)
+        if (transform.rotationDegrees == 0 && !transform.flipHorizontally) return source
+        val matrix = Matrix().apply {
+            if (transform.flipHorizontally) postScale(-1f, 1f)
+            if (transform.rotationDegrees != 0) postRotate(transform.rotationDegrees.toFloat())
+        }
+        return try {
+            Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true).also {
+                if (it !== source) source.recycle()
+            }
+        } catch (_: RuntimeException) {
+            source
+        }
     }
 
     private fun renderKeyboard() {
