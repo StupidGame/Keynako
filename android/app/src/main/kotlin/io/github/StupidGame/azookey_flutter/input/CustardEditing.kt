@@ -43,14 +43,52 @@ internal fun smartDeleteCount(
     return if (distance == 0) 1 else distance
 }
 
-/** Applies the longest matching Custard suffix without discarding the word prefix. */
+internal data class LastCharactersReplacement(
+    val removedLength: Int,
+    val replacement: String,
+) {
+    fun applyTo(text: String): String = text.dropLast(removedLength) + replacement
+}
+
+/**
+ * Finds the longest matching Custard suffix. Character-form tables also fall
+ * back to the shared kana cycle when their marker table omits the final form.
+ */
+internal fun lastCharactersReplacementIn(
+    text: String,
+    table: Map<String, String>,
+): LastCharactersReplacement? {
+    val match = table.keys.filter(text::endsWith).maxByOrNull(String::length)
+    if (match != null) {
+        return LastCharactersReplacement(match.length, table.getValue(match))
+    }
+
+    val formEntries = table.entries.mapNotNull { (source, replacement) ->
+        if (source.length != 2 || replacement.length != 1) return@mapNotNull null
+        val character = source.take(1)
+        val suffix = source.takeLast(1)
+        Triple(character, suffix, replacement)
+            .takeIf { sharesKanaCharacterFormCycle(character, replacement) }
+    }
+    for (marker in formEntries.map { it.second }.distinct()) {
+        if (!text.endsWith(marker)) continue
+        val sourceWithoutMarker = text.dropLast(marker.length)
+        val last = sourceWithoutMarker.takeLast(1)
+        val participatesInTable = formEntries.any { (source, suffix, replacement) ->
+            suffix == marker && (last == source || last == replacement)
+        }
+        if (!participatesInTable) continue
+        val replacement = kanaCharacterFormReplacement(last) ?: continue
+        return LastCharactersReplacement(last.length + marker.length, replacement)
+    }
+    return null
+}
+
+/** Applies a Custard suffix replacement without discarding the word prefix. */
 internal fun replaceLastCharactersIn(
     text: String,
     table: Map<String, String>,
-): String {
-    val match = table.keys.filter(text::endsWith).maxByOrNull(String::length) ?: return text
-    return text.dropLast(match.length) + table.getValue(match)
-}
+): String = lastCharactersReplacementIn(text, table)?.applyTo(text) ?: text
 
 internal enum class FiredLongPressTransition {
     CONTINUE,

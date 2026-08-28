@@ -1108,16 +1108,61 @@ final class KeyboardViewController: UIInputViewController {
     private func replaceLastCharacters(_ table: [String: String]?) {
         guard let table else { return }
         let source = composing.isEmpty ? (textDocumentProxy.documentContextBeforeInput ?? "") : composing
-        guard let match = table.keys.filter(source.hasSuffix).max(by: { $0.count < $1.count }),
-              let replacement = table[match] else { return }
+        let removedCount: Int
+        let replacement: String
+        if let match = table.keys.filter(source.hasSuffix).max(by: { $0.count < $1.count }),
+           let exactReplacement = table[match] {
+            removedCount = match.count
+            replacement = exactReplacement
+        } else if let fallback = characterFormFallback(for: source, table: table) {
+            removedCount = fallback.removedCount
+            replacement = fallback.replacement
+        } else {
+            return
+        }
         if composing.isEmpty {
-            for _ in match { textDocumentProxy.deleteBackward() }
+            for _ in 0 ..< removedCount { textDocumentProxy.deleteBackward() }
             textDocumentProxy.insertText(replacement)
         } else {
-            composing.removeLast(match.count)
+            composing.removeLast(removedCount)
             composing += replacement
             updateComposition()
         }
+    }
+
+    private func characterFormFallback(
+        for source: String,
+        table: [String: String]
+    ) -> (removedCount: Int, replacement: String)? {
+        let formEntries = table.compactMap { entrySource, entryReplacement -> (String, String, String)? in
+            guard entrySource.count == 2, entryReplacement.count == 1,
+                  let character = entrySource.first,
+                  let marker = entrySource.last,
+                  sharesKanaCharacterFormCycle(String(character), entryReplacement) else { return nil }
+            return (String(character), String(marker), entryReplacement)
+        }
+        for marker in Set(formEntries.map { $0.1 }) {
+            guard source.hasSuffix(marker) else { continue }
+            let sourceWithoutMarker = source.dropLast()
+            guard let lastCharacter = sourceWithoutMarker.last else { continue }
+            let last = String(lastCharacter)
+            guard formEntries.contains(where: {
+                $0.1 == marker && ($0.0 == last || $0.2 == last)
+            }), let replacement = kanaCharacterForms[last] else { continue }
+            return (removedCount: 2, replacement: replacement)
+        }
+        return nil
+    }
+
+    private func sharesKanaCharacterFormCycle(_ first: String, _ second: String) -> Bool {
+        var visited = Set<String>()
+        var current = first
+        while visited.insert(current).inserted {
+            guard let next = kanaCharacterForms[current] else { return false }
+            if next == second { return true }
+            current = next
+        }
+        return false
     }
 
     private func actionTargets(_ action: [String: Any]) -> [String] {
@@ -1760,6 +1805,7 @@ final class KeyboardViewController: UIInputViewController {
         "う": "ぅ", "ぅ": "ゔ", "ゔ": "う", "え": "ぇ", "ぇ": "え",
         "お": "ぉ", "ぉ": "お", "つ": "っ", "っ": "づ", "づ": "つ",
         "や": "ゃ", "ゃ": "や", "ゆ": "ゅ", "ゅ": "ゆ", "よ": "ょ", "ょ": "よ",
+        "わ": "ゎ", "ゎ": "わ",
         "か": "が", "が": "か", "き": "ぎ", "ぎ": "き", "く": "ぐ", "ぐ": "く",
         "け": "げ", "げ": "け", "こ": "ご", "ご": "こ",
         "さ": "ざ", "ざ": "さ", "し": "じ", "じ": "し", "す": "ず", "ず": "す",
@@ -1775,6 +1821,7 @@ final class KeyboardViewController: UIInputViewController {
         "ウ": "ゥ", "ゥ": "ヴ", "ヴ": "ウ", "エ": "ェ", "ェ": "エ",
         "オ": "ォ", "ォ": "オ", "ツ": "ッ", "ッ": "ヅ", "ヅ": "ツ",
         "ヤ": "ャ", "ャ": "ヤ", "ユ": "ュ", "ュ": "ユ", "ヨ": "ョ", "ョ": "ヨ",
+        "ワ": "ヮ", "ヮ": "ワ",
         "カ": "ガ", "ガ": "カ", "キ": "ギ", "ギ": "キ", "ク": "グ", "グ": "ク",
         "ケ": "ゲ", "ゲ": "ケ", "コ": "ゴ", "ゴ": "コ",
         "サ": "ザ", "ザ": "サ", "シ": "ジ", "ジ": "シ", "ス": "ズ", "ズ": "ス",

@@ -25,6 +25,10 @@ class KanaCharacterFormsTest {
     fun otherKanaFormsKeepTheirExistingCycles() {
         assertEquals("ぁ", kanaCharacterFormReplacement("あ"))
         assertEquals("あ", kanaCharacterFormReplacement("ぁ"))
+        assertEquals("ゎ", kanaCharacterFormReplacement("わ"))
+        assertEquals("わ", kanaCharacterFormReplacement("ゎ"))
+        assertEquals("ヮ", kanaCharacterFormReplacement("ワ"))
+        assertEquals("ワ", kanaCharacterFormReplacement("ヮ"))
         assertEquals("が", kanaCharacterFormReplacement("か"))
         assertEquals("か", kanaCharacterFormReplacement("が"))
     }

@@ -65,8 +65,8 @@ import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
+import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
-import io.github.StupidGame.azookey_flutter.input.replaceLastCharactersIn
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
@@ -2634,15 +2634,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         val before = if (composing.isNotEmpty()) composing
         else currentInputConnection?.getTextBeforeCursor(256, 0)?.toString().orEmpty()
         val replacements = table.keys().asSequence().associateWith(table::optString)
-        val match = replacements.keys.filter(before::endsWith).maxByOrNull(String::length)
-            ?: return
-        val replaced = replaceLastCharactersIn(before, replacements)
+        val replacement = lastCharactersReplacementIn(before, replacements) ?: return
         if (composing.isNotEmpty()) {
-            composing = replaced
+            composing = replacement.applyTo(before)
             updateComposition()
         } else {
-            currentInputConnection?.deleteSurroundingText(match.length, 0)
-            currentInputConnection?.commitText(replacements.getValue(match), 1)
+            currentInputConnection?.deleteSurroundingText(replacement.removedLength, 0)
+            currentInputConnection?.commitText(replacement.replacement, 1)
         }
     }
 

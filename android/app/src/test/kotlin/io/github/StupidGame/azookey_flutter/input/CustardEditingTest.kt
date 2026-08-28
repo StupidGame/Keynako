@@ -39,6 +39,55 @@ class CustardEditingTest {
     }
 
     @Test
+    fun customDakutenTableCompletesEverySemiVoicedKanaCycle() {
+        val wordTable = mapOf("お願い・" to "お願いいたします")
+        val table = mapOf(
+            "は・" to "ば", "ば・" to "ぱ",
+            "ひ・" to "び", "び・" to "ぴ",
+            "ふ・" to "ぶ", "ぶ・" to "ぷ",
+            "へ・" to "べ", "べ・" to "ぺ",
+            "ほ・" to "ぼ", "ぼ・" to "ぽ",
+            "わ・" to "ゎ",
+            "・・" to "w",
+        )
+
+        listOf(
+            listOf("は", "ば", "ぱ", "は", "ば"),
+            listOf("ひ", "び", "ぴ", "ひ", "び"),
+            listOf("ふ", "ぶ", "ぷ", "ふ", "ぶ"),
+            listOf("へ", "べ", "ぺ", "へ", "べ"),
+            listOf("ほ", "ぼ", "ぽ", "ほ", "ぼ"),
+            listOf("わ", "ゎ", "わ", "ゎ", "わ"),
+        ).forEach { expected ->
+            val actual = buildList {
+                var value = expected.first()
+                add(value)
+                repeat(expected.lastIndex) {
+                    value = replaceLastCharactersIn("$value・", wordTable)
+                    value = replaceLastCharactersIn(value, table)
+                    add(value)
+                }
+            }
+            assertEquals(expected, actual)
+        }
+    }
+
+    @Test
+    fun ordinarySuffixTablesDoNotEnableKanaCycling() {
+        assertEquals(
+            "は・",
+            replaceLastCharactersIn(
+                "は・",
+                mapOf("お願い・" to "お願いいたします"),
+            ),
+        )
+        assertEquals(
+            "か・",
+            replaceLastCharactersIn("か・", mapOf("は・" to "ば", "ば・" to "ぱ")),
+        )
+    }
+
+    @Test
     fun lateCustardFlickRollsBackTheCenterAction() {
         assertEquals(
             FiredLongPressTransition.ROLLBACK_CENTER,
