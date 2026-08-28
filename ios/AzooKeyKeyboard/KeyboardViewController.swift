@@ -295,15 +295,22 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderSymbols() {
-        let rows = [
-            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
-            ["-", "/", ":", ";", "(", ")", "¥", "&", "@", "\""],
-            ["。", "、", "？", "！", "…", "・", "〜", "#", "%"],
-        ]
-        for values in rows {
+        for values in defaultSymbolKeyboardRows {
             let row = makeRow()
             for value in values {
-                row.addArrangedSubview(makeButton(value) { [weak self] in self?.directCommit(value) })
+                let definition = FlickDefinition(
+                    value.halfWidth,
+                    [value.halfWidth, value.halfWidth, value.fullWidth, value.halfWidth, value.halfWidth]
+                )
+                let button = FlickButton(
+                    definition: definition,
+                    sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
+                ) { [weak self] selected in
+                    self?.directCommit(selected)
+                    self?.feedback()
+                }
+                style(button, special: false)
+                row.addArrangedSubview(button)
             }
             keyboardStack.addArrangedSubview(row)
         }
@@ -1623,6 +1630,40 @@ final class KeyboardViewController: UIInputViewController {
     }
     private let smallKana = ["あ": "ぁ", "ぁ": "あ", "い": "ぃ", "ぃ": "い", "う": "ぅ", "ぅ": "ゔ", "ゔ": "う", "え": "ぇ", "ぇ": "え", "お": "ぉ", "ぉ": "お", "つ": "っ", "っ": "づ", "づ": "つ", "や": "ゃ", "ゃ": "や", "ゆ": "ゅ", "ゅ": "ゆ", "よ": "ょ", "ょ": "よ", "か": "が", "が": "か", "は": "ば", "ば": "ぱ", "ぱ": "は"]
 }
+
+private struct DefaultSymbolKey {
+    let halfWidth: String
+    let fullWidth: String
+
+    init(_ halfWidth: String, _ fullWidth: String) {
+        self.halfWidth = halfWidth
+        self.fullWidth = fullWidth
+    }
+}
+
+private let defaultSymbolKeyboardRows = [
+    [
+        DefaultSymbolKey("1", "１"), DefaultSymbolKey("2", "２"),
+        DefaultSymbolKey("3", "３"), DefaultSymbolKey("4", "４"),
+        DefaultSymbolKey("5", "５"), DefaultSymbolKey("6", "６"),
+        DefaultSymbolKey("7", "７"), DefaultSymbolKey("8", "８"),
+        DefaultSymbolKey("9", "９"), DefaultSymbolKey("0", "０"),
+    ],
+    [
+        DefaultSymbolKey("-", "－"), DefaultSymbolKey("/", "／"),
+        DefaultSymbolKey(":", "："), DefaultSymbolKey(";", "；"),
+        DefaultSymbolKey("(", "（"), DefaultSymbolKey(")", "）"),
+        DefaultSymbolKey("¥", "￥"), DefaultSymbolKey("&", "＆"),
+        DefaultSymbolKey("@", "＠"), DefaultSymbolKey("\"", "＂"),
+    ],
+    [
+        DefaultSymbolKey("｡", "。"), DefaultSymbolKey("､", "、"),
+        DefaultSymbolKey("?", "？"), DefaultSymbolKey("!", "！"),
+        DefaultSymbolKey("...", "…"), DefaultSymbolKey("･", "・"),
+        DefaultSymbolKey("~", "〜"), DefaultSymbolKey("#", "＃"),
+        DefaultSymbolKey("%", "％"),
+    ],
+]
 
 /// Keeps the source image's pixel dimensions out of the keyboard's Auto Layout size.
 private final class KeyboardBackgroundImageView: UIImageView {

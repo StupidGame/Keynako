@@ -56,6 +56,7 @@ import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
+import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
 import io.github.StupidGame.azookey_flutter.input.replaceLastCharactersIn
@@ -481,15 +482,20 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderSymbols(scale: Double) {
-        val rows = listOf(
-            listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
-            listOf("-", "/", ":", ";", "(", ")", "¥", "&", "@", "\""),
-            listOf("。", "、", "？", "！", "…", "・", "〜", "#", "%"),
-        )
-        for (values in rows) {
+        for (values in defaultSymbolKeyboardRows) {
             val row = newRow(scale)
             for (value in values) {
-                row.addView(createKey(value, false, scale) { directCommit(value) }, weightParams())
+                row.addView(
+                    createFlickKey(
+                        FlickKey(
+                            label = value.halfWidth,
+                            center = value.halfWidth,
+                            up = value.fullWidth,
+                        ),
+                        scale,
+                    ),
+                    weightParams(),
+                )
             }
             keyboardContainer.addView(row)
         }
