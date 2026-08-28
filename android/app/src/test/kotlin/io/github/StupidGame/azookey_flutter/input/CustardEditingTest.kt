@@ -12,13 +12,13 @@ class CustardEditingTest {
     }
 
     @Test
-    fun oguraWordDeleteRemovesTheRestOfTheCurrentToken() {
+    fun custardWordDeleteRemovesTheRestOfTheCurrentToken() {
         // The layout first deletes the final character, then smart-deletes back
         // to the nearest separator.
-        val afterFirstDelete = "前の単語 おぐら配"
+        val afterFirstDelete = "前の単語 かな配"
         val count = smartDeleteCount(afterFirstDelete, listOf(" ", "。", "、"), backward = true)
 
-        assertEquals("おぐら配".length, count)
+        assertEquals("かな配".length, count)
         assertEquals("前の単語 ", afterFirstDelete.dropLast(count))
     }
 
@@ -29,17 +29,17 @@ class CustardEditingTest {
     }
 
     @Test
-    fun oguraReplacementKeepsTheWholeWordAndUsesTheLongestSuffix() {
+    fun custardReplacementKeepsTheWholeWordAndUsesTheLongestSuffix() {
         val result = replaceLastCharactersIn(
-            "前のおぐらしよ",
+            "前のことばしよ",
             mapOf("よ" to "ょ", "しよ" to "しょ"),
         )
 
-        assertEquals("前のおぐらしょ", result)
+        assertEquals("前のことばしょ", result)
     }
 
     @Test
-    fun lateOguraFlickRollsBackTheCenterPeriodBeforeSmallE() {
+    fun lateCustardFlickRollsBackTheCenterAction() {
         assertEquals(
             FiredLongPressTransition.ROLLBACK_CENTER,
             firedLongPressTransition(
@@ -59,7 +59,7 @@ class CustardEditingTest {
     }
 
     @Test
-    fun oguraWordDeleteContinuesWhenTheCenterDeleteAlreadyFired() {
+    fun wordDeleteContinuesWhenTheCenterDeleteAlreadyFired() {
         assertEquals(
             FiredLongPressTransition.CONTINUE_AFTER_CENTER_DELETE,
             firedLongPressTransition(

@@ -46,6 +46,7 @@ import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
+import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
@@ -62,6 +63,7 @@ import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTran
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
+import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
 import io.github.StupidGame.azookey_flutter.input.replaceLastCharactersIn
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
@@ -929,11 +931,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                                 handler.removeCallbacks(repeatAction)
                             }
                             FiredLongPressTransition.CONTINUE_AFTER_CENTER_DELETE -> {
-                                // Ogura's delete key begins its light long press
-                                // before a slower left flick crosses the threshold.
-                                // That first delete is also the first variation
-                                // action, so keep it and run the remaining word
-                                // delete action when the finger is released.
+                                // A delete key can begin its light long press before
+                                // a slower flick crosses the threshold. Keep that
+                                // first delete and run the remaining variation
+                                // actions when the finger is released.
                                 skipLeadingDeleteOnVariationRelease = true
                                 centerLongPressCheckpoint = null
                                 longPressFlicked = true
@@ -954,8 +955,8 @@ class AzooKeyInputMethodService : InputMethodService() {
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
-                            // A flick variation has its own duration. Ogura-style
-                            // layouts use light here even when the center is normal.
+                            // Each flick variation owns its duration independently
+                            // from the center key's long-press duration.
                             handler.postDelayed(longPress, longPressDelay(variationLongPress?.optString("duration")))
                         }
                     }
@@ -1934,11 +1935,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun inputText(value: String?) {
         if (value.isNullOrEmpty()) return
         if (mode == "english") {
-            directCommit(if (shift || capsLock) value.uppercase(Locale.ROOT) else value)
-            if (shift && !capsLock) {
-                shift = false
-                renderKeyboard()
-            }
+            inputEnglishText(value)
             return
         }
         if (shouldDirectCommitJapaneseInput(value)) {
@@ -1949,21 +1946,42 @@ class AzooKeyInputMethodService : InputMethodService() {
         updateComposition()
     }
 
+    private fun inputEnglishText(value: String) {
+        val resolved = if (shift || capsLock) value.uppercase(Locale.ROOT) else value
+        if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+            composing += resolved
+            updateComposition()
+        } else {
+            directCommit(resolved)
+        }
+        if (shift && !capsLock) {
+            shift = false
+            renderKeyboard()
+        }
+    }
+
     private fun updateComposition() {
         val reading = displayReading()
-        if (layout == "qwerty") composing = reading
+        if (mode != "english" && layout == "qwerty") composing = reading
         selectedCandidate = 0
         candidates = buildCandidates().toMutableList()
         if (candidates.isEmpty() && reading.isNotEmpty()) candidates.add(reading)
         val live = settings.optBoolean("live_conversion", true)
-        val displayed = if (live && candidates.isNotEmpty()) candidates.first() else reading
+        val displayed = if (mode == "english") {
+            reading
+        } else if (live && candidates.isNotEmpty()) {
+            candidates.first()
+        } else {
+            reading
+        }
         currentInputConnection?.setComposingText(displayed, 1)
         renderCandidateValues()
         requestZenzaiCandidates(reading, candidates.toList())
     }
 
     private fun requestZenzaiCandidates(reading: String, baseCandidates: List<String>) {
-        if (!settings.optBoolean("enable_zenzai", true) ||
+        if (mode != "japanese" ||
+            !settings.optBoolean("enable_zenzai", true) ||
             reading.isBlank() ||
             shouldDirectCommitJapaneseInput(reading)
         ) return
@@ -2005,6 +2023,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun buildCandidates(): List<String> {
         val reading = displayReading()
         if (reading.isEmpty()) return emptyList()
+        if (mode == "english") return buildEnglishCandidates(reading)
         if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
@@ -2083,6 +2102,44 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (learningMode == 2) 0 else scores.optInt("$reading\t${it.value}", 0)
             }.thenBy { it.index },
         ).map { it.value }
+    }
+
+    private fun buildEnglishCandidates(input: String): List<String> {
+        val prefix = input.lowercase(Locale.ROOT)
+        val preferred = mutableListOf<String>()
+        val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
+        for (index in 0 until dictionary.length()) {
+            val entry = dictionary.optJSONObject(index) ?: continue
+            val ruby = entry.optString("ruby")
+            val word = if (entry.optBoolean("isTemplateMode", false)) {
+                renderTemplate(entry.optString("formatLiteral", entry.optString("word")))
+            } else {
+                entry.optString("word")
+            }
+            if (ruby.lowercase(Locale.ROOT).startsWith(prefix) ||
+                word.lowercase(Locale.ROOT).startsWith(prefix)
+            ) {
+                preferred.add(word)
+            }
+        }
+
+        val learned = mutableListOf<Pair<Int, String>>()
+        val scores = state.optJSONObject("learning") ?: JSONObject()
+        val keys = scores.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val separator = key.indexOf('\t')
+            if (separator <= 0 || separator == key.lastIndex) continue
+            val reading = key.substring(0, separator)
+            val candidate = key.substring(separator + 1)
+            if (reading.lowercase(Locale.ROOT).startsWith(prefix) ||
+                candidate.lowercase(Locale.ROOT).startsWith(prefix)
+            ) {
+                learned.add(scores.optInt(key) to candidate)
+            }
+        }
+        preferred.addAll(learned.sortedByDescending { it.first }.map { it.second })
+        return englishPredictionCandidates(input, preferred, PREDICTION_LIMIT)
     }
 
     private fun commitCandidate(index: Int) {
@@ -2294,6 +2351,9 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun space() {
         if (composing.isEmpty() && rawRoman.isEmpty()) {
+            currentInputConnection?.commitText(" ", 1)
+        } else if (mode == "english") {
+            commitComposition()
             currentInputConnection?.commitText(" ", 1)
         } else if (settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
             selectedCandidate = (selectedCandidate + 1) % candidates.size
@@ -2510,6 +2570,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         val custard = activeCustard()
         val language = custard?.optString("language", "undefined") ?: "undefined"
         val inputStyle = custard?.optString("input_style", "direct") ?: "direct"
+        if (language == "en_US") {
+            mode = "english"
+            inputEnglishText(value)
+            return
+        }
         if (language != "ja_JP") {
             directCommit(value)
             return
@@ -2551,7 +2616,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val before = currentInputConnection?.getTextBeforeCursor(2, 0)?.toString().orEmpty()
         val last = before.takeLast(1)
-        val replacement = smallKana[last] ?: return
+        val replacement = kanaCharacterFormReplacement(last) ?: return
         currentInputConnection?.deleteSurroundingText(last.length, 0)
         currentInputConnection?.commitText(replacement, 1)
     }
@@ -2591,7 +2656,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val backward = action.optString("direction", "forward") == "backward"
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
             // The local composition cursor is at the trailing edge. Apply the
-            // requested boundaries to direct kana input so an Ogura word-delete
+            // requested boundaries to direct kana input so a word-delete action
             // removes only the current token, not the complete composition.
             if (backward && rawRoman.isEmpty()) {
                 val count = smartDeleteCount(composing, targets, backward = true)
@@ -2726,7 +2791,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun transformLastCharacter() {
         if (composing.isNotEmpty()) {
             val last = composing.last().toString()
-            val transformed = smallKana[last] ?: return
+            val transformed = kanaCharacterFormReplacement(last) ?: return
             composing = composing.dropLast(1) + transformed
             updateComposition()
             return
@@ -2734,12 +2799,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         val connection = currentInputConnection ?: return
         val before = connection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
         val last = before.takeLast(1)
-        val transformed = smallKana[last] ?: return
+        val transformed = kanaCharacterFormReplacement(last) ?: return
         connection.deleteSurroundingText(last.length, 0)
         connection.commitText(transformed, 1)
     }
 
-    private fun displayReading(): String = if (layout == "qwerty") romanToHiragana(rawRoman) else composing
+    private fun displayReading(): String = when {
+        mode == "english" -> composing
+        layout == "qwerty" -> romanToHiragana(rawRoman)
+        else -> composing
+    }
 
     private fun feedback(view: View) {
         if (settings.optBoolean("enable_key_haptics", false)) {
@@ -3116,20 +3185,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             "えがお" to listOf("( ´ ▽ ` )", "(^_^)", "(๑˃̵ᴗ˂̵)"),
             "かなしい" to listOf("( ; _ ; )", "(´；ω；`)"),
             "よろしく" to listOf("m(_ _)m", "よろしく(・ω・)ノ"),
-        )
-        private val smallKana = mapOf(
-            "あ" to "ぁ", "ぁ" to "あ", "い" to "ぃ", "ぃ" to "い",
-            "う" to "ぅ", "ぅ" to "ゔ", "ゔ" to "う", "え" to "ぇ", "ぇ" to "え",
-            "お" to "ぉ", "ぉ" to "お", "つ" to "っ", "っ" to "づ", "づ" to "つ",
-            "や" to "ゃ", "ゃ" to "や", "ゆ" to "ゅ", "ゅ" to "ゆ", "よ" to "ょ", "ょ" to "よ",
-            "か" to "が", "が" to "か", "き" to "ぎ", "ぎ" to "き", "く" to "ぐ", "ぐ" to "く",
-            "け" to "げ", "げ" to "け", "こ" to "ご", "ご" to "こ", "は" to "ば", "ば" to "ぱ", "ぱ" to "は",
-            "さ" to "ざ", "ざ" to "さ", "し" to "じ", "じ" to "し", "す" to "ず", "ず" to "す",
-            "せ" to "ぜ", "ぜ" to "せ", "そ" to "ぞ", "ぞ" to "そ",
-            "た" to "だ", "だ" to "た", "ち" to "ぢ", "ぢ" to "ち", "て" to "で", "で" to "て", "と" to "ど", "ど" to "と",
-            "ふ" to "ぶ", "ぶ" to "ぷ", "ぷ" to "ふ", "ひ" to "び", "び" to "ぴ", "ぴ" to "ひ",
-            "へ" to "べ", "べ" to "ぺ", "ぺ" to "へ", "ほ" to "ぼ", "ぼ" to "ぽ", "ぽ" to "ほ",
-            "ま" to "ま", "な" to "な", "ら" to "ら", "わ" to "わ",
         )
     }
 }

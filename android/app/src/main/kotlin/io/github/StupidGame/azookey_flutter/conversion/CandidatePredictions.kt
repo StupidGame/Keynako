@@ -1,5 +1,50 @@
 package io.github.StupidGame.azookey_flutter.conversion
 
+import java.util.Locale
+
+private val defaultEnglishPredictionWords = listOf(
+    "a", "about", "after", "again", "all", "also", "always", "am", "an", "and", "any", "are",
+    "as", "at", "be", "because", "been", "before", "being", "best", "but", "by", "can", "come",
+    "could", "day", "did", "do", "does", "doing", "done", "down", "each", "even", "first", "for",
+    "from", "get", "give", "go", "good", "great", "had", "has", "have", "he", "hello", "help",
+    "her", "here", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just",
+    "know", "like", "look", "love", "make", "me", "more", "most", "my", "need", "new", "no",
+    "not", "now", "of", "ok", "okay", "on", "one", "only", "or", "other", "our", "out", "over",
+    "people", "please", "really", "right", "said", "same", "see", "she", "should", "so", "some",
+    "sorry", "still", "take", "thank", "thanks", "that", "the", "their", "them", "then", "there",
+    "these", "they", "thing", "think", "this", "time", "to", "today", "too", "up", "us", "use",
+    "very", "want", "was", "way", "we", "well", "were", "what", "when", "where", "which", "who",
+    "why", "will", "with", "work", "would", "yes", "you", "your",
+)
+
+/** Keeps the typed word first and adds case-matched English prefix completions. */
+internal fun englishPredictionCandidates(
+    input: String,
+    preferredCandidates: Iterable<String> = emptyList(),
+    limit: Int = 16,
+): List<String> {
+    if (input.isBlank() || limit <= 0) return emptyList()
+    val prefix = input.lowercase(Locale.ROOT)
+    val values = linkedSetOf(input)
+
+    fun addCandidate(candidate: String) {
+        if (candidate.isBlank()) return
+        values.add(matchEnglishCandidateCase(candidate, input))
+    }
+
+    preferredCandidates.forEach(::addCandidate)
+    defaultEnglishPredictionWords.asSequence()
+        .filter { it.length > prefix.length && it.startsWith(prefix) }
+        .forEach(::addCandidate)
+    return values.take(limit)
+}
+
+private fun matchEnglishCandidateCase(candidate: String, input: String): String = when {
+    input.all(Char::isUpperCase) -> candidate.uppercase(Locale.ROOT)
+    input.firstOrNull()?.isUpperCase() == true -> candidate.replaceFirstChar(Char::uppercase)
+    else -> candidate
+}
+
 /** Returns dictionary values whose reading extends the text currently being composed. */
 internal fun prefixPredictionValues(
     reading: String,

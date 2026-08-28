@@ -750,11 +750,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func input(_ value: String) {
         if mode == "english" {
-            directCommit(value)
-            if shift, !capsLock {
-                shift = false
-                renderKeyboard()
-            }
+            inputEnglishText(value)
             return
         }
         if layout == "qwerty" {
@@ -766,9 +762,33 @@ final class KeyboardViewController: UIInputViewController {
         updateComposition()
     }
 
+    private func inputEnglishText(_ value: String) {
+        let resolved = shift || capsLock ? value.uppercased() : value
+        let isWordInput = !resolved.isEmpty && resolved.unicodeScalars.allSatisfy {
+            (0x41 ... 0x5a).contains($0.value) || (0x61 ... 0x7a).contains($0.value)
+        }
+        if isWordInput {
+            composing += resolved
+            updateComposition()
+        } else {
+            directCommit(resolved)
+        }
+        if shift, !capsLock {
+            shift = false
+            renderKeyboard()
+        }
+    }
+
     private func updateComposition() {
         candidates = buildCandidates()
-        let displayed = boolSetting("live_conversion", fallback: true) ? (candidates.first ?? composing) : composing
+        let displayed: String
+        if mode == "english" {
+            displayed = composing
+        } else if boolSetting("live_conversion", fallback: true) {
+            displayed = candidates.first ?? composing
+        } else {
+            displayed = composing
+        }
         replaceDisplayed(with: displayed, commit: false)
         renderCandidates(showTabs: false)
     }
@@ -788,24 +808,34 @@ final class KeyboardViewController: UIInputViewController {
         guard candidates.indices.contains(index) else { return }
         let selected = candidates[index]
         let report = makeReport(selected: selected, index: index)
+        let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
-        conversionEngine?.commit(
-            candidateText: selected,
-            learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
-        )
+        if let englishInput {
+            learnEnglishCandidate(input: englishInput, candidate: selected)
+        } else {
+            conversionEngine?.commit(
+                candidateText: selected,
+                learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
+            )
+        }
         resetComposition()
         renderCandidates()
-        maybeOfferReport(report)
+        if englishInput == nil { maybeOfferReport(report) }
     }
 
     private func commitComposition() {
         guard !composing.isEmpty || !rawRoman.isEmpty else { return }
         let selected = buildCandidates().first ?? composing
+        let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
-        conversionEngine?.commit(
-            candidateText: selected,
-            learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
-        )
+        if let englishInput {
+            learnEnglishCandidate(input: englishInput, candidate: selected)
+        } else {
+            conversionEngine?.commit(
+                candidateText: selected,
+                learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
+            )
+        }
         resetComposition()
         renderCandidates()
     }
@@ -846,6 +876,9 @@ final class KeyboardViewController: UIInputViewController {
 
     private func space() {
         if composing.isEmpty, rawRoman.isEmpty {
+            textDocumentProxy.insertText(" ")
+        } else if mode == "english" {
+            commitComposition()
             textDocumentProxy.insertText(" ")
         } else {
             commitComposition()
@@ -917,7 +950,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func transformLastCharacter() {
         guard let last = composing.last else { return }
-        let value = smallKana[String(last)] ?? String(last)
+        let value = kanaCharacterForms[String(last)] ?? String(last)
         composing.removeLast()
         composing += value
         updateComposition()
@@ -1027,6 +1060,11 @@ final class KeyboardViewController: UIInputViewController {
         let custard = activeCustard()
         let language = custard?["language"] as? String ?? "undefined"
         let inputStyle = custard?["input_style"] as? String ?? "direct"
+        if language == "en_US" {
+            mode = "english"
+            inputEnglishText(value)
+            return
+        }
         guard language == "ja_JP" else {
             directCommit(value)
             return
@@ -1056,7 +1094,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         guard let last = textDocumentProxy.documentContextBeforeInput?.last,
-              let replacement = smallKana[String(last)] else { return }
+              let replacement = kanaCharacterForms[String(last)] else { return }
         textDocumentProxy.deleteBackward()
         textDocumentProxy.insertText(replacement)
     }
@@ -1236,6 +1274,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func buildCandidates() -> [String] {
         guard !composing.isEmpty else { return [] }
+        if mode == "english" { return buildEnglishCandidates(composing) }
         var result: [String] = []
         var prefixPredictions: [String] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
@@ -1299,6 +1338,72 @@ final class KeyboardViewController: UIInputViewController {
         }
         var seen = Set<String>()
         return result.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private func buildEnglishCandidates(_ input: String) -> [String] {
+        let prefix = input.lowercased()
+        var preferred: [String] = []
+        for entry in state["userDictionary"] as? [[String: Any]] ?? [] {
+            let ruby = entry["ruby"] as? String ?? ""
+            let value: String
+            if entry["isTemplateMode"] as? Bool == true {
+                value = renderTemplate(entry["formatLiteral"] as? String ?? entry["word"] as? String ?? "")
+            } else {
+                value = entry["word"] as? String ?? ""
+            }
+            if ruby.lowercased().hasPrefix(prefix) || value.lowercased().hasPrefix(prefix) {
+                preferred.append(value)
+            }
+        }
+        for (ruby, values) in osLexicon
+            where ruby.lowercased().hasPrefix(prefix) {
+            preferred.append(contentsOf: values)
+        }
+
+        let learned = (state["learning"] as? [String: Any] ?? [:]).compactMap { key, rawScore -> (Int, String)? in
+            guard let separator = key.firstIndex(of: "\t") else { return nil }
+            let reading = String(key[..<separator])
+            let candidate = String(key[key.index(after: separator)...])
+            guard reading.lowercased().hasPrefix(prefix) || candidate.lowercased().hasPrefix(prefix) else {
+                return nil
+            }
+            let score = (rawScore as? NSNumber)?.intValue ?? (rawScore as? Int ?? 0)
+            return (score, candidate)
+        }.sorted { $0.0 > $1.0 }
+        preferred.append(contentsOf: learned.map(\.1))
+
+        var result = [input]
+        var seen = Set(result)
+        func append(_ candidate: String) {
+            guard !candidate.isEmpty else { return }
+            let matched = matchEnglishCandidateCase(candidate, input: input)
+            if seen.insert(matched).inserted { result.append(matched) }
+        }
+        preferred.forEach(append)
+        Self.englishPredictionWords
+            .filter { $0.count > prefix.count && $0.hasPrefix(prefix) }
+            .forEach(append)
+        return Array(result.prefix(32))
+    }
+
+    private func matchEnglishCandidateCase(_ candidate: String, input: String) -> String {
+        if input == input.uppercased(), input != input.lowercased() {
+            return candidate.uppercased()
+        }
+        if input.first?.isUppercase == true {
+            return candidate.prefix(1).uppercased() + String(candidate.dropFirst())
+        }
+        return candidate
+    }
+
+    private func learnEnglishCandidate(input: String, candidate: String) {
+        guard intSetting("memory_learining_styple_setting", fallback: 0) == 0 else { return }
+        var learning = state["learning"] as? [String: Any] ?? [:]
+        let key = "\(input)\t\(candidate)"
+        let current = (learning[key] as? NSNumber)?.intValue ?? (learning[key] as? Int ?? 0)
+        learning[key] = min(current + 1, 1_000_000)
+        state["learning"] = learning
+        persistState()
     }
 
     private func zenzaiConfiguration() -> (url: URL, inferenceLimit: Int)? {
@@ -1623,6 +1728,20 @@ final class KeyboardViewController: UIInputViewController {
     ]
     private static let emojiDictionary = ["えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"]]
     private static let kaomojiDictionary = ["えがお": ["( ´ ▽ ` )", "(^_^)"], "かなしい": ["( ; _ ; )", "(´；ω；`)"]]
+    private static let englishPredictionWords = [
+        "a", "about", "after", "again", "all", "also", "always", "am", "an", "and", "any", "are",
+        "as", "at", "be", "because", "been", "before", "being", "best", "but", "by", "can", "come",
+        "could", "day", "did", "do", "does", "doing", "done", "down", "each", "even", "first", "for",
+        "from", "get", "give", "go", "good", "great", "had", "has", "have", "he", "hello", "help",
+        "her", "here", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just",
+        "know", "like", "look", "love", "make", "me", "more", "most", "my", "need", "new", "no",
+        "not", "now", "of", "ok", "okay", "on", "one", "only", "or", "other", "our", "out", "over",
+        "people", "please", "really", "right", "said", "same", "see", "she", "should", "so", "some",
+        "sorry", "still", "take", "thank", "thanks", "that", "the", "their", "them", "then", "there",
+        "these", "they", "thing", "think", "this", "time", "to", "today", "too", "up", "us", "use",
+        "very", "want", "was", "way", "we", "well", "were", "what", "when", "where", "which", "who",
+        "why", "will", "with", "work", "would", "yes", "you", "your",
+    ]
     private static let defaultScanTargets = ["、", "。", "！", "？", ".", ",", "．", "，", "\n"]
     private static func isReportableInput(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
@@ -1630,7 +1749,38 @@ final class KeyboardViewController: UIInputViewController {
         default: false
         }
     }
-    private let smallKana = ["あ": "ぁ", "ぁ": "あ", "い": "ぃ", "ぃ": "い", "う": "ぅ", "ぅ": "ゔ", "ゔ": "う", "え": "ぇ", "ぇ": "え", "お": "ぉ", "ぉ": "お", "つ": "っ", "っ": "づ", "づ": "つ", "や": "ゃ", "ゃ": "や", "ゆ": "ゅ", "ゅ": "ゆ", "よ": "ょ", "ょ": "よ", "か": "が", "が": "か", "は": "ば", "ば": "ぱ", "ぱ": "は"]
+    private let kanaCharacterForms = [
+        "あ": "ぁ", "ぁ": "あ", "い": "ぃ", "ぃ": "い",
+        "う": "ぅ", "ぅ": "ゔ", "ゔ": "う", "え": "ぇ", "ぇ": "え",
+        "お": "ぉ", "ぉ": "お", "つ": "っ", "っ": "づ", "づ": "つ",
+        "や": "ゃ", "ゃ": "や", "ゆ": "ゅ", "ゅ": "ゆ", "よ": "ょ", "ょ": "よ",
+        "か": "が", "が": "か", "き": "ぎ", "ぎ": "き", "く": "ぐ", "ぐ": "く",
+        "け": "げ", "げ": "け", "こ": "ご", "ご": "こ",
+        "さ": "ざ", "ざ": "さ", "し": "じ", "じ": "し", "す": "ず", "ず": "す",
+        "せ": "ぜ", "ぜ": "せ", "そ": "ぞ", "ぞ": "そ",
+        "た": "だ", "だ": "た", "ち": "ぢ", "ぢ": "ち", "て": "で", "で": "て",
+        "と": "ど", "ど": "と",
+        "は": "ば", "ば": "ぱ", "ぱ": "は",
+        "ひ": "び", "び": "ぴ", "ぴ": "ひ",
+        "ふ": "ぶ", "ぶ": "ぷ", "ぷ": "ふ",
+        "へ": "べ", "べ": "ぺ", "ぺ": "へ",
+        "ほ": "ぼ", "ぼ": "ぽ", "ぽ": "ほ",
+        "ア": "ァ", "ァ": "ア", "イ": "ィ", "ィ": "イ",
+        "ウ": "ゥ", "ゥ": "ヴ", "ヴ": "ウ", "エ": "ェ", "ェ": "エ",
+        "オ": "ォ", "ォ": "オ", "ツ": "ッ", "ッ": "ヅ", "ヅ": "ツ",
+        "ヤ": "ャ", "ャ": "ヤ", "ユ": "ュ", "ュ": "ユ", "ヨ": "ョ", "ョ": "ヨ",
+        "カ": "ガ", "ガ": "カ", "キ": "ギ", "ギ": "キ", "ク": "グ", "グ": "ク",
+        "ケ": "ゲ", "ゲ": "ケ", "コ": "ゴ", "ゴ": "コ",
+        "サ": "ザ", "ザ": "サ", "シ": "ジ", "ジ": "シ", "ス": "ズ", "ズ": "ス",
+        "セ": "ゼ", "ゼ": "セ", "ソ": "ゾ", "ゾ": "ソ",
+        "タ": "ダ", "ダ": "タ", "チ": "ヂ", "ヂ": "チ", "テ": "デ", "デ": "テ",
+        "ト": "ド", "ド": "ト",
+        "ハ": "バ", "バ": "パ", "パ": "ハ",
+        "ヒ": "ビ", "ビ": "ピ", "ピ": "ヒ",
+        "フ": "ブ", "ブ": "プ", "プ": "フ",
+        "ヘ": "ベ", "ベ": "ペ", "ペ": "ヘ",
+        "ホ": "ボ", "ボ": "ポ", "ポ": "ホ",
+    ]
 }
 
 private struct DefaultSymbolKey {

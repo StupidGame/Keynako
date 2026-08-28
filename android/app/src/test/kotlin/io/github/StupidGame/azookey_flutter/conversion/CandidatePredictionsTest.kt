@@ -5,6 +5,26 @@ import org.junit.Test
 
 class CandidatePredictionsTest {
     @Test
+    fun englishPredictionsKeepTypedTextFirstAndCompleteItsPrefix() {
+        assertEquals(
+            listOf("hel", "hello", "help"),
+            englishPredictionCandidates("hel"),
+        )
+    }
+
+    @Test
+    fun englishPredictionsPreserveTheTypedCapitalization() {
+        assertEquals(
+            listOf("Hel", "Hello", "Help"),
+            englishPredictionCandidates("Hel"),
+        )
+        assertEquals(
+            listOf("HEL", "HELLO", "HELP"),
+            englishPredictionCandidates("HEL"),
+        )
+    }
+
+    @Test
     fun returnsWordsWhoseReadingStartsWithThePartialInput() {
         val values = prefixPredictionValues(
             reading = "かめん",
