@@ -99,6 +99,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
     testImplementation("junit:junit:4.13.2")
 }
 

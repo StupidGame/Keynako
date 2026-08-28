@@ -108,6 +108,11 @@ import UIKit
       allowed.contains(scalar) ? Character(String(scalar)) : "_"
     }.prefix(80))
     let target = directory.appendingPathComponent("\(safeId.isEmpty ? "theme" : safeId).image")
+    guard let source = UIImage(data: data), source.size.width > 0, source.size.height > 0 else {
+      throw CocoaError(.fileReadCorruptFile)
+    }
+    // Keep the source aspect ratio. The keyboard extension crops it against its
+    // actual bounds, including the user's current height scale.
     try data.write(to: target, options: .atomic)
     return target.path
   }

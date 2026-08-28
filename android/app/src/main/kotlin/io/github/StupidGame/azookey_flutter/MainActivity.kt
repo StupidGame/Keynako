@@ -3,6 +3,7 @@ package io.github.StupidGame.azookey_flutter
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -174,6 +175,13 @@ class MainActivity : FlutterActivity() {
         val target = File(directory, "$safeId.image")
         val temporary = File.createTempFile(".$safeId-", ".tmp", directory)
         try {
+            val imageBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, imageBounds)
+            check(imageBounds.outWidth > 0 && imageBounds.outHeight > 0) {
+                "Could not decode the background image"
+            }
+            // Keep the source aspect ratio. The IME crops it against its actual
+            // bounds, which vary with device width, height scale, and one-handed mode.
             temporary.writeBytes(bytes)
             temporary.copyTo(target, overwrite = true)
         } finally {

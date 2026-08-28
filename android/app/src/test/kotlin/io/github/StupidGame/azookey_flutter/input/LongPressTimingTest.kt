@@ -23,7 +23,7 @@ class LongPressTimingTest {
     }
 
     @Test
-    fun oguraTopVariationUsesCustardDirectionAndSurvivesNeutralJitter() {
+    fun selectedTopVariationUsesCustardDirectionAndSurvivesNeutralJitter() {
         val selection = FlickLongPressSelection(center = listOf("し"))
         val largeYaActions = listOf("ゃ", "しゃ→しや")
         val variations = mapOf("top" to largeYaActions)

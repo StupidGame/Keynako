@@ -12,13 +12,13 @@ class CustardEditingTest {
     }
 
     @Test
-    fun oguraWordDeleteRemovesTheRestOfTheCurrentToken() {
+    fun custardWordDeleteRemovesTheRestOfTheCurrentToken() {
         // The layout first deletes the final character, then smart-deletes back
         // to the nearest separator.
-        val afterFirstDelete = "前の単語 おぐら配"
+        val afterFirstDelete = "前の単語 かな配"
         val count = smartDeleteCount(afterFirstDelete, listOf(" ", "。", "、"), backward = true)
 
-        assertEquals("おぐら配".length, count)
+        assertEquals("かな配".length, count)
         assertEquals("前の単語 ", afterFirstDelete.dropLast(count))
     }
 
@@ -29,17 +29,66 @@ class CustardEditingTest {
     }
 
     @Test
-    fun oguraReplacementKeepsTheWholeWordAndUsesTheLongestSuffix() {
+    fun custardReplacementKeepsTheWholeWordAndUsesTheLongestSuffix() {
         val result = replaceLastCharactersIn(
-            "前のおぐらしよ",
+            "前のことばしよ",
             mapOf("よ" to "ょ", "しよ" to "しょ"),
         )
 
-        assertEquals("前のおぐらしょ", result)
+        assertEquals("前のことばしょ", result)
     }
 
     @Test
-    fun lateOguraFlickRollsBackTheCenterPeriodBeforeSmallE() {
+    fun customDakutenTableCompletesEverySemiVoicedKanaCycle() {
+        val wordTable = mapOf("お願い・" to "お願いいたします")
+        val table = mapOf(
+            "は・" to "ば", "ば・" to "ぱ",
+            "ひ・" to "び", "び・" to "ぴ",
+            "ふ・" to "ぶ", "ぶ・" to "ぷ",
+            "へ・" to "べ", "べ・" to "ぺ",
+            "ほ・" to "ぼ", "ぼ・" to "ぽ",
+            "わ・" to "ゎ",
+            "・・" to "w",
+        )
+
+        listOf(
+            listOf("は", "ば", "ぱ", "は", "ば"),
+            listOf("ひ", "び", "ぴ", "ひ", "び"),
+            listOf("ふ", "ぶ", "ぷ", "ふ", "ぶ"),
+            listOf("へ", "べ", "ぺ", "へ", "べ"),
+            listOf("ほ", "ぼ", "ぽ", "ほ", "ぼ"),
+            listOf("わ", "ゎ", "わ", "ゎ", "わ"),
+        ).forEach { expected ->
+            val actual = buildList {
+                var value = expected.first()
+                add(value)
+                repeat(expected.lastIndex) {
+                    value = replaceLastCharactersIn("$value・", wordTable)
+                    value = replaceLastCharactersIn(value, table)
+                    add(value)
+                }
+            }
+            assertEquals(expected, actual)
+        }
+    }
+
+    @Test
+    fun ordinarySuffixTablesDoNotEnableKanaCycling() {
+        assertEquals(
+            "は・",
+            replaceLastCharactersIn(
+                "は・",
+                mapOf("お願い・" to "お願いいたします"),
+            ),
+        )
+        assertEquals(
+            "か・",
+            replaceLastCharactersIn("か・", mapOf("は・" to "ば", "ば・" to "ぱ")),
+        )
+    }
+
+    @Test
+    fun lateCustardFlickRollsBackTheCenterAction() {
         assertEquals(
             FiredLongPressTransition.ROLLBACK_CENTER,
             firedLongPressTransition(
@@ -54,6 +103,19 @@ class CustardEditingTest {
                 didLongPress = true,
                 variationDidLongPress = false,
                 canRollbackCenter = false,
+            ),
+        )
+    }
+
+    @Test
+    fun wordDeleteContinuesWhenTheCenterDeleteAlreadyFired() {
+        assertEquals(
+            FiredLongPressTransition.CONTINUE_AFTER_CENTER_DELETE,
+            firedLongPressTransition(
+                didLongPress = true,
+                variationDidLongPress = false,
+                canRollbackCenter = false,
+                canContinueAfterCenterDelete = true,
             ),
         )
     }

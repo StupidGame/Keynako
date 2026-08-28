@@ -256,7 +256,10 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
                 children: [
                   Text('背景画像', style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: 4),
-                  const Text('端末内の画像を最大2048pxに調整して使用します。画像自体はテーマ共有に含まれません。'),
+                  const Text(
+                    '端末内の画像を最大2048pxに調整し、キーボードの比率に合わせて中央を切り抜きます。'
+                    '画像自体はテーマ共有に含まれません。',
+                  ),
                   const SizedBox(height: 10),
                   FilledButton.tonalIcon(
                     onPressed: _pickBackgroundImage,

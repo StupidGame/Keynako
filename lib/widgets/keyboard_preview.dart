@@ -51,7 +51,7 @@ class KeyboardPreview extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _candidateBar(),
+                  _candidateBar(hasImage: hasImage),
                   const SizedBox(height: 4),
                   if (layout == 'qwerty')
                     _qwerty(hasImage: hasImage)
@@ -66,19 +66,29 @@ class KeyboardPreview extends StatelessWidget {
     );
   }
 
-  Widget _candidateBar() {
+  Widget _candidateBar({required bool hasImage}) {
     return SizedBox(
       height: compact ? 25 : 38,
       child: Row(
         children: ['予測', '変換', '候補']
             .map(
               (label) => Expanded(
-                child: Center(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      color: Color(theme.textColor),
-                      fontSize: compact ? 9 : 14,
+                child: Padding(
+                  padding: EdgeInsets.all(compact ? 1.5 : 2.5),
+                  child: Material(
+                    color: Color(theme.keyColor).withValues(
+                      alpha: hasImage ? theme.keyOpacity : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(compact ? 4 : 6),
+                    elevation: compact ? 0.5 : 1,
+                    child: Center(
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          color: Color(theme.textColor),
+                          fontSize: compact ? 9 : 14,
+                        ),
+                      ),
                     ),
                   ),
                 ),
