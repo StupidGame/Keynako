@@ -2,7 +2,7 @@ import UIKit
 import AzooKeyConverterBridge
 
 final class KeyboardViewController: UIInputViewController {
-    private let backgroundImageView = UIImageView()
+    private let backgroundImageView = KeyboardBackgroundImageView()
     private let rootStack = UIStackView()
     private let candidateScroll = UIScrollView()
     private let candidateStack = UIStackView()
@@ -1622,6 +1622,13 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
     private let smallKana = ["あ": "ぁ", "ぁ": "あ", "い": "ぃ", "ぃ": "い", "う": "ぅ", "ぅ": "ゔ", "ゔ": "う", "え": "ぇ", "ぇ": "え", "お": "ぉ", "ぉ": "お", "つ": "っ", "っ": "づ", "づ": "つ", "や": "ゃ", "ゃ": "や", "ゆ": "ゅ", "ゅ": "ゆ", "よ": "ょ", "ょ": "よ", "か": "が", "が": "か", "は": "ば", "ば": "ぱ", "ぱ": "は"]
+}
+
+/// Keeps the source image's pixel dimensions out of the keyboard's Auto Layout size.
+private final class KeyboardBackgroundImageView: UIImageView {
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
 }
 
 private final class ClosureButton: UIButton {

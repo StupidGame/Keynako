@@ -108,40 +108,13 @@ import UIKit
       allowed.contains(scalar) ? Character(String(scalar)) : "_"
     }.prefix(80))
     let target = directory.appendingPathComponent("\(safeId.isEmpty ? "theme" : safeId).image")
-    guard let croppedData = keyboardCroppedImageData(data) else {
+    guard let source = UIImage(data: data), source.size.width > 0, source.size.height > 0 else {
       throw CocoaError(.fileReadCorruptFile)
     }
-    try croppedData.write(to: target, options: .atomic)
+    // Keep the source aspect ratio. The keyboard extension crops it against its
+    // actual bounds, including the user's current height scale.
+    try data.write(to: target, options: .atomic)
     return target.path
-  }
-
-  private func keyboardCroppedImageData(_ data: Data) -> Data? {
-    guard let source = UIImage(data: data), source.size.width > 0, source.size.height > 0 else {
-      return nil
-    }
-    let targetAspectRatio: CGFloat = 3 / 2
-    let sourceAspectRatio = source.size.width / source.size.height
-    let targetSize: CGSize
-    if sourceAspectRatio > targetAspectRatio {
-      targetSize = CGSize(width: source.size.height * targetAspectRatio, height: source.size.height)
-    } else {
-      targetSize = CGSize(width: source.size.width, height: source.size.width / targetAspectRatio)
-    }
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = source.scale
-    format.opaque = true
-    let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
-    let image = renderer.image { context in
-      UIColor.black.setFill()
-      context.fill(CGRect(origin: .zero, size: targetSize))
-      source.draw(
-        at: CGPoint(
-          x: (targetSize.width - source.size.width) / 2,
-          y: (targetSize.height - source.size.height) / 2
-        )
-      )
-    }
-    return image.jpegData(compressionQuality: 0.9)
   }
 
   private func deleteKeyboardBackgroundImage(path: String) throws {

@@ -76,7 +76,7 @@ import kotlin.random.Random
 
 class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var inputViewFrame: FrameLayout
-    private lateinit var backgroundImageView: ImageView
+    private lateinit var backgroundImageView: KeyboardBackgroundImageView
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
     private lateinit var keyboardContainer: LinearLayout
@@ -136,7 +136,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         inputViewFrame = FrameLayout(this).apply {
             setBackgroundColor(palette.background)
         }
-        backgroundImageView = ImageView(this).apply {
+        backgroundImageView = KeyboardBackgroundImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             imageAlpha = 217
             visibility = View.GONE
@@ -3088,3 +3088,22 @@ class AzooKeyInputMethodService : InputMethodService() {
         )
     }
 }
+
+/** A decorative image must never contribute its bitmap's intrinsic size to the IME. */
+private class KeyboardBackgroundImageView(context: Context) : ImageView(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(
+            decorativeImageMeasuredDimension(
+                isExact = View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.EXACTLY,
+                exactSize = View.MeasureSpec.getSize(widthMeasureSpec),
+            ),
+            decorativeImageMeasuredDimension(
+                isExact = View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.EXACTLY,
+                exactSize = View.MeasureSpec.getSize(heightMeasureSpec),
+            ),
+        )
+    }
+}
+
+internal fun decorativeImageMeasuredDimension(isExact: Boolean, exactSize: Int): Int =
+    if (isExact) exactSize else 0
