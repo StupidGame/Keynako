@@ -154,6 +154,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
   late int _special;
   late int _text;
   late int _accent;
+  late double _keyOpacity;
   String? _backgroundImage;
   Uint8List? _pickedBackgroundImage;
   var _removeBackgroundImage = false;
@@ -194,6 +195,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
     _text = source.textColor;
     _accent = source.accentColor;
     _backgroundImage = source.backgroundImage;
+    _keyOpacity = source.keyOpacity;
   }
 
   KeyboardThemeConfig get _value => KeyboardThemeConfig(
@@ -205,6 +207,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
     textColor: _text,
     accentColor: _accent,
     backgroundImage: _removeBackgroundImage ? null : _backgroundImage,
+    keyOpacity: _keyOpacity,
   );
 
   @override
@@ -268,13 +271,32 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
                   ),
                   if (_pickedBackgroundImage != null ||
                       (_backgroundImage != null && !_removeBackgroundImage))
-                    TextButton.icon(
-                      onPressed: () => setState(() {
-                        _pickedBackgroundImage = null;
-                        _removeBackgroundImage = true;
-                      }),
-                      icon: const Icon(Icons.hide_image_outlined),
-                      label: const Text('背景画像を外す'),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SizedBox(height: 10),
+                        Text(
+                          'キー背景の透過度 '
+                          '${((1 - _keyOpacity) * 100).round()}%',
+                        ),
+                        Slider(
+                          value: 1 - _keyOpacity,
+                          min: 0,
+                          max: 0.85,
+                          divisions: 17,
+                          label: '${((1 - _keyOpacity) * 100).round()}%',
+                          onChanged: (value) =>
+                              setState(() => _keyOpacity = 1 - value),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => setState(() {
+                            _pickedBackgroundImage = null;
+                            _removeBackgroundImage = true;
+                          }),
+                          icon: const Icon(Icons.hide_image_outlined),
+                          label: const Text('背景画像を外す'),
+                        ),
+                      ],
                     ),
                 ],
               ),
@@ -328,6 +350,9 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
         return;
       }
       setState(() {
+        if (_backgroundImage == null && _pickedBackgroundImage == null) {
+          _keyOpacity = 0.72;
+        }
         _pickedBackgroundImage = bytes;
         _removeBackgroundImage = false;
       });

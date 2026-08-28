@@ -98,7 +98,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           const Divider(height: 1, indent: 16, endIndent: 16),
                           ListTile(
                             leading: const Icon(Icons.sync),
-                            title: const Text('azooKey共有変換辞書'),
+                            title: const Text('Keynako共有変換辞書'),
                             subtitle: Text(
                               controller.azooKeyHotfixSyncing
                                   ? '最新の共有語を確認しています…'
@@ -206,13 +206,13 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(updated ? 'azooKey共有変換辞書を更新しました。' : 'すでに最新の共有変換辞書です。'),
+          content: Text(updated ? 'Keynako共有変換辞書を更新しました。' : 'すでに最新の共有変換辞書です。'),
         ),
       );
     } catch (_) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('azooKey共有変換辞書を取得できませんでした。')),
+        const SnackBar(content: Text('Keynako共有変換辞書を取得できませんでした。')),
       );
     }
   }
@@ -573,7 +573,7 @@ class _UserDictionaryPageState extends State<UserDictionaryPage> {
                           ? (entry.formatLiteral ?? entry.word)
                           : entry.word,
                     ),
-                    subtitle: Text(entry.ruby),
+                    subtitle: Text('${entry.ruby} ・ 重要度 ${entry.importance}'),
                     leading: Icon(
                       entry.isTemplateMode
                           ? Icons.schedule
@@ -618,6 +618,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
   late bool _place;
   late bool _template;
   late bool _shared;
+  late int _importance;
 
   @override
   void initState() {
@@ -631,6 +632,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
     _place = entry?.isPlaceName ?? false;
     _template = entry?.isTemplateMode ?? false;
     _shared = entry?.shared ?? false;
+    _importance = entry?.importance ?? 3;
   }
 
   @override
@@ -690,10 +692,25 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
               value: _place,
               onChanged: (value) => setState(() => _place = value),
             ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('変換の重要度 $_importance'),
+              subtitle: const Text('1は低く、5は高く候補へ表示します。共有時にも同じ重要度を送ります。'),
+            ),
+            Slider(
+              value: _importance.toDouble(),
+              min: 1,
+              max: 5,
+              divisions: 4,
+              label: '$_importance',
+              onChanged: (value) => setState(() => _importance = value.round()),
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('この単語をazooKeyと共有'),
-              subtitle: const Text('読み・単語・選択した品詞を、元アプリと同じ投稿先へ送信します。'),
+              title: const Text('この変換をKeynakoと共有'),
+              subtitle: const Text(
+                'オンで保存すると、読み・単語・品詞・重要度をKeynakoの共有辞書へ自動送信します。',
+              ),
               value: _shared,
               onChanged: (value) => setState(() => _shared = value),
             ),
@@ -723,6 +740,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
           isVerb: _verb,
           isPersonName: _person,
           isPlaceName: _place,
+          importance: _importance,
         ) ??
         false;
     var shared = wantsShare && payloadAlreadyShared;
@@ -735,6 +753,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
       shared = await controller.platform.submitSharedWord(
         word: word,
         ruby: ruby,
+        importance: _importance,
         categories: categories,
       );
       if (!mounted) return;
@@ -752,6 +771,7 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
         isVerb: _verb,
         isPersonName: _person,
         isPlaceName: _place,
+        importance: _importance,
         shared: shared,
         isTemplateMode: _template,
         formatLiteral: _template ? _format.text : null,

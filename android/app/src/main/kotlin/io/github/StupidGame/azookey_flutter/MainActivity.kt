@@ -46,19 +46,6 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "importContacts" -> importContacts(result)
-                "submitSharedWord" -> {
-                    val word = call.argument<String>("word").orEmpty()
-                    val ruby = call.argument<String>("ruby").orEmpty()
-                    val note = call.argument<String>("note")
-                    val categories = call.argument<List<String>>("categories").orEmpty()
-                    if (word.isBlank()) {
-                        result.error("invalid_word", "word must not be empty", null)
-                    } else {
-                        ReportClient.submitSharedWord(word, ruby, note, categories) { success ->
-                            runOnUiThread { result.success(success) }
-                        }
-                    }
-                }
                 "saveKeyboardBackgroundImage" -> {
                     val themeId = call.argument<String>("themeId").orEmpty()
                     val bytes = call.argument<ByteArray>("bytes")

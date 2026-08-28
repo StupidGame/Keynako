@@ -56,6 +56,7 @@ import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
+import io.github.StupidGame.azookey_flutter.input.replaceLastCharactersIn
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
@@ -251,8 +252,11 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun reloadAzooKeyHotfixDictionary() {
-        val tag = state.optString(AZOOKEY_HOTFIX_LATEST_TAG_KEY, "none")
-        val dictionary = state.optJSONObject(AZOOKEY_HOTFIX_STORAGE_KEY)
+        val tag = state.optString(KEYNAKO_HOTFIX_LATEST_SHA_KEY).ifBlank {
+            state.optString(LEGACY_AZOOKEY_HOTFIX_LATEST_TAG_KEY, "none")
+        }
+        val dictionary = state.optJSONObject(KEYNAKO_HOTFIX_STORAGE_KEY)
+            ?: state.optJSONObject(LEGACY_AZOOKEY_HOTFIX_STORAGE_KEY)
         val metadata = dictionary?.optJSONObject("metadata")
         val values = dictionary?.optJSONArray("data")
         if (metadata?.optString("status") != "active" || values == null) {
@@ -294,14 +298,29 @@ class AzooKeyInputMethodService : InputMethodService() {
         for (index in 0 until themes.length()) {
             val theme = themes.optJSONObject(index) ?: continue
             if (theme.optString("id") == selectedId) {
+                val backgroundImage = theme.optString("backgroundImage")
+                    .takeIf(String::isNotBlank)
+                val keyOpacity = if (backgroundImage == null) {
+                    1.0
+                } else {
+                    theme.optDouble("keyOpacity", 0.72).coerceIn(0.15, 1.0)
+                }
                 return KeyboardPalette(
                     background = theme.optLong("backgroundColor", 0xffd1d5dbL).toInt(),
-                    key = theme.optLong("keyColor", 0xffffffffL).toInt(),
-                    special = theme.optLong("specialKeyColor", 0xffadb5bdL).toInt(),
+                    key = withOpacity(
+                        theme.optLong("keyColor", 0xffffffffL).toInt(),
+                        keyOpacity,
+                    ),
+                    special = withOpacity(
+                        theme.optLong("specialKeyColor", 0xffadb5bdL).toInt(),
+                        keyOpacity,
+                    ),
                     text = theme.optLong("textColor", 0xff111827L).toInt(),
-                    accent = theme.optLong("accentColor", 0xff2563ebL).toInt(),
-                    backgroundImage = theme.optString("backgroundImage")
-                        .takeIf(String::isNotBlank),
+                    accent = withOpacity(
+                        theme.optLong("accentColor", 0xff2563ebL).toInt(),
+                        keyOpacity,
+                    ),
+                    backgroundImage = backgroundImage,
                 )
             }
         }
@@ -1907,8 +1926,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         val predictedValues = linkedSetOf<String>()
         val completionStrength = settings.optInt("automatic_completion_strength", 1).coerceIn(0, 4)
         val predictionLimit = completionStrength * 8
-        for (index in 0 until dictionary.length()) {
-            val entry = dictionary.optJSONObject(index) ?: continue
+        val userEntries = (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
+            .sortedByDescending { it.optInt("importance", 3).coerceIn(1, 5) }
+        for (entry in userEntries) {
             val ruby = entry.optString("ruby")
             val value = if (entry.optBoolean("isTemplateMode", false)) {
                 renderTemplate(entry.optString("formatLiteral", entry.optString("word")))
@@ -2409,14 +2429,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (table == null) return
         val before = if (composing.isNotEmpty()) composing
         else currentInputConnection?.getTextBeforeCursor(256, 0)?.toString().orEmpty()
-        val match = table.keys().asSequence().filter(before::endsWith).maxByOrNull(String::length) ?: return
-        val replacement = table.optString(match)
+        val replacements = table.keys().asSequence().associateWith(table::optString)
+        val match = replacements.keys.filter(before::endsWith).maxByOrNull(String::length)
+            ?: return
+        val replaced = replaceLastCharactersIn(before, replacements)
         if (composing.isNotEmpty()) {
-            composing = composing.dropLast(match.length) + replacement
+            composing = replaced
             updateComposition()
         } else {
             currentInputConnection?.deleteSurroundingText(match.length, 0)
-            currentInputConnection?.commitText(replacement, 1)
+            currentInputConnection?.commitText(replacements.getValue(match), 1)
         }
     }
 
@@ -2853,9 +2875,13 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     companion object {
-        private const val AZOOKEY_HOTFIX_STORAGE_KEY =
+        private const val KEYNAKO_HOTFIX_STORAGE_KEY =
+            "keynako_hotfix_dictionary_storage"
+        private const val KEYNAKO_HOTFIX_LATEST_SHA_KEY =
+            "keynako_hotfix_dictionary_storage_latest_sha"
+        private const val LEGACY_AZOOKEY_HOTFIX_STORAGE_KEY =
             "azooKey_hotfix_dictionary_storage"
-        private const val AZOOKEY_HOTFIX_LATEST_TAG_KEY =
+        private const val LEGACY_AZOOKEY_HOTFIX_LATEST_TAG_KEY =
             "azooKey_hotfix_dictionary_storage_latest_tag"
         private const val IME_LOG_TAG = "KeynakoIME"
         private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
@@ -2863,6 +2889,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         var activeInstance: AzooKeyInputMethodService? = null
 
         private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
+
+        internal fun withOpacity(color: Int, opacity: Double): Int {
+            val alpha = (Color.alpha(color) * opacity).toInt().coerceIn(0, 255)
+            return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+        }
         private val systemDictionary = mapOf(
             "あい" to listOf("愛", "藍", "相"),
             "あう" to listOf("会う", "合う", "遭う"),

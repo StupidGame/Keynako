@@ -53,8 +53,8 @@ Android InputMethodService <---- shared JSON state ----> iOS Keyboard Extension
 | 連絡先取り込み | platform contacts API + 共有辞書 |
 | 音／触覚／片手設定 | ネイティブキーボードbehavior |
 | import/export/share | JSON + OS share sheet |
-| 変換報告／単語共有 | 元アプリと同一Google Forms endpoint |
-| 共有変換辞書 | 元アプリと同一GitHub Releases latest API + `data_v1.json`（24時間キャッシュ） |
+| 変換報告／単語共有 | 変換報告は互換endpoint、単語共有はKeynako専用HTTPSゲートウェイ |
+| 共有変換辞書 | `StupidGame/keynako_hotfix_dictionary_storage` Contents API + `data_v1.json`（5分キャッシュ） |
 
 ## Zenzai
 

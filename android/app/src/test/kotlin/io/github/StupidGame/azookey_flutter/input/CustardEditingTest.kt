@@ -29,6 +29,16 @@ class CustardEditingTest {
     }
 
     @Test
+    fun oguraReplacementKeepsTheWholeWordAndUsesTheLongestSuffix() {
+        val result = replaceLastCharactersIn(
+            "前のおぐらしよ",
+            mapOf("よ" to "ょ", "しよ" to "しょ"),
+        )
+
+        assertEquals("前のおぐらしょ", result)
+    }
+
+    @Test
     fun lateOguraFlickRollsBackTheCenterPeriodBeforeSmallE() {
         assertEquals(
             FiredLongPressTransition.ROLLBACK_CENTER,

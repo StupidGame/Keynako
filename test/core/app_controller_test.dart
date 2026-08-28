@@ -129,7 +129,7 @@ void main() {
     controller.dispose();
   });
 
-  test('syncs and persists the azooKey hotfix dictionary', () async {
+  test('syncs and persists the Keynako hotfix dictionary', () async {
     final storage = _MemoryStorage();
     final synchronizer = _HotfixSynchronizer(
       const AzooKeyHotfixSyncResult(
@@ -162,7 +162,7 @@ void main() {
     controller.dispose();
   });
 
-  test('skips automatic hotfix checks made within 24 hours', () async {
+  test('skips automatic hotfix checks made within five minutes', () async {
     final now = DateTime.utc(2026, 8, 27, 12);
     final synchronizer = _HotfixSynchronizer(
       const AzooKeyHotfixSyncResult(latestTag: 'v1', dictionaryChanged: false),
@@ -173,7 +173,7 @@ void main() {
       now: () => now,
     );
     controller.data.azooKeyHotfixLastCheckDate = now.subtract(
-      const Duration(hours: 1),
+      const Duration(minutes: 4),
     );
 
     final updated = await controller.syncAzooKeyHotfixDictionary();

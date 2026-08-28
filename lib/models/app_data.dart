@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'azookey_hotfix_dictionary.dart';
 import 'custard.dart';
 
-const int currentSchemaVersion = 4;
+const int currentSchemaVersion = 5;
 
 const Map<String, dynamic> defaultKeyboardSettings = {
   'keyboard_type': 'flick',
@@ -54,6 +54,7 @@ class UserDictionaryEntry {
     this.isVerb = false,
     this.isPersonName = false,
     this.isPlaceName = false,
+    this.importance = 3,
     this.shared = false,
     this.isTemplateMode = false,
     this.formatLiteral,
@@ -65,6 +66,7 @@ class UserDictionaryEntry {
   final bool isVerb;
   final bool isPersonName;
   final bool isPlaceName;
+  final int importance;
   final bool shared;
   final bool isTemplateMode;
   final String? formatLiteral;
@@ -76,6 +78,7 @@ class UserDictionaryEntry {
     bool? isVerb,
     bool? isPersonName,
     bool? isPlaceName,
+    int? importance,
     bool? shared,
     bool? isTemplateMode,
     String? formatLiteral,
@@ -88,6 +91,7 @@ class UserDictionaryEntry {
       isVerb: isVerb ?? this.isVerb,
       isPersonName: isPersonName ?? this.isPersonName,
       isPlaceName: isPlaceName ?? this.isPlaceName,
+      importance: (importance ?? this.importance).clamp(1, 5).toInt(),
       shared: shared ?? this.shared,
       isTemplateMode: isTemplateMode ?? this.isTemplateMode,
       formatLiteral: clearFormatLiteral
@@ -104,6 +108,9 @@ class UserDictionaryEntry {
       isVerb: json['isVerb'] as bool? ?? false,
       isPersonName: json['isPersonName'] as bool? ?? false,
       isPlaceName: json['isPlaceName'] as bool? ?? false,
+      importance: ((json['importance'] as num?)?.toInt() ?? 3)
+          .clamp(1, 5)
+          .toInt(),
       shared: json['shared'] as bool? ?? false,
       isTemplateMode: json['isTemplateMode'] as bool? ?? false,
       formatLiteral: json['formatLiteral'] as String?,
@@ -117,6 +124,7 @@ class UserDictionaryEntry {
     'isVerb': isVerb,
     'isPersonName': isPersonName,
     'isPlaceName': isPlaceName,
+    'importance': importance,
     'shared': shared,
     'isTemplateMode': isTemplateMode,
     'formatLiteral': formatLiteral,
@@ -128,6 +136,7 @@ class UserDictionaryEntry {
     required bool isVerb,
     required bool isPersonName,
     required bool isPlaceName,
+    required int importance,
   }) {
     return shared &&
         !isTemplateMode &&
@@ -135,7 +144,8 @@ class UserDictionaryEntry {
         this.word == word &&
         this.isVerb == isVerb &&
         this.isPersonName == isPersonName &&
-        this.isPlaceName == isPlaceName;
+        this.isPlaceName == isPlaceName &&
+        this.importance == importance;
   }
 }
 
@@ -149,6 +159,7 @@ class KeyboardThemeConfig {
     required this.textColor,
     required this.accentColor,
     this.backgroundImage,
+    this.keyOpacity = 0.72,
   });
 
   final String id;
@@ -159,6 +170,7 @@ class KeyboardThemeConfig {
   final int textColor;
   final int accentColor;
   final String? backgroundImage;
+  final double keyOpacity;
 
   KeyboardThemeConfig copyWith({
     String? id,
@@ -169,6 +181,7 @@ class KeyboardThemeConfig {
     int? textColor,
     int? accentColor,
     String? backgroundImage,
+    double? keyOpacity,
     bool clearBackgroundImage = false,
   }) {
     return KeyboardThemeConfig(
@@ -182,10 +195,12 @@ class KeyboardThemeConfig {
       backgroundImage: clearBackgroundImage
           ? null
           : (backgroundImage ?? this.backgroundImage),
+      keyOpacity: (keyOpacity ?? this.keyOpacity).clamp(0.15, 1.0).toDouble(),
     );
   }
 
   factory KeyboardThemeConfig.fromJson(Map<String, dynamic> json) {
+    final backgroundImage = json['backgroundImage'] as String?;
     return KeyboardThemeConfig(
       id: json['id'] as String? ?? 'theme',
       name: json['name'] as String? ?? 'テーマ',
@@ -194,7 +209,12 @@ class KeyboardThemeConfig {
       specialKeyColor: (json['specialKeyColor'] as num?)?.toInt() ?? 0xffaeb4bd,
       textColor: (json['textColor'] as num?)?.toInt() ?? 0xff111827,
       accentColor: (json['accentColor'] as num?)?.toInt() ?? 0xff2563eb,
-      backgroundImage: json['backgroundImage'] as String?,
+      backgroundImage: backgroundImage,
+      keyOpacity:
+          ((json['keyOpacity'] as num?)?.toDouble() ??
+                  (backgroundImage == null ? 1.0 : 0.72))
+              .clamp(0.15, 1.0)
+              .toDouble(),
     );
   }
 
@@ -207,6 +227,7 @@ class KeyboardThemeConfig {
     'textColor': textColor,
     'accentColor': accentColor,
     'backgroundImage': backgroundImage,
+    'keyOpacity': keyOpacity,
   };
 }
 
@@ -485,7 +506,8 @@ class AppData {
     final rawTabBar = json['tabBar'];
     final rawClipboard = json['clipboardHistory'];
     AzooKeyHotfixDictionary? hotfixDictionary;
-    final rawHotfixDictionary = json[azooKeyHotfixStorageKey];
+    final rawHotfixDictionary =
+        json[keynakoHotfixStorageKey] ?? json[legacyAzooKeyHotfixStorageKey];
     if (rawHotfixDictionary is Map) {
       try {
         final decoded = AzooKeyHotfixDictionary.fromJson(
@@ -497,7 +519,9 @@ class AppData {
         // unreadable. The next maintenance check can replace it.
       }
     }
-    final rawLastCheckDate = json[azooKeyHotfixLastCheckDateKey];
+    final rawLastCheckDate =
+        json[keynakoHotfixLastCheckDateKey] ??
+        json[legacyAzooKeyHotfixLastCheckDateKey];
     final lastCheckDate = rawLastCheckDate is String
         ? DateTime.tryParse(rawLastCheckDate)
         : null;
@@ -529,10 +553,19 @@ class AppData {
             )
           : <String, int>{},
       azooKeyHotfixDictionary: hotfixDictionary,
-      azooKeyHotfixLatestTag: json[azooKeyHotfixLatestTagKey] as String?,
+      azooKeyHotfixLatestTag:
+          (json[keynakoHotfixLatestTagKey] ??
+                  json[legacyAzooKeyHotfixLatestTagKey])
+              as String?,
       azooKeyHotfixLastCheckDate: lastCheckDate,
       onboardingCompleted: json['onboardingCompleted'] as bool? ?? false,
     )..schemaVersion = currentSchemaVersion;
+
+    data.userDictionary.sort(
+      (left, right) => left.ruby == right.ruby
+          ? right.importance.compareTo(left.importance)
+          : left.ruby.compareTo(right.ruby),
+    );
 
     // Zenzai is now part of the default conversion pipeline. Preserve an
     // explicit choice made after schema 3, but enable it for older state that
@@ -586,11 +619,11 @@ class AppData {
     'clipboardHistory': clipboardHistory,
     'learning': learning,
     if (azooKeyHotfixDictionary != null)
-      azooKeyHotfixStorageKey: azooKeyHotfixDictionary!.toJson(),
+      keynakoHotfixStorageKey: azooKeyHotfixDictionary!.toJson(),
     if (azooKeyHotfixLatestTag != null)
-      azooKeyHotfixLatestTagKey: azooKeyHotfixLatestTag,
+      keynakoHotfixLatestTagKey: azooKeyHotfixLatestTag,
     if (azooKeyHotfixLastCheckDate != null)
-      azooKeyHotfixLastCheckDateKey: azooKeyHotfixLastCheckDate!
+      keynakoHotfixLastCheckDateKey: azooKeyHotfixLastCheckDate!
           .toUtc()
           .toIso8601String(),
     'onboardingCompleted': onboardingCompleted,

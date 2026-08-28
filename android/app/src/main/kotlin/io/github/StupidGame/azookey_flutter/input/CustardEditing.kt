@@ -43,6 +43,15 @@ internal fun smartDeleteCount(
     return if (distance == 0) 1 else distance
 }
 
+/** Applies the longest matching Custard suffix without discarding the word prefix. */
+internal fun replaceLastCharactersIn(
+    text: String,
+    table: Map<String, String>,
+): String {
+    val match = table.keys.filter(text::endsWith).maxByOrNull(String::length) ?: return text
+    return text.dropLast(match.length) + table.getValue(match)
+}
+
 internal enum class FiredLongPressTransition {
     CONTINUE,
     ROLLBACK_CENTER,

@@ -1,7 +1,14 @@
-const String azooKeyHotfixStorageKey = 'azooKey_hotfix_dictionary_storage';
-const String azooKeyHotfixLatestTagKey =
+const String keynakoHotfixStorageKey = 'keynako_hotfix_dictionary_storage';
+const String keynakoHotfixLatestTagKey =
+    'keynako_hotfix_dictionary_storage_latest_sha';
+const String keynakoHotfixLastCheckDateKey =
+    'keynako_hotfix_dictionary_storage_last_check_date';
+
+const String legacyAzooKeyHotfixStorageKey =
+    'azooKey_hotfix_dictionary_storage';
+const String legacyAzooKeyHotfixLatestTagKey =
     'azooKey_hotfix_dictionary_storage_latest_tag';
-const String azooKeyHotfixLastCheckDateKey =
+const String legacyAzooKeyHotfixLastCheckDateKey =
     'azooKey_hotfix_dictionary_storage_last_check_date';
 
 class AzooKeyHotfixDictionary {
@@ -94,6 +101,7 @@ class AzooKeyHotfixEntry {
     required this.mid,
     required this.date,
     required this.author,
+    this.importance = 3,
   });
 
   final String word;
@@ -104,6 +112,7 @@ class AzooKeyHotfixEntry {
   final int mid;
   final String date;
   final String author;
+  final int importance;
 
   factory AzooKeyHotfixEntry.fromJson(Map<String, dynamic> json) {
     return AzooKeyHotfixEntry(
@@ -115,6 +124,13 @@ class AzooKeyHotfixEntry {
       mid: _requiredNumber(json, 'mid').toInt(),
       date: _requiredString(json, 'date'),
       author: _requiredString(json, 'author'),
+      importance:
+          ((json['importance'] as num?)?.toInt() ??
+                  importanceForWordWeight(
+                    _requiredNumber(json, 'word_weight').toDouble(),
+                  ))
+              .clamp(1, 5)
+              .toInt(),
     );
   }
 
@@ -127,8 +143,12 @@ class AzooKeyHotfixEntry {
     'mid': mid,
     'date': date,
     'author': author,
+    'importance': importance,
   };
 }
+
+int importanceForWordWeight(double wordWeight) =>
+    ((wordWeight + 17.5) / 2.5).round().clamp(1, 5).toInt();
 
 String _requiredString(Map<String, dynamic> json, String key) {
   final value = json[key];

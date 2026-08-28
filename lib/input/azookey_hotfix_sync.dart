@@ -4,13 +4,10 @@ import 'dart:io';
 
 import '../models/azookey_hotfix_dictionary.dart';
 
-const Duration azooKeyHotfixCheckInterval = Duration(hours: 24);
-const String azooKeyHotfixLatestReleaseUrl =
-    'https://api.github.com/repos/azooKey/'
-    'azooKey_hotfix_dictionary_storage/releases/latest';
-const String azooKeyHotfixReleaseBaseUrl =
-    'https://github.com/azooKey/azooKey_hotfix_dictionary_storage/'
-    'releases/download';
+const Duration azooKeyHotfixCheckInterval = Duration(minutes: 5);
+const String keynakoHotfixContentsUrl =
+    'https://api.github.com/repos/StupidGame/'
+    'keynako_hotfix_dictionary_storage/contents/Dictionary/data_v1.json?ref=main';
 
 bool isAzooKeyHotfixCheckDue(DateTime? lastCheck, DateTime now) {
   return lastCheck == null ||
@@ -55,29 +52,36 @@ class AzooKeyHotfixSyncClient implements AzooKeyHotfixSynchronizer {
 
   @override
   Future<AzooKeyHotfixSyncResult> checkAndUpdate({String? cachedTag}) async {
-    final latestTag = await getLatestTag();
-    if (latestTag == null || latestTag == cachedTag) {
+    final response = await _get(
+      Uri.parse(keynakoHotfixContentsUrl),
+      const <String, String>{
+        HttpHeaders.acceptHeader: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(
+        'Keynako hotfix download failed: HTTP ${response.statusCode}',
+      );
+    }
+    final envelope = jsonDecode(response.body);
+    if (envelope is! Map ||
+        envelope['sha'] is! String ||
+        envelope['content'] is! String ||
+        envelope['encoding'] != 'base64') {
+      throw const FormatException('Keynako hotfix response is malformed.');
+    }
+    final latestTag = envelope['sha'] as String;
+    if (latestTag == cachedTag) {
       return AzooKeyHotfixSyncResult(
         latestTag: latestTag,
         dictionaryChanged: false,
       );
     }
-
-    final response = await _get(
-      Uri.parse(
-        '$azooKeyHotfixReleaseBaseUrl/'
-        '${Uri.encodeComponent(latestTag)}/data_v1.json',
-      ),
-      const <String, String>{},
-    );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(
-        'azooKey hotfix download failed: HTTP ${response.statusCode}',
-      );
-    }
-    final decoded = jsonDecode(response.body);
+    final content = (envelope['content'] as String).replaceAll('\n', '');
+    final decoded = jsonDecode(utf8.decode(base64Decode(content)));
     if (decoded is! Map) {
-      throw const FormatException('azooKey hotfix response is not an object.');
+      throw const FormatException('Keynako hotfix data is not an object.');
     }
     final dictionary = AzooKeyHotfixDictionary.fromJson(
       Map<String, dynamic>.from(decoded),
@@ -87,20 +91,6 @@ class AzooKeyHotfixSyncClient implements AzooKeyHotfixSynchronizer {
       dictionaryChanged: true,
       dictionary: dictionary.metadata.isActive ? dictionary : null,
     );
-  }
-
-  Future<String?> getLatestTag() async {
-    final response = await _get(Uri.parse(azooKeyHotfixLatestReleaseUrl), {
-      HttpHeaders.acceptHeader: 'application/vnd.github+json',
-    });
-    // azooKey treats non-200 responses as "no latest tag" and records that a
-    // check took place. Keep that behavior for protocol compatibility.
-    if (response.statusCode != HttpStatus.ok) return null;
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map || decoded['tag_name'] is! String) {
-      throw const FormatException('azooKey latest release tag is missing.');
-    }
-    return decoded['tag_name'] as String;
   }
 
   static Future<AzooKeyHotfixHttpResponse> _httpGet(
@@ -117,13 +107,13 @@ class AzooKeyHotfixSyncClient implements AzooKeyHotfixSynchronizer {
       );
       const maximumBytes = 2 * 1024 * 1024;
       if (response.contentLength > maximumBytes) {
-        throw const FormatException('azooKey hotfix response exceeds 2 MB.');
+        throw const FormatException('Keynako hotfix response exceeds 2 MB.');
       }
       final bytes = <int>[];
       await for (final chunk in response) {
         bytes.addAll(chunk);
         if (bytes.length > maximumBytes) {
-          throw const FormatException('azooKey hotfix response exceeds 2 MB.');
+          throw const FormatException('Keynako hotfix response exceeds 2 MB.');
         }
       }
       return AzooKeyHotfixHttpResponse(
@@ -131,7 +121,7 @@ class AzooKeyHotfixSyncClient implements AzooKeyHotfixSynchronizer {
         body: utf8.decode(bytes),
       );
     } on TimeoutException {
-      throw const HttpException('azooKey hotfix request timed out.');
+      throw const HttpException('Keynako hotfix request timed out.');
     } finally {
       client.close(force: true);
     }

@@ -133,7 +133,11 @@ class AppController extends ChangeNotifier {
     } else {
       data.userDictionary[index] = entry;
     }
-    data.userDictionary.sort((a, b) => a.ruby.compareTo(b.ruby));
+    data.userDictionary.sort(
+      (a, b) => a.ruby == b.ruby
+          ? b.importance.compareTo(a.importance)
+          : a.ruby.compareTo(b.ruby),
+    );
     _changed();
   }
 

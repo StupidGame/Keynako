@@ -59,21 +59,6 @@ import UIKit
       result(nil)
     case "importContacts":
       importContacts(result: result)
-    case "submitSharedWord":
-      let arguments = call.arguments as? [String: Any]
-      let word = arguments?["word"] as? String ?? ""
-      guard !word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        result(FlutterError(code: "invalid_word", message: "word must not be empty", details: nil))
-        return
-      }
-      submitSharedWord(
-        word: word,
-        ruby: arguments?["ruby"] as? String ?? "",
-        note: arguments?["note"] as? String,
-        categories: arguments?["categories"] as? [String] ?? []
-      ) { success in
-        DispatchQueue.main.async { result(success) }
-      }
     case "saveKeyboardBackgroundImage":
       let arguments = call.arguments as? [String: Any]
       guard let themeId = arguments?["themeId"] as? String,
@@ -186,38 +171,4 @@ import UIKit
     }
   }
 
-  private func submitSharedWord(
-    word: String,
-    ruby: String,
-    note: String?,
-    categories: [String],
-    completion: @escaping (Bool) -> Void
-  ) {
-    let endpoint = URL(
-      string: "https://docs.google.com/forms/d/e/1FAIpQLSceGtIHH8P-KbrB2ownprap3cUVVJegbhGekfz1xCiwPxBNfg/formResponse"
-    )!
-    let noteText = (note ?? "備考記入なし")
-      + "\nアプリ内フォームから送信\nKeynakoのバージョン: 3.0.1"
-    var components = URLComponents()
-    components.queryItems = [
-      URLQueryItem(name: "entry.1129894332", value: "3"),
-      URLQueryItem(name: "entry.813756984", value: word),
-      URLQueryItem(name: "entry.688013311", value: ruby.isEmpty ? "読み記入なし" : ruby),
-      URLQueryItem(name: "entry.1136445695", value: noteText),
-      URLQueryItem(name: "entry.2110887544", value: "__other_option__"),
-      URLQueryItem(
-        name: "entry.2110887544.other_option_response",
-        value: categories.isEmpty ? "品詞記入無し" : categories.joined(separator: "、")
-      ),
-    ]
-    var request = URLRequest(url: endpoint)
-    request.httpMethod = "POST"
-    request.setValue("no-cors", forHTTPHeaderField: "mode")
-    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-    request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-    URLSession.shared.dataTask(with: request) { _, response, error in
-      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-      completion(error == nil && (200..<400).contains(status))
-    }.resume()
-  }
 }

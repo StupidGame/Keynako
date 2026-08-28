@@ -372,7 +372,7 @@ class JapaneseConverter {
             text: entry.isTemplateMode ? _renderTemplate(entry) : entry.word,
             reading: reading,
             source: 'user',
-            score: 400,
+            score: 340 + entry.importance * 20,
           ),
         );
       }

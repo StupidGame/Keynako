@@ -139,10 +139,14 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func reloadAzooKeyHotfixDictionary() {
-        let storageKey = "azooKey_hotfix_dictionary_storage"
-        let tagKey = "azooKey_hotfix_dictionary_storage_latest_tag"
-        let tag = state[tagKey] as? String ?? "none"
-        guard let dictionary = state[storageKey] as? [String: Any],
+        let storageKey = "keynako_hotfix_dictionary_storage"
+        let tagKey = "keynako_hotfix_dictionary_storage_latest_sha"
+        let tag = state[tagKey] as? String
+            ?? state["azooKey_hotfix_dictionary_storage_latest_tag"] as? String
+            ?? "none"
+        let dictionary = state[storageKey] as? [String: Any]
+            ?? state["azooKey_hotfix_dictionary_storage"] as? [String: Any]
+        guard let dictionary,
               let metadata = dictionary["metadata"] as? [String: Any],
               metadata["status"] as? String == "active",
               let values = dictionary["data"] as? [[String: Any]] else {
@@ -180,13 +184,17 @@ final class KeyboardViewController: UIInputViewController {
               let theme = themes.first(where: { $0["id"] as? String == selected }) else {
             return dark ? .dark : .light
         }
+        let backgroundImage = theme["backgroundImage"] as? String
+        let keyOpacity: CGFloat = backgroundImage == nil
+            ? 1
+            : CGFloat(((theme["keyOpacity"] as? Double) ?? 0.72).clamped(to: 0.15 ... 1))
         return KeyboardPalette(
             background: color(theme["backgroundColor"], fallback: dark ? 0xff111827 : 0xffd1d5db),
-            key: color(theme["keyColor"], fallback: dark ? 0xff374151 : 0xffffffff),
-            special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd),
+            key: color(theme["keyColor"], fallback: dark ? 0xff374151 : 0xffffffff).withAlphaComponent(keyOpacity),
+            special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd).withAlphaComponent(keyOpacity),
             text: color(theme["textColor"], fallback: dark ? 0xfff9fafb : 0xff111827),
-            accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb),
-            backgroundImage: theme["backgroundImage"] as? String
+            accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb).withAlphaComponent(keyOpacity),
+            backgroundImage: backgroundImage
         )
     }
 
@@ -1223,7 +1231,10 @@ final class KeyboardViewController: UIInputViewController {
         guard !composing.isEmpty else { return [] }
         var result: [String] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
-            for entry in dictionary where entry["ruby"] as? String == composing {
+            let ranked = dictionary.sorted {
+                ($0["importance"] as? Int ?? 3) > ($1["importance"] as? Int ?? 3)
+            }
+            for entry in ranked where entry["ruby"] as? String == composing {
                 if entry["isTemplateMode"] as? Bool == true {
                     result.append(renderTemplate(entry["formatLiteral"] as? String ?? ""))
                 } else if let word = entry["word"] as? String {

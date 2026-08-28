@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import '../input/keynako_dictionary_submission.dart';
+
 class KeyboardStatus {
   const KeyboardStatus({
     required this.enabled,
@@ -30,10 +32,15 @@ abstract interface class StateStorage {
 }
 
 class PlatformService implements StateStorage {
-  PlatformService({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('net.azookey/platform');
+  PlatformService({
+    MethodChannel? channel,
+    KeynakoDictionarySubmitter? dictionarySubmitter,
+  }) : _channel = channel ?? const MethodChannel('net.azookey/platform'),
+       _dictionarySubmitter =
+           dictionarySubmitter ?? KeynakoDictionarySubmissionClient();
 
   final MethodChannel _channel;
+  final KeynakoDictionarySubmitter _dictionarySubmitter;
   String? _fallbackState;
 
   @override
@@ -121,20 +128,19 @@ class PlatformService implements StateStorage {
   Future<bool> submitSharedWord({
     required String word,
     required String ruby,
+    required int importance,
     required List<String> categories,
     String? note,
   }) async {
     try {
-      return await _channel.invokeMethod<bool>('submitSharedWord', {
-            'word': word,
-            'ruby': ruby,
-            'categories': categories,
-            'note': note,
-          }) ??
-          false;
-    } on MissingPluginException {
-      return false;
-    } on PlatformException {
+      return await _dictionarySubmitter.submit(
+        word: word,
+        ruby: ruby,
+        importance: importance,
+        categories: categories,
+        note: note,
+      );
+    } on Object {
       return false;
     }
   }

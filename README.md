@@ -12,8 +12,8 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 - 片手モード、カーソル移動、クリップボード履歴、音・触覚設定
 - 設定のJSONバックアップ／復元、連絡先からの辞書登録
 - URL（custard.azookey.com、GitHub、Gist、直接JSON）からのCustard 1.0〜1.2インポート
-- 元のazooKeyと同じGoogle Forms送信先を使う変換報告・単語共有
-- azooKey公式の共有変換辞書を同じGitHub Releasesプロトコルで24時間ごとに同期
+- 変換報告と、重要度付きユーザ辞書のKeynako共有
+- `StupidGame/keynako_hotfix_dictionary_storage`の共有変換辞書を5分ごとに同期
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
 
 Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey forkの`llama.cpp`をJNIから呼び出し、iOSは固定リビジョンの`AzooKeyKanaKanjiConverter`を`ZenzaiCPU` trait付きで利用します。モデルの出所とハッシュは[assets/ZENZAI_MODELS.md](assets/ZENZAI_MODELS.md)にあります。
@@ -76,11 +76,11 @@ WindowsではiOS SDKとXcodeが利用できないため、このリポジトリ�
 
 「拡張」の読み込みボタンへCustard URLを入力すると、元のazooKeyと同じJSON形式を単体・配列のどちらでも読み込めます。`https://custard.azookey.com/tab/...` は公式API URLへ自動変換されます。キー座標とサイズ、system key、複数アクション、長押し開始・反復、フリック／PCバリエーションは定義を無損失で保持し、AndroidとiOSのネイティブキーボードが直接実行します。
 
-共有を選んだユーザ辞書語はazooKeyと同じGoogle Formへ申請されます。承認済みの共有語は`azooKey/azooKey_hotfix_dictionary_storage`の最新Releaseと`data_v1.json`をazooKey本体と同じ手順で確認し、同じ24時間間隔・保存キー・`active`／`disabled`処理でAndroid/iOSの変換辞書へ反映します。設定の「azooKey共有変換辞書」から手動更新もできます。
+「この変換をKeynakoと共有」をオンにしたユーザ辞書語は、保存時にHTTPSゲートウェイから`StupidGame/keynako_hotfix_dictionary_storage`へ自動送信されます。重要度1〜5も辞書の変換順位に反映します。Android/iOSは`main`の`data_v1.json`を5分間隔で確認し、更新があれば取り込みます。設定の「Keynako共有変換辞書」から手動更新もできます。送信先はビルド時の`KEYNAKO_DICTIONARY_SUBMISSION_URL`で設定します。
 
 組み込みフリック配列は元の5列×4段構成で、`☆123`、`ABC`、`あいう`、`小ﾞﾟ`、`､｡?!`をカスタムキー編集画面から個別に差し替えられます。
 
-「着せ替えを作成／編集」の背景画像から端末内の画像を選ぶと、最大2048px・8MB以下に調整したコピーをアプリ専用領域へ保存し、AndroidとiOSのキーボード背景へ反映します。画像ファイルは端末内だけに保存され、テーマJSONの共有対象には含まれません。
+「着せ替えを作成／編集」の背景画像から端末内の画像を選ぶと、最大2048px・8MB以下に調整したコピーをアプリ専用領域へ保存し、AndroidとiOSのキーボード背景へ反映します。背景画像があるときはキー背景の透過度を0〜85%から選べます。画像ファイルは端末内だけに保存され、テーマJSONの共有対象には含まれません。
 
 ## ライセンス
 
