@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var pendingContactResult: MethodChannel.Result? = null
@@ -45,18 +46,25 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "importContacts" -> importContacts(result)
-                "submitSharedWord" -> {
-                    val word = call.argument<String>("word").orEmpty()
-                    val ruby = call.argument<String>("ruby").orEmpty()
-                    val note = call.argument<String>("note")
-                    val categories = call.argument<List<String>>("categories").orEmpty()
-                    if (word.isBlank()) {
-                        result.error("invalid_word", "word must not be empty", null)
+                "saveKeyboardBackgroundImage" -> {
+                    val themeId = call.argument<String>("themeId").orEmpty()
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (themeId.isBlank() || bytes == null || bytes.isEmpty()) {
+                        result.error("invalid_image", "themeId and image bytes are required", null)
+                    } else if (bytes.size > MAX_BACKGROUND_IMAGE_BYTES) {
+                        result.error("image_too_large", "background image exceeds 8 MB", null)
                     } else {
-                        ReportClient.submitSharedWord(word, ruby, note, categories) { success ->
-                            runOnUiThread { result.success(success) }
-                        }
+                        runCatching { saveKeyboardBackgroundImage(themeId, bytes) }
+                            .onSuccess(result::success)
+                            .onFailure {
+                                result.error("image_save_failed", it.localizedMessage, null)
+                            }
                     }
+                }
+                "deleteKeyboardBackgroundImage" -> {
+                    val path = call.argument<String>("path")
+                    if (path != null) deleteKeyboardBackgroundImage(path)
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }
@@ -154,10 +162,39 @@ class MainActivity : FlutterActivity() {
         return contacts.map { (word, ruby) -> mapOf("word" to word, "ruby" to ruby) }
     }
 
+    private fun saveKeyboardBackgroundImage(themeId: String, bytes: ByteArray): String {
+        val directory = backgroundImageDirectory()
+        check(directory.exists() || directory.mkdirs()) {
+            "Could not create the theme background directory"
+        }
+        val safeId = themeId
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(80)
+            .ifBlank { "theme" }
+        val target = File(directory, "$safeId.image")
+        val temporary = File.createTempFile(".$safeId-", ".tmp", directory)
+        try {
+            temporary.writeBytes(bytes)
+            temporary.copyTo(target, overwrite = true)
+        } finally {
+            temporary.delete()
+        }
+        return target.absolutePath
+    }
+
+    private fun deleteKeyboardBackgroundImage(path: String) {
+        val directory = backgroundImageDirectory().canonicalFile
+        val target = File(path).canonicalFile
+        if (target.parentFile == directory) target.delete()
+    }
+
+    private fun backgroundImageDirectory() = File(filesDir, "theme_backgrounds")
+
     companion object {
         const val CHANNEL = "net.azookey/platform"
         const val PREFERENCES_NAME = "azookey_flutter"
         const val STATE_KEY = "azookey_flutter_state"
         private const val CONTACTS_PERMISSION_REQUEST = 4101
+        private const val MAX_BACKGROUND_IMAGE_BYTES = 8 * 1024 * 1024
     }
 }

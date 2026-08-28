@@ -34,6 +34,22 @@ void main() {
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
 
+  test('orders matching user words by conversion importance', () {
+    final data = AppData.defaults();
+    data.userDictionary.addAll(const [
+      UserDictionaryEntry(id: 20, ruby: 'きーなこ', word: '低い候補', importance: 1),
+      UserDictionaryEntry(id: 21, ruby: 'きーなこ', word: '高い候補', importance: 5),
+    ]);
+
+    final values = converter.candidates(input: 'きーなこ', data: data);
+
+    expect(values.first.text, '高い候補');
+    expect(
+      values.indexWhere((value) => value.text == '高い候補'),
+      lessThan(values.indexWhere((value) => value.text == '低い候補')),
+    );
+  });
+
   test('renders date templates locally', () {
     final data = AppData.defaults();
     data.userDictionary.add(

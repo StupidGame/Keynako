@@ -13,7 +13,7 @@ The Flutter application and keyboard behavior are a clean migration and adaptati
 ## AzooKeyKanaKanjiConverter
 
 - Source: https://github.com/azooKey/AzooKeyKanaKanjiConverter
-- Pinned revision: `8e3a6eb89e088efd868aa28dadb74c697df4e6fb`
+- Pinned revision: `93766c46e31fa6a18b7ced49dab31337780f6f45`
 - Copyright (c) 2023 Miwa / Ensan
 - License: MIT (see `third_party/licenses/AzooKeyKanaKanjiConverter-MIT.txt`)
 

@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/app_controller.dart';
 import '../../models/app_data.dart';
@@ -100,10 +102,21 @@ class _ThemeCard extends StatelessWidget {
                   case 'share':
                     await controller.platform.shareText(
                       subject: 'Keynako theme: ${theme.name}',
-                      text: jsonEncode({'azooKeyTheme': theme.toJson()}),
+                      text: jsonEncode({
+                        'azooKeyTheme': theme
+                            .copyWith(clearBackgroundImage: true)
+                            .toJson(),
+                      }),
                     );
                   case 'delete':
+                    final backgroundImage = theme.backgroundImage;
                     controller.removeTheme(theme.id);
+                    await controller.flush();
+                    if (backgroundImage != null) {
+                      await controller.platform.deleteKeyboardBackgroundImage(
+                        backgroundImage,
+                      );
+                    }
                 }
               },
               itemBuilder: (_) => [
@@ -135,11 +148,17 @@ class ThemeEditorPage extends StatefulWidget {
 
 class _ThemeEditorPageState extends State<ThemeEditorPage> {
   late final TextEditingController _name;
+  late final String _id;
   late int _background;
   late int _key;
   late int _special;
   late int _text;
   late int _accent;
+  late double _keyOpacity;
+  String? _backgroundImage;
+  Uint8List? _pickedBackgroundImage;
+  var _removeBackgroundImage = false;
+  var _saving = false;
 
   static const _colors = [
     0xffffffff,
@@ -166,6 +185,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
   void initState() {
     super.initState();
     final source = widget.theme ?? AppData.defaults().themes.first;
+    _id = widget.theme?.id ?? 'theme-${DateTime.now().millisecondsSinceEpoch}';
     _name = TextEditingController(
       text: widget.theme == null ? '新しい着せ替え' : source.name,
     );
@@ -174,16 +194,20 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
     _special = source.specialKeyColor;
     _text = source.textColor;
     _accent = source.accentColor;
+    _backgroundImage = source.backgroundImage;
+    _keyOpacity = source.keyOpacity;
   }
 
   KeyboardThemeConfig get _value => KeyboardThemeConfig(
-    id: widget.theme?.id ?? 'theme-${DateTime.now().millisecondsSinceEpoch}',
+    id: _id,
     name: _name.text.trim().isEmpty ? '名称未設定' : _name.text.trim(),
     backgroundColor: _background,
     keyColor: _key,
     specialKeyColor: _special,
     textColor: _text,
     accentColor: _accent,
+    backgroundImage: _removeBackgroundImage ? null : _backgroundImage,
+    keyOpacity: _keyOpacity,
   );
 
   @override
@@ -193,18 +217,24 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
         title: Text(widget.theme == null ? '着せ替えを作成' : '着せ替えを編集'),
         actions: [
           TextButton(
-            onPressed: () {
-              AppControllerScope.of(context).replaceTheme(_value);
-              Navigator.of(context).pop();
-            },
-            child: const Text('保存'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存'),
           ),
         ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          KeyboardPreview(theme: _value, compact: false),
+          KeyboardPreview(
+            theme: _value,
+            compact: false,
+            backgroundImageBytes: _pickedBackgroundImage,
+          ),
           const SizedBox(height: 20),
           TextField(
             controller: _name,
@@ -218,6 +248,61 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
             colors: _colors,
             onChanged: (value) => setState(() => _background = value),
           ),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('背景画像', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  const Text('端末内の画像を最大2048pxに調整して使用します。画像自体はテーマ共有に含まれません。'),
+                  const SizedBox(height: 10),
+                  FilledButton.tonalIcon(
+                    onPressed: _pickBackgroundImage,
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: Text(
+                      _pickedBackgroundImage != null ||
+                              (_backgroundImage != null &&
+                                  !_removeBackgroundImage)
+                          ? '別の画像を選ぶ'
+                          : '画像を選ぶ',
+                    ),
+                  ),
+                  if (_pickedBackgroundImage != null ||
+                      (_backgroundImage != null && !_removeBackgroundImage))
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SizedBox(height: 10),
+                        Text(
+                          'キー背景の透過度 '
+                          '${((1 - _keyOpacity) * 100).round()}%',
+                        ),
+                        Slider(
+                          value: 1 - _keyOpacity,
+                          min: 0,
+                          max: 0.85,
+                          divisions: 17,
+                          label: '${((1 - _keyOpacity) * 100).round()}%',
+                          onChanged: (value) =>
+                              setState(() => _keyOpacity = 1 - value),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => setState(() {
+                            _pickedBackgroundImage = null;
+                            _removeBackgroundImage = true;
+                          }),
+                          icon: const Icon(Icons.hide_image_outlined),
+                          label: const Text('背景画像を外す'),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           _ColorSetting(
             title: '通常キー',
             value: _key,
@@ -245,6 +330,72 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _pickBackgroundImage() async {
+    try {
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 85,
+        requestFullMetadata: false,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      if (bytes.length > 8 * 1024 * 1024) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('画像を8MB以下にしてください。')));
+        return;
+      }
+      setState(() {
+        if (_backgroundImage == null && _pickedBackgroundImage == null) {
+          _keyOpacity = 0.72;
+        }
+        _pickedBackgroundImage = bytes;
+        _removeBackgroundImage = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('画像を読み込めませんでした。')));
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final controller = AppControllerScope.of(context);
+    var backgroundImage = _removeBackgroundImage ? null : _backgroundImage;
+    final bytes = _pickedBackgroundImage;
+    if (bytes != null) {
+      backgroundImage = await controller.platform.saveKeyboardBackgroundImage(
+        themeId: _id,
+        bytes: bytes,
+      );
+      if (!mounted) return;
+      if (backgroundImage == null) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('背景画像を保存できませんでした。')));
+        return;
+      }
+    }
+
+    final oldBackgroundImage = widget.theme?.backgroundImage;
+    controller.replaceTheme(
+      _value.copyWith(
+        backgroundImage: backgroundImage,
+        clearBackgroundImage: backgroundImage == null,
+      ),
+    );
+    await controller.flush();
+    if (oldBackgroundImage != null && oldBackgroundImage != backgroundImage) {
+      await controller.platform.deleteKeyboardBackgroundImage(
+        oldBackgroundImage,
+      );
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override

@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import '../input/keynako_dictionary_submission.dart';
+
 class KeyboardStatus {
   const KeyboardStatus({
     required this.enabled,
@@ -30,10 +32,15 @@ abstract interface class StateStorage {
 }
 
 class PlatformService implements StateStorage {
-  PlatformService({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('net.azookey/platform');
+  PlatformService({
+    MethodChannel? channel,
+    KeynakoDictionarySubmitter? dictionarySubmitter,
+  }) : _channel = channel ?? const MethodChannel('net.azookey/platform'),
+       _dictionarySubmitter =
+           dictionarySubmitter ?? KeynakoDictionarySubmissionClient();
 
   final MethodChannel _channel;
+  final KeynakoDictionarySubmitter _dictionarySubmitter;
   String? _fallbackState;
 
   @override
@@ -121,21 +128,48 @@ class PlatformService implements StateStorage {
   Future<bool> submitSharedWord({
     required String word,
     required String ruby,
+    required int importance,
     required List<String> categories,
     String? note,
   }) async {
     try {
-      return await _channel.invokeMethod<bool>('submitSharedWord', {
-            'word': word,
-            'ruby': ruby,
-            'categories': categories,
-            'note': note,
-          }) ??
-          false;
+      return await _dictionarySubmitter.submit(
+        word: word,
+        ruby: ruby,
+        importance: importance,
+        categories: categories,
+        note: note,
+      );
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<String?> saveKeyboardBackgroundImage({
+    required String themeId,
+    required Uint8List bytes,
+  }) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'saveKeyboardBackgroundImage',
+        {'themeId': themeId, 'bytes': bytes},
+      );
     } on MissingPluginException {
-      return false;
+      return null;
     } on PlatformException {
-      return false;
+      return null;
+    }
+  }
+
+  Future<void> deleteKeyboardBackgroundImage(String path) async {
+    try {
+      await _channel.invokeMethod<void>('deleteKeyboardBackgroundImage', {
+        'path': path,
+      });
+    } on MissingPluginException {
+      return;
+    } on PlatformException {
+      return;
     }
   }
 }

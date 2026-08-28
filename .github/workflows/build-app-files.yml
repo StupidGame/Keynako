@@ -44,6 +44,12 @@ jobs:
       - name: Install Flutter packages
         run: flutter pub get
 
+      - name: Validate Flutter and Android code
+        run: |
+          flutter analyze
+          flutter test
+          (cd android && ./gradlew :app:testDebugUnitTest)
+
       - name: Restore the stable CI signing key
         uses: actions/cache@v4
         with:
@@ -74,7 +80,8 @@ jobs:
           export KEYNAKO_STORE_PASSWORD="$signing_password"
           export KEYNAKO_KEY_ALIAS="keynako-ci"
           export KEYNAKO_KEY_PASSWORD="$signing_password"
-          flutter build apk --release --build-number="$GITHUB_RUN_NUMBER"
+          flutter build apk --release --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Verify the APK signature
         shell: bash
@@ -117,7 +124,9 @@ jobs:
         run: flutter pub get
 
       - name: Build the unsigned device app
-        run: flutter build ios --release --no-codesign --build-number="$GITHUB_RUN_NUMBER"
+        run: >-
+          flutter build ios --release --no-codesign --build-number="$GITHUB_RUN_NUMBER"
+          --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Package the unsigned IPA
         shell: bash
@@ -138,7 +147,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          flutter build ios --simulator --debug --build-number="$GITHUB_RUN_NUMBER"
+          flutter build ios --simulator --debug --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
           simulator_app="build/ios/iphonesimulator/Runner.app"
           test -d "$simulator_app"
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent \

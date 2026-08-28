@@ -15,6 +15,15 @@ internal data class DictionaryCandidates(
     val predictions: List<String>,
 )
 
+internal data class AzooKeyHotfixDictionaryEntry(
+    val word: String,
+    val ruby: String,
+    val wordWeight: Double,
+    val lcid: Int,
+    val rcid: Int,
+    val mid: Int,
+)
+
 /**
  * Android cannot link the Swift-only AzooKeyKanaKanjiConverter package. This
  * class reads the same LOUDS dictionary and applies the converter's word and
@@ -50,8 +59,13 @@ internal class AzooKeyDictionary(
     }
     private val shards = mutableMapOf<Char, LoudsShard?>()
     private val connectionLines = mutableMapOf<Int, ConnectionLine>()
-    private val conversionCache = object : LinkedHashMap<String, List<String>>(128, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>): Boolean =
+    private data class ConversionCacheKey(
+        val reading: String,
+        val additionalDictionaryVersion: String,
+    )
+
+    private val conversionCache = object : LinkedHashMap<ConversionCacheKey, List<String>>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, List<String>>): Boolean =
             size > 128
     }
 
@@ -60,21 +74,41 @@ internal class AzooKeyDictionary(
         reading: String,
         predictionLimit: Int,
         conversionLimit: Int = 48,
+        additionalEntries: List<AzooKeyHotfixDictionaryEntry> = emptyList(),
+        additionalDictionaryVersion: String = "",
     ): DictionaryCandidates {
         if (reading.isBlank()) return DictionaryCandidates(emptyList(), emptyList())
         val katakana = reading.toKatakana()
-        val conversions = conversionCache[katakana] ?: convert(katakana, conversionLimit).also {
-            conversionCache[katakana] = it
+        val dynamicEntries = additionalEntries.map {
+            Entry(
+                word = it.word,
+                ruby = it.ruby.toKatakana(),
+                lcid = it.lcid,
+                rcid = it.rcid,
+                score = it.wordWeight.toFloat(),
+            )
+        }
+        val cacheKey = ConversionCacheKey(katakana, additionalDictionaryVersion)
+        val conversions = conversionCache[cacheKey] ?: convert(
+            katakana,
+            conversionLimit,
+            dynamicEntries,
+        ).also {
+            conversionCache[cacheKey] = it
         }
         val predictions = if (predictionLimit > 0) {
-            predict(katakana, predictionLimit)
+            predict(katakana, predictionLimit, dynamicEntries)
         } else {
             emptyList()
         }
         return DictionaryCandidates(conversions, predictions)
     }
 
-    private fun convert(reading: String, limit: Int): List<String> {
+    private fun convert(
+        reading: String,
+        limit: Int,
+        additionalEntries: List<Entry>,
+    ): List<String> {
         val beams = Array(reading.length + 1) { mutableListOf<Path>() }
         beams[0].add(Path("", 0f, BOS_CID))
 
@@ -85,9 +119,21 @@ internal class AzooKeyDictionary(
             if (previous.isEmpty()) continue
 
             val shard = shard(reading[start])
-            val matches = shard?.matchingEntries(reading, start, MAX_WORD_LENGTH).orEmpty()
+            val matchesByEnd = linkedMapOf<Int, MutableList<Entry>>()
+            for ((end, entries) in shard?.matchingEntries(reading, start, MAX_WORD_LENGTH).orEmpty()) {
+                matchesByEnd.getOrPut(end) { mutableListOf() }.addAll(entries)
+            }
+            for (entry in additionalEntries) {
+                val end = start + entry.ruby.length
+                if (entry.ruby.isNotEmpty() &&
+                    end <= reading.length &&
+                    reading.regionMatches(start, entry.ruby, 0, entry.ruby.length)
+                ) {
+                    matchesByEnd.getOrPut(end) { mutableListOf() }.add(entry)
+                }
+            }
             var hasSingleCharacterEntry = false
-            for ((end, entries) in matches) {
+            for ((end, entries) in matchesByEnd) {
                 if (end == start + 1 && entries.isNotEmpty()) hasSingleCharacterEntry = true
                 appendPaths(
                     beams[end],
@@ -142,10 +188,16 @@ internal class AzooKeyDictionary(
         }
     }
 
-    private fun predict(reading: String, limit: Int): List<String> {
+    private fun predict(
+        reading: String,
+        limit: Int,
+        additionalEntries: List<Entry>,
+    ): List<String> {
         val entries = shard(reading.first())
             ?.predictionEntries(reading, MAX_PREDICTION_DEPTH, MAX_PREDICTION_NODES)
-            .orEmpty()
+            .orEmpty() + additionalEntries.filter {
+            it.ruby.length > reading.length && it.ruby.startsWith(reading)
+        }
         return entries
             .asSequence()
             .filter { it.ruby.length > reading.length }

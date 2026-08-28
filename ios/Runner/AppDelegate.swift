@@ -59,21 +59,30 @@ import UIKit
       result(nil)
     case "importContacts":
       importContacts(result: result)
-    case "submitSharedWord":
+    case "saveKeyboardBackgroundImage":
       let arguments = call.arguments as? [String: Any]
-      let word = arguments?["word"] as? String ?? ""
-      guard !word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        result(FlutterError(code: "invalid_word", message: "word must not be empty", details: nil))
+      guard let themeId = arguments?["themeId"] as? String,
+            !themeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let typedData = arguments?["bytes"] as? FlutterStandardTypedData,
+            !typedData.data.isEmpty else {
+        result(FlutterError(code: "invalid_image", message: "themeId and image bytes are required", details: nil))
         return
       }
-      submitSharedWord(
-        word: word,
-        ruby: arguments?["ruby"] as? String ?? "",
-        note: arguments?["note"] as? String,
-        categories: arguments?["categories"] as? [String] ?? []
-      ) { success in
-        DispatchQueue.main.async { result(success) }
+      guard typedData.data.count <= 8 * 1024 * 1024 else {
+        result(FlutterError(code: "image_too_large", message: "background image exceeds 8 MB", details: nil))
+        return
       }
+      do {
+        result(try saveKeyboardBackgroundImage(themeId: themeId, data: typedData.data))
+      } catch {
+        result(FlutterError(code: "image_save_failed", message: error.localizedDescription, details: nil))
+      }
+    case "deleteKeyboardBackgroundImage":
+      let arguments = call.arguments as? [String: Any]
+      if let path = arguments?["path"] as? String {
+        try? deleteKeyboardBackgroundImage(path: path)
+      }
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -90,6 +99,38 @@ import UIKit
       popover.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.midY, width: 1, height: 1)
     }
     root.present(activity, animated: true)
+  }
+
+  private func saveKeyboardBackgroundImage(themeId: String, data: Data) throws -> String {
+    let directory = try backgroundImageDirectory()
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    let safeId = String(themeId.unicodeScalars.map { scalar in
+      allowed.contains(scalar) ? Character(String(scalar)) : "_"
+    }.prefix(80))
+    let target = directory.appendingPathComponent("\(safeId.isEmpty ? "theme" : safeId).image")
+    try data.write(to: target, options: .atomic)
+    return target.path
+  }
+
+  private func deleteKeyboardBackgroundImage(path: String) throws {
+    let directory = try backgroundImageDirectory().resolvingSymlinksInPath()
+    let target = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    guard target.deletingLastPathComponent() == directory else { return }
+    try? FileManager.default.removeItem(at: target)
+  }
+
+  private func backgroundImageDirectory() throws -> URL {
+    guard let container = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
+    ) else {
+      throw CocoaError(.fileNoSuchFile)
+    }
+    let directory = container.appendingPathComponent("ThemeBackgrounds", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    return directory
   }
 
   private func importContacts(result: @escaping FlutterResult) {
@@ -130,38 +171,4 @@ import UIKit
     }
   }
 
-  private func submitSharedWord(
-    word: String,
-    ruby: String,
-    note: String?,
-    categories: [String],
-    completion: @escaping (Bool) -> Void
-  ) {
-    let endpoint = URL(
-      string: "https://docs.google.com/forms/d/e/1FAIpQLSceGtIHH8P-KbrB2ownprap3cUVVJegbhGekfz1xCiwPxBNfg/formResponse"
-    )!
-    let noteText = (note ?? "備考記入なし")
-      + "\nアプリ内フォームから送信\nKeynako 3.0.1"
-    var components = URLComponents()
-    components.queryItems = [
-      URLQueryItem(name: "entry.1129894332", value: "3"),
-      URLQueryItem(name: "entry.813756984", value: word),
-      URLQueryItem(name: "entry.688013311", value: ruby.isEmpty ? "読み記入なし" : ruby),
-      URLQueryItem(name: "entry.1136445695", value: noteText),
-      URLQueryItem(name: "entry.2110887544", value: "__other_option__"),
-      URLQueryItem(
-        name: "entry.2110887544.other_option_response",
-        value: categories.isEmpty ? "品詞記入無し" : categories.joined(separator: "、")
-      ),
-    ]
-    var request = URLRequest(url: endpoint)
-    request.httpMethod = "POST"
-    request.setValue("no-cors", forHTTPHeaderField: "mode")
-    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-    request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-    URLSession.shared.dataTask(with: request) { _, response, error in
-      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-      completion(error == nil && (200..<400).contains(status))
-    }.resume()
-  }
 }

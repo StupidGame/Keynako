@@ -1,6 +1,8 @@
 import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
+import 'package:azookey_flutter/input/azookey_hotfix_sync.dart';
 import 'package:azookey_flutter/models/app_data.dart';
+import 'package:azookey_flutter/models/azookey_hotfix_dictionary.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _MemoryStorage implements StateStorage {
@@ -14,6 +16,43 @@ class _MemoryStorage implements StateStorage {
     value = state;
   }
 }
+
+class _HotfixSynchronizer implements AzooKeyHotfixSynchronizer {
+  _HotfixSynchronizer(this.result);
+
+  final AzooKeyHotfixSyncResult result;
+  var calls = 0;
+  String? receivedCachedTag;
+
+  @override
+  Future<AzooKeyHotfixSyncResult> checkAndUpdate({String? cachedTag}) async {
+    calls += 1;
+    receivedCachedTag = cachedTag;
+    return result;
+  }
+}
+
+const _hotfixDictionary = AzooKeyHotfixDictionary(
+  metadata: AzooKeyHotfixMetadata(
+    status: 'active',
+    name: 'data_v1.json',
+    description: 'test',
+    version: '1.0',
+    lastUpdate: '2025-05-04T16:30:00.00',
+  ),
+  entries: [
+    AzooKeyHotfixEntry(
+      word: 'azooKey',
+      ruby: 'あずーきー',
+      wordWeight: -15,
+      lcid: 1288,
+      rcid: 1288,
+      mid: 501,
+      date: '2025-05-04',
+      author: '@ensan-hcl',
+    ),
+  ],
+);
 
 void main() {
   test('resolves azooKey share URLs to the Custard API', () {
@@ -87,6 +126,60 @@ void main() {
     expect(controller.data.custards.single.displayName, '数字');
     expect(controller.data.tabBar, contains('custom:numbers'));
     expect(controller.data.customTabs, isEmpty);
+    controller.dispose();
+  });
+
+  test('syncs and persists the Keynako hotfix dictionary', () async {
+    final storage = _MemoryStorage();
+    final synchronizer = _HotfixSynchronizer(
+      const AzooKeyHotfixSyncResult(
+        latestTag: 'v2',
+        dictionaryChanged: true,
+        dictionary: _hotfixDictionary,
+      ),
+    );
+    final now = DateTime.utc(2026, 8, 27, 12);
+    final controller = AppController(
+      storage: storage,
+      azooKeyHotfixSynchronizer: synchronizer,
+      now: () => now,
+    );
+    controller.data.azooKeyHotfixLatestTag = 'v1';
+
+    final updated = await controller.syncAzooKeyHotfixDictionary(force: true);
+
+    expect(updated, isTrue);
+    expect(synchronizer.receivedCachedTag, 'v1');
+    expect(controller.data.azooKeyHotfixLatestTag, 'v2');
+    expect(
+      controller.data.azooKeyHotfixDictionary?.entries.single.word,
+      'azooKey',
+    );
+    expect(controller.data.azooKeyHotfixLastCheckDate, now);
+    final persisted = AppData.decode(storage.value!);
+    expect(persisted.azooKeyHotfixLatestTag, 'v2');
+    expect(persisted.azooKeyHotfixDictionary?.entries, hasLength(1));
+    controller.dispose();
+  });
+
+  test('skips automatic hotfix checks made within five minutes', () async {
+    final now = DateTime.utc(2026, 8, 27, 12);
+    final synchronizer = _HotfixSynchronizer(
+      const AzooKeyHotfixSyncResult(latestTag: 'v1', dictionaryChanged: false),
+    );
+    final controller = AppController(
+      storage: _MemoryStorage(),
+      azooKeyHotfixSynchronizer: synchronizer,
+      now: () => now,
+    );
+    controller.data.azooKeyHotfixLastCheckDate = now.subtract(
+      const Duration(minutes: 4),
+    );
+
+    final updated = await controller.syncAzooKeyHotfixDictionary();
+
+    expect(updated, isFalse);
+    expect(synchronizer.calls, 0);
     controller.dispose();
   });
 }

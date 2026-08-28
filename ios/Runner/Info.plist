@@ -40,6 +40,8 @@
 	<true/>
 	<key>NSContactsUsageDescription</key>
 	<string>連絡先の氏名をかな漢字変換の候補として利用します。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>選んだ画像をキーボードの背景として使用します。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

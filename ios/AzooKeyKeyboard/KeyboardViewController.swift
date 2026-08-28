@@ -2,6 +2,7 @@ import UIKit
 import AzooKeyConverterBridge
 
 final class KeyboardViewController: UIInputViewController {
+    private let backgroundImageView = UIImageView()
     private let rootStack = UIStackView()
     private let candidateScroll = UIScrollView()
     private let candidateStack = UIStackView()
@@ -24,6 +25,7 @@ final class KeyboardViewController: UIInputViewController {
     private weak var cursorBarView: CursorBarView?
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
+    private var backgroundImageSignature: String?
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
@@ -60,11 +62,22 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func configureView() {
+        backgroundImageView.contentMode = .scaleAspectFill
+        backgroundImageView.clipsToBounds = true
+        backgroundImageView.alpha = 0.85
+        backgroundImageView.isUserInteractionEnabled = false
+        backgroundImageView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backgroundImageView)
+
         rootStack.axis = .vertical
         rootStack.spacing = 0
         rootStack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(rootStack)
         NSLayoutConstraint.activate([
+            backgroundImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backgroundImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backgroundImageView.topAnchor.constraint(equalTo: view.topAnchor),
+            backgroundImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             rootStack.topAnchor.constraint(equalTo: view.topAnchor),
@@ -106,10 +119,12 @@ final class KeyboardViewController: UIInputViewController {
             state = [:]
             settings = [:]
             palette = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            applyKeyboardBackground()
             return
         }
         state = object
         settings = object["settings"] as? [String: Any] ?? [:]
+        reloadAzooKeyHotfixDictionary()
         if settings["memory_reset_setting"] != nil,
            settings["memory_reset_setting"] as? Bool != false {
             conversionEngine?.resetLearning()
@@ -118,10 +133,47 @@ final class KeyboardViewController: UIInputViewController {
             saveState()
         }
         palette = loadPalette()
-        view.backgroundColor = palette.background
-        keyboardStack.backgroundColor = palette.background
+        applyKeyboardBackground()
         let scale = doubleSetting("keyboard_height_scale", fallback: 1).clamped(to: 0.7 ... 1.4)
         heightConstraint?.constant = 42 + 216 * scale
+    }
+
+    private func reloadAzooKeyHotfixDictionary() {
+        let storageKey = "keynako_hotfix_dictionary_storage"
+        let tagKey = "keynako_hotfix_dictionary_storage_latest_sha"
+        let tag = state[tagKey] as? String
+            ?? state["azooKey_hotfix_dictionary_storage_latest_tag"] as? String
+            ?? "none"
+        let dictionary = state[storageKey] as? [String: Any]
+            ?? state["azooKey_hotfix_dictionary_storage"] as? [String: Any]
+        guard let dictionary,
+              let metadata = dictionary["metadata"] as? [String: Any],
+              metadata["status"] as? String == "active",
+              let values = dictionary["data"] as? [[String: Any]] else {
+            conversionEngine?.updateHotfixDictionary([], version: "\(tag)|disabled")
+            return
+        }
+        let entries = values.compactMap { value -> AzooKeyHotfixDictionaryEntry? in
+            guard let word = value["word"] as? String,
+                  let ruby = value["ruby"] as? String,
+                  let wordWeight = value["word_weight"] as? Double,
+                  let lcid = value["lcid"] as? Int,
+                  let rcid = value["rcid"] as? Int,
+                  let mid = value["mid"] as? Int else { return nil }
+            return AzooKeyHotfixDictionaryEntry(
+                word: word,
+                ruby: ruby,
+                wordWeight: wordWeight,
+                lcid: lcid,
+                rcid: rcid,
+                mid: mid
+            )
+        }
+        let lastUpdate = metadata["last_update"] as? String ?? "unknown"
+        conversionEngine?.updateHotfixDictionary(
+            entries,
+            version: "\(tag)|\(lastUpdate)|\(entries.count)"
+        )
     }
 
     private func loadPalette() -> KeyboardPalette {
@@ -132,13 +184,42 @@ final class KeyboardViewController: UIInputViewController {
               let theme = themes.first(where: { $0["id"] as? String == selected }) else {
             return dark ? .dark : .light
         }
+        let backgroundImage = theme["backgroundImage"] as? String
+        let keyOpacity: CGFloat = backgroundImage == nil
+            ? 1
+            : CGFloat(((theme["keyOpacity"] as? Double) ?? 0.72).clamped(to: 0.15 ... 1))
         return KeyboardPalette(
             background: color(theme["backgroundColor"], fallback: dark ? 0xff111827 : 0xffd1d5db),
-            key: color(theme["keyColor"], fallback: dark ? 0xff374151 : 0xffffffff),
-            special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd),
+            key: color(theme["keyColor"], fallback: dark ? 0xff374151 : 0xffffffff).withAlphaComponent(keyOpacity),
+            special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd).withAlphaComponent(keyOpacity),
             text: color(theme["textColor"], fallback: dark ? 0xfff9fafb : 0xff111827),
-            accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb)
+            accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb).withAlphaComponent(keyOpacity),
+            backgroundImage: backgroundImage
         )
+    }
+
+    private func applyKeyboardBackground() {
+        view.backgroundColor = palette.background
+        let path = palette.backgroundImage
+        var modificationDate: Date?
+        if let path,
+           let attributes = try? FileManager.default.attributesOfItem(atPath: path) {
+            modificationDate = attributes[.modificationDate] as? Date
+        }
+        let signature: String?
+        if let path, FileManager.default.fileExists(atPath: path) {
+            signature = "\(path):\(modificationDate?.timeIntervalSince1970 ?? 0)"
+        } else {
+            signature = nil
+        }
+        if signature != backgroundImageSignature {
+            backgroundImageView.image = path.flatMap { UIImage(contentsOfFile: $0) }
+            backgroundImageSignature = signature
+        }
+        let hasImage = signature != nil && backgroundImageView.image != nil
+        backgroundImageView.isHidden = !hasImage
+        rootStack.backgroundColor = hasImage ? .clear : palette.background
+        keyboardStack.backgroundColor = hasImage ? .clear : palette.background
     }
 
     private func renderKeyboard() {
@@ -345,7 +426,10 @@ final class KeyboardViewController: UIInputViewController {
             key: key,
             keyStyle: keyStyle,
             variationsEnabled: variationsEnabled,
-            sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
+            sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1)),
+            makeCenterLongPressRollback: { [weak self] start, repeated in
+                self?.makeCustardInputRollback(startActions: start, repeatActions: repeated)
+            }
         ) { [weak self] actions in
             self?.dispatch(actions)
             self?.feedback()
@@ -745,6 +829,14 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private func deleteForward() {
+        guard composing.isEmpty, rawRoman.isEmpty,
+              !(textDocumentProxy.documentContextAfterInput ?? "").isEmpty else { return }
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: 1)
+        textDocumentProxy.deleteBackward()
+        refreshCursorBar()
+    }
+
     private func space() {
         if composing.isEmpty, rawRoman.isEmpty {
             textDocumentProxy.insertText(" ")
@@ -835,7 +927,12 @@ final class KeyboardViewController: UIInputViewController {
         case "direct_input": directCommit(action["text"] as? String ?? "")
         case "delete":
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
-            for _ in 0 ..< count.clamped(to: 1 ... 100) { delete() }
+            let boundedCount = min(100, max(-100, count))
+            if boundedCount > 0 {
+                for _ in 0 ..< boundedCount { delete() }
+            } else if boundedCount < 0 {
+                for _ in 0 ..< -boundedCount { deleteForward() }
+            }
         case "enter": enter()
         case "space": space()
         case "moveCursor":
@@ -883,6 +980,39 @@ final class KeyboardViewController: UIInputViewController {
     private func activeCustard() -> [String: Any]? {
         guard let id = activeCustomTab else { return nil }
         return (state["custards"] as? [[String: Any]])?.first { $0["identifier"] as? String == id }
+    }
+
+    private func makeCustardInputRollback(
+        startActions: [[String: Any]],
+        repeatActions: [[String: Any]]
+    ) -> (() -> Void)? {
+        guard activeCustard()?["language"] as? String == "ja_JP" else { return nil }
+        let actions = startActions + repeatActions
+        guard !actions.isEmpty, actions.allSatisfy({ action in
+            guard (action["type"] as? String ?? "input") == "input",
+                  let text = action["text"] as? String,
+                  !text.isEmpty else { return false }
+            return !text.unicodeScalars.allSatisfy(CharacterSet.decimalDigits.contains)
+        }) else { return nil }
+
+        let savedComposing = composing
+        let savedRawRoman = rawRoman
+        let savedMode = mode
+        let savedLayout = layout
+        return { [weak self] in
+            guard let self else { return }
+            self.composing = savedComposing
+            self.rawRoman = savedRawRoman
+            self.mode = savedMode
+            self.layout = savedLayout
+            if savedComposing.isEmpty, savedRawRoman.isEmpty {
+                self.replaceDisplayed(with: "", commit: true)
+                self.candidates = []
+                self.renderCandidates()
+            } else {
+                self.updateComposition()
+            }
+        }
     }
 
     private func custardInput(_ value: String) {
@@ -955,13 +1085,40 @@ final class KeyboardViewController: UIInputViewController {
 
     private func smartDelete(_ action: [String: Any]) {
         let targets = actionTargets(action)
-        if action["direction"] as? String == "backward" {
+        let backward = action["direction"] as? String == "backward"
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            if backward, rawRoman.isEmpty {
+                let boundaries = targets.compactMap { target -> String.Index? in
+                    composing.range(of: target, options: .backwards)?.upperBound
+                }
+                let boundary = boundaries.max() ?? composing.startIndex
+                let distance = composing.distance(from: boundary, to: composing.endIndex)
+                let count = distance == 0 && !composing.isEmpty ? 1 : distance
+                if count > 0 { composing.removeLast(min(count, composing.count)) }
+                if composing.isEmpty {
+                    replaceDisplayed(with: "", commit: true)
+                    resetComposition()
+                    renderCandidates()
+                } else {
+                    updateComposition()
+                }
+            } else if backward {
+                smartDeleteDefault()
+            }
+            return
+        }
+        if backward {
             let text = textDocumentProxy.documentContextBeforeInput ?? ""
             let boundaries = targets.compactMap { target -> String.Index? in
                 text.range(of: target, options: .backwards)?.upperBound
             }
             let boundary = boundaries.max() ?? text.startIndex
-            for _ in text[boundary...] { textDocumentProxy.deleteBackward() }
+            let count = text.distance(from: boundary, to: text.endIndex)
+            if count == 0, !text.isEmpty {
+                textDocumentProxy.deleteBackward()
+            } else {
+                for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+            }
             refreshCursorBar()
         } else {
             let text = textDocumentProxy.documentContextAfterInput ?? ""
@@ -969,7 +1126,8 @@ final class KeyboardViewController: UIInputViewController {
                 guard let range = text.range(of: target) else { return nil }
                 return text.distance(from: text.startIndex, to: range.lowerBound)
             }
-            let count = distances.min() ?? text.count
+            let distance = distances.min() ?? text.count
+            let count = distance == 0 && !text.isEmpty ? 1 : distance
             textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
             for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
             refreshCursorBar()
@@ -1073,7 +1231,10 @@ final class KeyboardViewController: UIInputViewController {
         guard !composing.isEmpty else { return [] }
         var result: [String] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
-            for entry in dictionary where entry["ruby"] as? String == composing {
+            let ranked = dictionary.sorted {
+                ($0["importance"] as? Int ?? 3) > ($1["importance"] as? Int ?? 3)
+            }
+            for entry in ranked where entry["ruby"] as? String == composing {
                 if entry["isTemplateMode"] as? Bool == true {
                     result.append(renderTemplate(entry["formatLiteral"] as? String ?? ""))
                 } else if let word = entry["word"] as? String {
@@ -2146,6 +2307,7 @@ private final class CustardButton: DirectionalKeyButton {
     private let keyStyle: String
     private let variationsEnabled: Bool
     private let sensitivity: CGFloat
+    private let makeCenterLongPressRollback: ([[String: Any]], [[String: Any]]) -> (() -> Void)?
     private let callback: ([[String: Any]]) -> Void
     private var start = CGPoint.zero
     private var current = CGPoint.zero
@@ -2156,6 +2318,7 @@ private final class CustardButton: DirectionalKeyButton {
     private var longPressFlicked = false
     private var variationDidLongPress = false
     private var longPressDirection: String?
+    private var centerLongPressRollback: (() -> Void)?
 
     init(
         title: String,
@@ -2164,12 +2327,14 @@ private final class CustardButton: DirectionalKeyButton {
         keyStyle: String,
         variationsEnabled: Bool,
         sensitivity: CGFloat,
+        makeCenterLongPressRollback: @escaping ([[String: Any]], [[String: Any]]) -> (() -> Void)?,
         callback: @escaping ([[String: Any]]) -> Void
     ) {
         self.key = key
         self.keyStyle = keyStyle
         self.variationsEnabled = variationsEnabled
         self.sensitivity = sensitivity
+        self.makeCenterLongPressRollback = makeCenterLongPressRollback
         self.callback = callback
         super.init(title: title, directionTitles: directionTitles)
     }
@@ -2185,6 +2350,7 @@ private final class CustardButton: DirectionalKeyButton {
         longPressFlicked = false
         variationDidLongPress = false
         longPressDirection = nil
+        centerLongPressRollback = nil
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let startActions = longPress["start"] as? [[String: Any]] ?? []
         let repeated = longPress["repeat"] as? [[String: Any]] ?? []
@@ -2204,8 +2370,13 @@ private final class CustardButton: DirectionalKeyButton {
             let selectedStart = selectedLongPress["start"] as? [[String: Any]] ?? []
             let selectedRepeat = selectedLongPress["repeat"] as? [[String: Any]] ?? []
             guard !selectedStart.isEmpty || !selectedRepeat.isEmpty || handlesPCVariation else { return }
+            if self.longPressDirection == nil {
+                self.centerLongPressRollback = self.makeCenterLongPressRollback(selectedStart, selectedRepeat)
+            } else {
+                self.centerLongPressRollback = nil
+            }
             self.didLongPress = true
-            self.variationDidLongPress = self.current.x != self.start.x || self.current.y != self.start.y
+            self.variationDidLongPress = self.longPressDirection != nil
             self.repeatedLongPress = !selectedRepeat.isEmpty
             self.callback(selectedStart)
             if !selectedRepeat.isEmpty {
@@ -2226,10 +2397,18 @@ private final class CustardButton: DirectionalKeyButton {
         if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
             let direction: String = abs(dx) > abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "top" : "bottom")
             if direction != longPressDirection, variationsEnabled, keyStyle != "pc_style" {
+                if didLongPress, !variationDidLongPress, centerLongPressRollback == nil {
+                    // A non-input center action cannot be reversed safely. Keep
+                    // that result instead of firing a second variation action.
+                    super.touchesMoved(touches, with: event)
+                    return
+                }
                 // Keep the selected variation's timer alive while the finger
                 // jitters within the same flick direction.
                 longPressWorkItem?.cancel()
                 if didLongPress {
+                    centerLongPressRollback?()
+                    centerLongPressRollback = nil
                     longPressFlicked = true
                     didLongPress = false
                     variationDidLongPress = false
@@ -2277,6 +2456,7 @@ private final class CustardButton: DirectionalKeyButton {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
+        centerLongPressRollback = nil
         let end = touches.first?.location(in: self) ?? start
         current = end
         if didLongPress && !longPressFlicked {
@@ -2301,6 +2481,7 @@ private final class CustardButton: DirectionalKeyButton {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
+        centerLongPressRollback = nil
         super.touchesCancelled(touches, with: event)
     }
 
@@ -2334,9 +2515,10 @@ private struct KeyboardPalette {
     let special: UIColor
     let text: UIColor
     let accent: UIColor
+    let backgroundImage: String?
 
-    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb))
-    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa))
+    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb), backgroundImage: nil)
+    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa), backgroundImage: nil)
 }
 
 private extension UIColor {
