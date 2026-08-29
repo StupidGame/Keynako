@@ -51,6 +51,7 @@ import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidat
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
+import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionValues
 import io.github.StupidGame.azookey_flutter.conversion.prioritizePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
@@ -2012,7 +2013,16 @@ class AzooKeyInputMethodService : InputMethodService() {
             maxTokens = maxTokens,
         ) { ranked ->
             if (displayReading() != reading || ranked.isEmpty()) return@rank
-            candidates = ranked.toMutableList()
+            val liveCandidate = if (settings.optBoolean("live_conversion", true)) {
+                ranked.firstOrNull()
+            } else {
+                null
+            }
+            candidates = pinJapaneseKanaCandidates(
+                reading = reading,
+                ranked = ranked,
+                liveCandidate = liveCandidate,
+            ).toMutableList()
             selectedCandidate = 0
             if (settings.optBoolean("live_conversion", true)) {
                 currentInputConnection?.setComposingText(candidates.first(), 1)
@@ -2098,11 +2108,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
         val learningMode = settings.optInt("memory_learining_styple_setting", 0)
         val scores = state.optJSONObject("learning") ?: JSONObject()
-        return values.filter { it.isNotEmpty() }.withIndex().sortedWith(
+        val ranked = values.filter { it.isNotEmpty() }.withIndex().sortedWith(
             compareByDescending<IndexedValue<String>> {
                 if (learningMode == 2) 0 else scores.optInt("$reading\t${it.value}", 0)
             }.thenBy { it.index },
         ).map { it.value }
+        return pinJapaneseKanaCandidates(
+            reading = reading,
+            ranked = ranked,
+            liveCandidate = if (settings.optBoolean("live_conversion", true)) ranked.firstOrNull() else null,
+        )
     }
 
     private fun buildEnglishCandidates(input: String): List<String> {

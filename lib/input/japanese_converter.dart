@@ -345,6 +345,15 @@ class JapaneseConverter {
     );
   }
 
+  String katakanaToHiragana(String value) {
+    return String.fromCharCodes(
+      value.runes.map((code) {
+        if (code >= 0x30a1 && code <= 0x30f6) return code - 0x60;
+        return code;
+      }),
+    );
+  }
+
   String katakanaToHalfWidth(String value) {
     final output = StringBuffer();
     for (final rune in value.runes) {
@@ -475,7 +484,38 @@ class JapaneseConverter {
     }
     final result = unique.values.toList()
       ..sort((left, right) => right.score.compareTo(left.score));
-    return result;
+    final hiragana = katakanaToHiragana(reading);
+    final fullKatakana = hiraganaToKatakana(hiragana);
+    final liveCandidate =
+        data.settings['live_conversion'] == true && result.isNotEmpty
+        ? result.first
+        : null;
+    final pinned = <ConversionCandidate>[
+      if (liveCandidate != null &&
+          liveCandidate.text != hiragana &&
+          liveCandidate.text != fullKatakana)
+        liveCandidate,
+      unique[hiragana] ??
+          ConversionCandidate(
+            text: hiragana,
+            reading: reading,
+            source: 'hiragana',
+            score: 100,
+          ),
+      if (fullKatakana != hiragana)
+        unique[fullKatakana] ??
+            ConversionCandidate(
+              text: fullKatakana,
+              reading: reading,
+              source: 'katakana',
+              score: 80,
+            ),
+    ];
+    final pinnedTexts = pinned.map((candidate) => candidate.text).toSet();
+    return [
+      ...pinned,
+      ...result.where((candidate) => !pinnedTexts.contains(candidate.text)),
+    ];
   }
 
   String _renderTemplate(UserDictionaryEntry entry) {

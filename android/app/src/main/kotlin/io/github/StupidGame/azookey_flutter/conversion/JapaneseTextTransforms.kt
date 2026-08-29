@@ -115,6 +115,23 @@ internal fun katakanaToHiragana(value: String): String = buildString {
     }
 }
 
+internal fun pinJapaneseKanaCandidates(
+    reading: String,
+    ranked: Iterable<String>,
+    liveCandidate: String? = null,
+): List<String> {
+    val hiragana = katakanaToHiragana(reading)
+    val katakana = hiraganaToKatakana(hiragana)
+    return linkedSetOf<String>().apply {
+        if (!liveCandidate.isNullOrEmpty() && liveCandidate != hiragana && liveCandidate != katakana) {
+            add(liveCandidate)
+        }
+        if (hiragana.isNotEmpty()) add(hiragana)
+        if (katakana.isNotEmpty()) add(katakana)
+        addAll(ranked.filter { it.isNotEmpty() })
+    }.toList()
+}
+
 internal val defaultScanTargets = listOf("、", "。", "！", "？", ".", ",", "．", "，", "\n")
 
 private val halfWidthKanaMap: Map<Char, String> = run {

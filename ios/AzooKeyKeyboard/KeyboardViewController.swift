@@ -1387,8 +1387,19 @@ final class KeyboardViewController: UIInputViewController {
         if layout == "qwerty", boolSetting("roman_english_candidate", fallback: true), !rawRoman.isEmpty {
             result.append(rawRoman)
         }
+        let hiragana = katakanaToHiragana(composing)
+        let fullKatakana = hiraganaToKatakana(hiragana)
+        let liveCandidate = boolSetting("live_conversion", fallback: true) ? result.first : nil
+        var prioritized: [String] = []
+        if let liveCandidate,
+           liveCandidate != hiragana,
+           liveCandidate != fullKatakana {
+            prioritized.append(liveCandidate)
+        }
+        prioritized.append(contentsOf: [hiragana, fullKatakana])
+        prioritized.append(contentsOf: result)
         var seen = Set<String>()
-        return result.filter { !$0.isEmpty && seen.insert($0).inserted }
+        return prioritized.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     private func buildEnglishCandidates(_ input: String) -> [String] {

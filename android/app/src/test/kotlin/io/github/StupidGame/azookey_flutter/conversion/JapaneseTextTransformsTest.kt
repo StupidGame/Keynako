@@ -1,10 +1,57 @@
 package io.github.StupidGame.azookey_flutter.conversion
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class JapaneseTextTransformsTest {
+    @Test
+    fun pinsFullHiraganaAndKatakanaBeforeRankedCandidates() {
+        assertEquals(
+            listOf("きょう", "キョウ", "今日", "教", "京"),
+            pinJapaneseKanaCandidates(
+                reading = "キョウ",
+                ranked = listOf("今日", "きょう", "教", "キョウ", "京"),
+            ),
+        )
+    }
+
+    @Test
+    fun preservesTheExistingOrderAfterPinnedKanaCandidates() {
+        assertEquals(
+            listOf("にほんご", "ニホンゴ", "学習候補", "辞書候補", "Zenzai候補"),
+            pinJapaneseKanaCandidates(
+                reading = "にほんご",
+                ranked = listOf("学習候補", "辞書候補", "Zenzai候補"),
+            ),
+        )
+    }
+
+    @Test
+    fun prioritizesALiveConversionBeforePinnedKanaCandidates() {
+        assertEquals(
+            listOf("今日", "きょう", "キョウ", "教", "京"),
+            pinJapaneseKanaCandidates(
+                reading = "きょう",
+                ranked = listOf("今日", "教", "京"),
+                liveCandidate = "今日",
+            ),
+        )
+    }
+
+    @Test
+    fun doesNotTreatRawKatakanaAsALiveConversion() {
+        assertEquals(
+            listOf("きょう", "キョウ", "今日"),
+            pinJapaneseKanaCandidates(
+                reading = "キョウ",
+                ranked = listOf("キョウ", "今日"),
+                liveCandidate = "キョウ",
+            ),
+        )
+    }
+
     @Test
     fun commitsSymbolsAndSpacingWithoutConversion() {
         listOf("、", "。", "？", "！", "「」", "　", "\t", "😊", "＋").forEach { value ->
