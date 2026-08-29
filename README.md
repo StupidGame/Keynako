@@ -2,7 +2,7 @@
 
 ![Keynako app icon](assets/icon/keynako-icon-1024.png)
 
-Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに、FlutterでiOSとAndroidへ移植したマルチプラットフォーム版です。設定アプリの画面とデータモデルはDartで共有し、OSが要求するキーボード拡張部分だけを各プラットフォームのネイティブAPIで実装しています。
+Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに、FlutterでiOS、Android、PCへ移植したマルチプラットフォーム版です。設定画面とデータモデルに加え、PC用の日本語・英語入力エンジンアプリをDartで実装し、OSが要求する携帯キーボード拡張部分だけを各プラットフォームのネイティブAPIで実装しています。
 
 ## 主な機能
 
@@ -15,8 +15,9 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 - 変換報告と、重要度付きユーザ辞書のKeynako共有
 - `StupidGame/keynako_hotfix_dictionary_storage`の共有変換辞書を5分ごとに同期
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
+- Windows TSF／macOS InputMethodKit／Linux IBusへ登録できる日本語・英語IME、ライブ変換、候補選択、Zenzai
 
-Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey forkの`llama.cpp`をJNIから呼び出し、iOSは固定リビジョンの`AzooKeyKanaKanjiConverter`を`ZenzaiCPU` trait付きで利用します。モデルの出所とハッシュは[assets/ZENZAI_MODELS.md](assets/ZENZAI_MODELS.md)にあります。
+Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey forkの`llama.cpp`をJNIから呼び出し、iOSは固定リビジョンの`AzooKeyKanaKanjiConverter`を`ZenzaiCPU` trait付きで利用します。PC版は同じ`llama.cpp`を静的リンクした常駐実行ファイルをFlutterから呼び出します。モデルの出所とハッシュは[assets/ZENZAI_MODELS.md](assets/ZENZAI_MODELS.md)にあります。
 
 ## 構成
 
@@ -27,6 +28,13 @@ Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey
 | iOSシステムキーボード | `UIInputViewController` + Swift |
 | Android Zenzai | llama.cpp + C++ JNI bridge |
 | iOSかな漢字変換／Zenzai | AzooKeyKanaKanjiConverter Swift Package |
+| 共通の軽量変換責務 | `packages/keynako_conversion` |
+| PC設定／動作確認アプリ | `apps/desktop` + Flutter |
+| PC共通入力セッション | `packages/keynako_conversion/native/ime_core` |
+| WindowsシステムIME | `platforms/windows` + TSF |
+| macOSシステムIME | `platforms/macos` + InputMethodKit |
+| LinuxシステムIME | `platforms/linux` + IBus |
+| PC Zenzai | llama.cpp + 常駐C++実行ファイル |
 
 Android/iOSは通常のFlutter画面だけではシステムIMEとして登録できないため、ライフサイクル、入力接続、ネイティブ推論境界には最小限のKotlin、Swift、C++が必要です。共有するアプリロジックとUIはDartに集約しています。互換性維持のため、内部のMethodChannel名、保存キー、App Groupには一部`azooKey`名が残っています。
 
@@ -68,9 +76,21 @@ iOS 17以上を対象にしています。macOSで`ios/Runner.xcworkspace`をXco
 
 WindowsではiOS SDKとXcodeが利用できないため、このリポジトリではXcodeプロジェクト、plist、entitlements、Swift Package参照までを構成し、最終署名ビルドはmacOS上で行います。
 
+### Windows／Linux／macOS
+
+PC版はローマ字日本語入力、英語直接入力、ライブ変換、候補選択、Zenzai v3.2 small／xsmallを含むシステムIMEです。Flutterアプリは設定と入力動作確認を担当し、実際の入力欄との接続はWindows TSF、macOS InputMethodKit、Linux IBusが担当します。
+
+```sh
+cd apps/desktop
+flutter pub get
+flutter run -d windows # linux、macosも指定可能
+```
+
+インストール方法、Zenzai実行ファイルの配置、キー操作は[PC用IME](docs/desktop_ime.md)を参照してください。WindowsのActions成果物はインストールとアンインストールを行える`KeynakoSetup.exe`です。
+
 ### GitHub Actions
 
-「Build app files」ワークフローは、Secretsを登録せずに、一時署名されたAndroid APK、未署名iOS IPA、Simulator用アプリを作成します。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
+「Build app files」ワークフローは、Secretsを登録せずに、一時署名されたAndroid APK、未署名iOS IPA、Simulator用アプリ、各PC OSへ登録できるIMEとZenzai入り設定アプリを作成します。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
 
 ## azooKey / Custard互換性
 
