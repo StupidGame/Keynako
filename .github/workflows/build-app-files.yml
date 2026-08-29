@@ -2,6 +2,7 @@ name: Build app files
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     tags:
       - "v*"
@@ -164,3 +165,243 @@ jobs:
             build/ios/Keynako-unsigned.ipa
             build/ios/Keynako-simulator.app.zip
             build/ios/ARTIFACTS.txt
+
+  desktop-tests:
+    name: Desktop conversion tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Analyze and test the shared conversion module
+        working-directory: packages/keynako_conversion
+        run: |
+          dart pub get
+          dart analyze
+          dart test
+
+      - name: Analyze and test the desktop input app
+        working-directory: apps/desktop
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+  desktop-windows:
+    name: Windows desktop IME
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build the Zenzai runtime
+        shell: pwsh
+        run: |
+          cmake -S packages/keynako_conversion/native -B build/zenzai -A x64 -DBUILD_TESTING=ON
+          cmake --build build/zenzai --config Release --parallel 2
+          ctest --test-dir build/zenzai -C Release --output-on-failure
+
+      - name: Build the Windows TSF input service
+        shell: pwsh
+        run: |
+          cmake -S platforms/windows -B build/windows-ime -A x64
+          cmake --build build/windows-ime --config Release --parallel 2
+
+      - name: Build the Flutter desktop app
+        working-directory: apps/desktop
+        run: |
+          flutter pub get
+          flutter build windows --release --build-number=${{ github.run_number }}
+
+      - name: Stage the Windows app, TSF service, and Zenzai
+        shell: pwsh
+        run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'Keynako-package'
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+          Copy-Item -Recurse -Force 'apps/desktop/build/windows/x64/runner/Release/*' $packageRoot
+          Move-Item -LiteralPath (Join-Path $packageRoot 'keynako_desktop.exe') -Destination (Join-Path $packageRoot 'Keynako.exe')
+          $imeRoot = Join-Path $packageRoot 'ime'
+          New-Item -ItemType Directory -Force -Path $imeRoot | Out-Null
+          Copy-Item -Force 'build/windows-ime/Release/KeynakoIME.dll' $imeRoot
+          Copy-Item -Force 'build/zenzai/Release/keynako_zenzai.exe' $imeRoot
+          New-Item -ItemType Directory -Force -Path (Join-Path $imeRoot 'zenzai') | Out-Null
+          Copy-Item -Recurse -Force 'assets/zenz-v3.2-small-gguf' (Join-Path $imeRoot 'zenzai')
+          Copy-Item -Recurse -Force 'assets/zenz-v3.2-xsmall-gguf' (Join-Path $imeRoot 'zenzai')
+
+      - name: Build the executable Windows installer and uninstaller
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'Keynako-package'
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE 'build/windows-installer'
+          New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          & $iscc "/DPackageRoot=$packageRoot" "/DOutputDir=$outputRoot" 'platforms/windows/installer.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          Get-FileHash -Algorithm SHA256 (Join-Path $outputRoot 'KeynakoSetup.exe') |
+            ForEach-Object { "$($_.Hash.ToLower())  KeynakoSetup.exe" } |
+            Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
+
+      - name: Upload the Windows desktop app
+        uses: actions/upload-artifact@v7
+        with:
+          name: keynako-windows-installer-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/windows-installer/KeynakoSetup.exe
+            build/windows-installer/KeynakoSetup.exe.sha256
+
+  desktop-linux:
+    name: Linux desktop IME
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev python3-gi gir1.2-ibus-1.0 ibus
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build the Zenzai runtime
+        run: |
+          cmake -S packages/keynako_conversion/native -B build/zenzai -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build build/zenzai --parallel 2
+          ctest --test-dir build/zenzai --output-on-failure
+
+      - name: Validate the IBus engine
+        run: |
+          python3 -m py_compile platforms/linux/keynako_engine.py
+          python3 -c "import gi; gi.require_version('IBus', '1.0'); from gi.repository import IBus"
+
+      - name: Build the Flutter desktop app
+        working-directory: apps/desktop
+        run: |
+          flutter pub get
+          flutter build linux --release --build-number=${{ github.run_number }}
+
+      - name: Package the Linux app and IBus engine with Zenzai
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_root="$RUNNER_TEMP/Keynako"
+          cp -R apps/desktop/build/linux/x64/release/bundle "$package_root"
+          cp build/zenzai/keynako_zenzai "$package_root/"
+          cp build/zenzai/libkeynako_ime_bridge.so "$package_root/"
+          cp platforms/linux/keynako_engine.py platforms/linux/keynako.xml.in \
+            platforms/linux/install-ime.sh platforms/linux/uninstall-ime.sh "$package_root/"
+          chmod +x "$package_root/keynako_engine.py" "$package_root/keynako_zenzai" "$package_root/"*.sh
+          mkdir -p "$package_root/zenzai"
+          cp -R assets/zenz-v3.2-small-gguf "$package_root/zenzai/"
+          cp -R assets/zenz-v3.2-xsmall-gguf "$package_root/zenzai/"
+          tar -C "$RUNNER_TEMP" -czf build/Keynako-linux-x64.tar.gz Keynako
+
+      - name: Upload the Linux desktop app
+        uses: actions/upload-artifact@v7
+        with:
+          name: keynako-linux-x64-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: build/Keynako-linux-x64.tar.gz
+
+  desktop-macos:
+    name: macOS desktop IME
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build the Zenzai runtime
+        run: |
+          cmake -S packages/keynako_conversion/native -B build/zenzai -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build build/zenzai --parallel 2
+          ctest --test-dir build/zenzai --output-on-failure
+
+      - name: Build the InputMethodKit input service
+        run: bash platforms/macos/build-input-method.sh build/macos-ime
+
+      - name: Build the Flutter desktop app
+        working-directory: apps/desktop
+        run: |
+          flutter pub get
+          flutter build macos --release --build-number=${{ github.run_number }}
+
+      - name: Package the macOS app and input method with Zenzai
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_app="apps/desktop/build/macos/Build/Products/Release/Keynako.app"
+          package_root="$RUNNER_TEMP/Keynako-macos"
+          package_app="$package_root/Keynako.app"
+          input_method="$package_root/Keynako.inputmethod"
+          test -d "$source_app"
+          mkdir -p "$package_root"
+          cp -R "$source_app" "$package_app"
+          cp build/zenzai/keynako_zenzai "$package_app/Contents/MacOS/"
+          chmod +x "$package_app/Contents/MacOS/keynako_zenzai"
+          mkdir -p "$package_app/Contents/Resources/zenzai"
+          cp -R assets/zenz-v3.2-small-gguf "$package_app/Contents/Resources/zenzai/"
+          cp -R assets/zenz-v3.2-xsmall-gguf "$package_app/Contents/Resources/zenzai/"
+          codesign --force --sign - "$package_app/Contents/MacOS/keynako_zenzai"
+          codesign --force --deep --sign - \
+            --entitlements apps/desktop/macos/Runner/Release.entitlements \
+            "$package_app"
+
+          cp -R build/macos-ime/Keynako.inputmethod "$input_method"
+          cp build/zenzai/keynako_zenzai "$input_method/Contents/Resources/"
+          chmod +x "$input_method/Contents/Resources/keynako_zenzai"
+          mkdir -p "$input_method/Contents/Resources/zenzai"
+          cp -R assets/zenz-v3.2-small-gguf "$input_method/Contents/Resources/zenzai/"
+          cp -R assets/zenz-v3.2-xsmall-gguf "$input_method/Contents/Resources/zenzai/"
+          cp platforms/macos/install-input-method.sh platforms/macos/uninstall-input-method.sh "$package_root/"
+          chmod +x "$package_root/"*.sh
+          codesign --force --deep --sign - "$input_method"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+            "$package_root" build/Keynako-macos.zip
+
+      - name: Upload the macOS desktop app
+        uses: actions/upload-artifact@v7
+        with:
+          name: keynako-macos-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: build/Keynako-macos.zip
