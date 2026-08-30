@@ -90,9 +90,9 @@ class _ThemeCard extends StatelessWidget {
               onSelected: (value) async {
                 switch (value) {
                   case 'light':
-                    controller.selectTheme(theme.id, dark: false);
+                    await controller.selectTheme(theme.id, dark: false);
                   case 'dark':
-                    controller.selectTheme(theme.id, dark: true);
+                    await controller.selectTheme(theme.id, dark: true);
                   case 'edit':
                     await Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -156,6 +156,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
   late int _accent;
   late double _keyOpacity;
   String? _backgroundImage;
+  late int _backgroundImageRevision;
   Uint8List? _pickedBackgroundImage;
   var _removeBackgroundImage = false;
   var _saving = false;
@@ -195,6 +196,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
     _text = source.textColor;
     _accent = source.accentColor;
     _backgroundImage = source.backgroundImage;
+    _backgroundImageRevision = source.backgroundImageRevision;
     _keyOpacity = source.keyOpacity;
   }
 
@@ -207,6 +209,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
     textColor: _text,
     accentColor: _accent,
     backgroundImage: _removeBackgroundImage ? null : _backgroundImage,
+    backgroundImageRevision: _backgroundImageRevision,
     keyOpacity: _keyOpacity,
   );
 
@@ -370,6 +373,7 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
     setState(() => _saving = true);
     final controller = AppControllerScope.of(context);
     var backgroundImage = _removeBackgroundImage ? null : _backgroundImage;
+    var backgroundImageRevision = _backgroundImageRevision;
     final bytes = _pickedBackgroundImage;
     if (bytes != null) {
       backgroundImage = await controller.platform.saveKeyboardBackgroundImage(
@@ -383,12 +387,16 @@ class _ThemeEditorPageState extends State<ThemeEditorPage> {
             .showSnackBar(const SnackBar(content: Text('背景画像を保存できませんでした。')));
         return;
       }
+      backgroundImageRevision = DateTime.now().microsecondsSinceEpoch;
+    } else if (backgroundImage == null) {
+      backgroundImageRevision = 0;
     }
 
     final oldBackgroundImage = widget.theme?.backgroundImage;
     controller.replaceTheme(
       _value.copyWith(
         backgroundImage: backgroundImage,
+        backgroundImageRevision: backgroundImageRevision,
         clearBackgroundImage: backgroundImage == null,
       ),
     );

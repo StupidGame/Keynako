@@ -101,6 +101,16 @@ void main() {
     controller.dispose();
   });
 
+  test('persists a selected theme without waiting for debounce', () async {
+    final storage = _MemoryStorage();
+    final controller = AppController(storage: storage);
+
+    await controller.selectTheme('azuki', dark: false);
+
+    expect(AppData.decode(storage.value!).lightThemeId, 'azuki');
+    controller.dispose();
+  });
+
   test('imports a custom array and exposes it as a selectable tab', () {
     final controller = AppController(storage: _MemoryStorage());
     const source = '''
