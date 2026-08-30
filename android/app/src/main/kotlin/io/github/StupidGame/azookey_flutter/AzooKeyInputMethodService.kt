@@ -333,6 +333,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                         keyOpacity,
                     ),
                     backgroundImage = backgroundImage,
+                    backgroundImageRevision = theme
+                        .optLong("backgroundImageRevision", 0L)
+                        .takeIf { it > 0L },
                 )
             }
         }
@@ -342,7 +345,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun applyKeyboardBackground() {
         inputViewFrame.setBackgroundColor(palette.background)
         val file = palette.backgroundImage?.let(::File)?.takeIf { it.isFile }
-        val signature = file?.let { "${it.absolutePath}:${it.lastModified()}" }
+        val signature = file?.let {
+            val revision = palette.backgroundImageRevision ?: it.lastModified()
+            "${it.absolutePath}:$revision"
+        }
         if (signature != backgroundImageSignature) {
             val bitmap = file?.let(::decodeKeyboardBackground)
             backgroundImageView.setImageBitmap(bitmap)
@@ -3077,6 +3083,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val text: Int,
         val accent: Int,
         val backgroundImage: String? = null,
+        val backgroundImageRevision: Long? = null,
     ) {
         companion object {
             fun default(dark: Boolean = false) = if (dark) {

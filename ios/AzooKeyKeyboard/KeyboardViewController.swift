@@ -185,6 +185,7 @@ final class KeyboardViewController: UIInputViewController {
             return dark ? .dark : .light
         }
         let backgroundImage = theme["backgroundImage"] as? String
+        let backgroundImageRevision = (theme["backgroundImageRevision"] as? NSNumber)?.int64Value
         let keyOpacity: CGFloat = backgroundImage == nil
             ? 1
             : CGFloat(((theme["keyOpacity"] as? Double) ?? 0.72).clamped(to: 0.15 ... 1))
@@ -194,7 +195,8 @@ final class KeyboardViewController: UIInputViewController {
             special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd).withAlphaComponent(keyOpacity),
             text: color(theme["textColor"], fallback: dark ? 0xfff9fafb : 0xff111827),
             accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb).withAlphaComponent(keyOpacity),
-            backgroundImage: backgroundImage
+            backgroundImage: backgroundImage,
+            backgroundImageRevision: backgroundImageRevision
         )
     }
 
@@ -208,7 +210,9 @@ final class KeyboardViewController: UIInputViewController {
         }
         let signature: String?
         if let path, FileManager.default.fileExists(atPath: path) {
-            signature = "\(path):\(modificationDate?.timeIntervalSince1970 ?? 0)"
+            let revision = palette.backgroundImageRevision.map { String($0) }
+                ?? String(modificationDate?.timeIntervalSince1970 ?? 0)
+            signature = "\(path):\(revision)"
         } else {
             signature = nil
         }
@@ -2841,9 +2845,10 @@ private struct KeyboardPalette {
     let text: UIColor
     let accent: UIColor
     let backgroundImage: String?
+    let backgroundImageRevision: Int64?
 
-    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb), backgroundImage: nil)
-    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa), backgroundImage: nil)
+    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb), backgroundImage: nil, backgroundImageRevision: nil)
+    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa), backgroundImage: nil, backgroundImageRevision: nil)
 }
 
 private extension UIColor {

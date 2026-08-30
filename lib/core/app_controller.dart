@@ -172,13 +172,14 @@ class AppController extends ChangeNotifier {
     _changed();
   }
 
-  void selectTheme(String id, {required bool dark}) {
+  Future<void> selectTheme(String id, {required bool dark}) async {
     if (dark) {
       data.darkThemeId = id;
     } else {
       data.lightThemeId = id;
     }
-    _changed();
+    notifyListeners();
+    await flush();
   }
 
   void replaceCustomTab(CustomTabData tab) {
