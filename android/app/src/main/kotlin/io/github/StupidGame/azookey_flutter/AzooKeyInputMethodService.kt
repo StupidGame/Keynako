@@ -63,6 +63,7 @@ import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationActio
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
+import io.github.StupidGame.azookey_flutter.input.combinedBackwardSmartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
@@ -826,7 +827,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             dispatchActions(selectedStartActions)
             if (activeRepeatActions.length() > 0) {
                 repeating = true
-                handler.post(repeatAction)
+                handler.postDelayed(repeatAction, 70)
             }
             feedback(view)
         }
@@ -1130,7 +1131,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             dispatchAction(action)
             if (repeated != null) {
                 repeating = true
-                handler.post(repeatAction)
+                handler.postDelayed(repeatAction, 70)
             }
             feedback(view)
         }
@@ -2496,8 +2497,17 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun dispatchActions(actions: JSONArray?, startIndex: Int = 0) {
         if (actions == null) return
-        for (index in startIndex.coerceAtLeast(0) until actions.length()) {
-            dispatchAction(actions.optJSONObject(index))
+        var index = startIndex.coerceAtLeast(0)
+        while (index < actions.length()) {
+            val action = actions.optJSONObject(index)
+            val next = actions.optJSONObject(index + 1)
+            if (positiveBackwardDelete(action) && isBackwardSmartDelete(next)) {
+                dispatchCombinedBackwardSmartDelete(checkNotNull(action), checkNotNull(next))
+                index += 2
+            } else {
+                dispatchAction(action)
+                index += 1
+            }
         }
     }
 
@@ -2507,6 +2517,51 @@ class AzooKeyInputMethodService : InputMethodService() {
         val count = if (value.has("count")) value.optInt("count", 1)
         else value.optString("value").toIntOrNull() ?: 1
         return count > 0
+    }
+
+    private fun isBackwardSmartDelete(action: JSONObject?): Boolean {
+        val value = action ?: return false
+        return value.optString("type") == "smart_delete_default" ||
+            (
+                value.optString("type") == "smart_delete" &&
+                    value.optString("direction", "forward") == "backward"
+            )
+    }
+
+    private fun dispatchCombinedBackwardSmartDelete(
+        deleteAction: JSONObject,
+        smartDeleteAction: JSONObject,
+    ) {
+        val leadingCount = if (deleteAction.has("count")) {
+            deleteAction.optInt("count", 1)
+        } else {
+            deleteAction.optString("value").toIntOrNull() ?: 1
+        }
+        val targets = if (smartDeleteAction.optString("type") == "smart_delete_default") {
+            defaultScanTargets
+        } else {
+            actionTargets(smartDeleteAction)
+        }
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
+            if (
+                rawRoman.isNotEmpty() ||
+                smartDeleteAction.optString("type") == "smart_delete_default"
+            ) {
+                clearComposition()
+                return
+            }
+            val count = combinedBackwardSmartDeleteCount(composing, leadingCount, targets)
+            composing = composing.dropLast(count.coerceAtMost(composing.length))
+            if (composing.isEmpty()) clearComposition() else updateComposition()
+            return
+        }
+        val text = currentInputConnection
+            ?.getTextBeforeCursor(2000, 0)
+            ?.toString()
+            .orEmpty()
+        val count = combinedBackwardSmartDeleteCount(text, leadingCount, targets)
+        if (count > 0) currentInputConnection?.deleteSurroundingText(count, 0)
+        cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun backwardWordDeleteContinuationStartIndex(actions: JSONArray?): Int? {

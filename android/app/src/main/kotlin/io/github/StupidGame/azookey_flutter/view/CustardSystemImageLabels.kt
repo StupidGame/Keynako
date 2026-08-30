@@ -9,7 +9,7 @@ internal fun custardSystemImageLabel(name: String): String {
         "delete.left", "delete.left.fill" -> "⌫"
         "delete.right", "delete.right.fill" -> "⌦"
         "xmark" -> "×"
-        "globe", "globe.europe.africa" -> "🌐"
+        "globe", "globe.asia.australia", "globe.europe.africa" -> "🌐"
         "return", "return.left" -> "↵"
         "space" -> "空白"
         "list.bullet" -> "☰"
@@ -24,6 +24,7 @@ internal fun custardSystemImageLabel(name: String): String {
         "face.smiling" -> "🙂"
         "doc.on.clipboard", "list.bullet.clipboard" -> "📋"
         "shift", "shift.fill" -> "⇧"
+        "capslock", "capslock.fill" -> "⇪"
         else -> trimmedName
     }
 }

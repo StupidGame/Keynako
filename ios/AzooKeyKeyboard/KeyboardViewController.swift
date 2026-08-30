@@ -575,7 +575,7 @@ final class KeyboardViewController: UIInputViewController {
         case "delete.left", "delete.left.fill": return "⌫"
         case "delete.right", "delete.right.fill": return "⌦"
         case "xmark": return "×"
-        case "globe", "globe.europe.africa": return "🌐"
+        case "globe", "globe.asia.australia", "globe.europe.africa": return "🌐"
         case "return", "return.left": return "↵"
         case "space": return "空白"
         case "list.bullet": return "☰"
@@ -590,6 +590,7 @@ final class KeyboardViewController: UIInputViewController {
         case "face.smiling": return "🙂"
         case "doc.on.clipboard", "list.bullet.clipboard": return "📋"
         case "shift", "shift.fill": return "⇧"
+        case "capslock", "capslock.fill": return "⇪"
         default: return trimmedName
         }
     }
@@ -1024,7 +1025,102 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func dispatch(_ actions: [[String: Any]]) {
-        for action in actions { dispatch(action) }
+        var index = 0
+        while index < actions.count {
+            if index + 1 < actions.count,
+               positiveBackwardDelete(actions[index]),
+               isBackwardSmartDelete(actions[index + 1]) {
+                dispatchCombinedBackwardSmartDelete(
+                    deleteAction: actions[index],
+                    smartDeleteAction: actions[index + 1]
+                )
+                index += 2
+            } else {
+                dispatch(actions[index])
+                index += 1
+            }
+        }
+    }
+
+    private func positiveBackwardDelete(_ action: [String: Any]) -> Bool {
+        guard action["type"] as? String == "delete" else { return false }
+        let count = (action["count"] as? NSNumber)?.intValue
+            ?? Int(action["value"] as? String ?? "")
+            ?? 1
+        return count > 0
+    }
+
+    private func isBackwardSmartDelete(_ action: [String: Any]) -> Bool {
+        switch action["type"] as? String {
+        case "smart_delete_default": return true
+        case "smart_delete": return action["direction"] as? String == "backward"
+        default: return false
+        }
+    }
+
+    private func backwardSmartDeleteCount(in text: String, targets: [String]) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let boundaries = targets.compactMap { target -> String.Index? in
+            text.range(of: target, options: .backwards)?.upperBound
+        }
+        let boundary = boundaries.max() ?? text.startIndex
+        let distance = text.distance(from: boundary, to: text.endIndex)
+        return distance == 0 ? 1 : distance
+    }
+
+    private func combinedBackwardSmartDeleteCount(
+        in text: String,
+        leadingDeleteCount: Int,
+        targets: [String]
+    ) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let leading = min(max(0, leadingDeleteCount), text.count)
+        let remaining = String(text.dropLast(leading))
+        guard !remaining.isEmpty else { return leading }
+        return min(
+            text.count,
+            leading + backwardSmartDeleteCount(in: remaining, targets: targets)
+        )
+    }
+
+    private func dispatchCombinedBackwardSmartDelete(
+        deleteAction: [String: Any],
+        smartDeleteAction: [String: Any]
+    ) {
+        let leadingCount = (deleteAction["count"] as? NSNumber)?.intValue
+            ?? Int(deleteAction["value"] as? String ?? "")
+            ?? 1
+        let targets = smartDeleteAction["type"] as? String == "smart_delete_default"
+            ? Self.defaultScanTargets
+            : actionTargets(smartDeleteAction)
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            if !rawRoman.isEmpty || smartDeleteAction["type"] as? String == "smart_delete_default" {
+                smartDeleteDefault()
+                return
+            }
+            let count = combinedBackwardSmartDeleteCount(
+                in: composing,
+                leadingDeleteCount: leadingCount,
+                targets: targets
+            )
+            composing.removeLast(min(count, composing.count))
+            if composing.isEmpty {
+                replaceDisplayed(with: "", commit: true)
+                resetComposition()
+                renderCandidates()
+            } else {
+                updateComposition()
+            }
+            return
+        }
+        let text = textDocumentProxy.documentContextBeforeInput ?? ""
+        let count = combinedBackwardSmartDeleteCount(
+            in: text,
+            leadingDeleteCount: leadingCount,
+            targets: targets
+        )
+        for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+        refreshCursorBar()
     }
 
     private func activeCustard() -> [String: Any]? {
@@ -2798,15 +2894,22 @@ private final class CustardButton: DirectionalKeyButton {
     private func backwardWordDeleteContinuationStartIndex(
         _ actions: [[String: Any]]
     ) -> Int? {
-        if actions.first?["type"] as? String == "smart_delete",
-           actions.first?["direction"] as? String == "backward" {
+        if isBackwardSmartDelete(actions.first) {
             return 0
         }
         guard actions.count >= 2,
               positiveBackwardDelete(actions[0]),
-              actions[1]["type"] as? String == "smart_delete",
-              actions[1]["direction"] as? String == "backward" else { return nil }
+              isBackwardSmartDelete(actions[1]) else { return nil }
         return 1
+    }
+
+    private func isBackwardSmartDelete(_ action: [String: Any]?) -> Bool {
+        guard let action else { return false }
+        switch action["type"] as? String {
+        case "smart_delete_default": return true
+        case "smart_delete": return action["direction"] as? String == "backward"
+        default: return false
+        }
     }
 
     private func canContinueDeleteLongPress(into variationActions: [[String: Any]]) -> Bool {

@@ -24,6 +24,8 @@ class CustardSystemImageLabelsTest {
             "delete.left.fill" to "⌫",
             "delete.right" to "⌦",
             "delete.right.fill" to "⌦",
+            "globe.asia.australia" to "🌐",
+            "capslock.fill" to "⇪",
             "globe.europe.africa" to "🌐",
             "chevron.left" to "←",
             "chevron.left.2" to "←",

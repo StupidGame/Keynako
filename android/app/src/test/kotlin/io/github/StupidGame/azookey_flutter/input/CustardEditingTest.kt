@@ -29,6 +29,18 @@ class CustardEditingTest {
     }
 
     @Test
+    fun chainedDeleteAndSmartDeleteRemoveJapaneseTextAtomically() {
+        assertEquals(
+            3,
+            combinedBackwardSmartDeleteCount("前。次の文", 1, listOf("。")),
+        )
+        assertEquals(
+            5,
+            combinedBackwardSmartDeleteCount("日本語入力", 1, listOf("。", "、")),
+        )
+    }
+
+    @Test
     fun japaneseWordDeleteContinuesAfterTheCenterLongPressDelete() {
         val smartDelete = CustardDeleteContinuationAction(
             type = "smart_delete",
@@ -39,9 +51,24 @@ class CustardEditingTest {
             backwardSmartDeleteContinuationStartIndex(listOf(smartDelete)),
         )
         assertEquals(
+            0,
+            backwardSmartDeleteContinuationStartIndex(
+                listOf(CustardDeleteContinuationAction(type = "smart_delete_default")),
+            ),
+        )
+        assertEquals(
             1,
             backwardSmartDeleteContinuationStartIndex(
                 listOf(CustardDeleteContinuationAction(type = "delete"), smartDelete),
+            ),
+        )
+        assertEquals(
+            1,
+            backwardSmartDeleteContinuationStartIndex(
+                listOf(
+                    CustardDeleteContinuationAction(type = "delete"),
+                    CustardDeleteContinuationAction(type = "smart_delete_default"),
+                ),
             ),
         )
         assertEquals(
