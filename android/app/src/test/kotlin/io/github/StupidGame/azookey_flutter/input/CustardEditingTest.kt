@@ -29,6 +29,30 @@ class CustardEditingTest {
     }
 
     @Test
+    fun japaneseWordDeleteContinuesAfterTheCenterLongPressDelete() {
+        val smartDelete = CustardDeleteContinuationAction(
+            type = "smart_delete",
+            direction = "backward",
+        )
+        assertEquals(
+            0,
+            backwardSmartDeleteContinuationStartIndex(listOf(smartDelete)),
+        )
+        assertEquals(
+            1,
+            backwardSmartDeleteContinuationStartIndex(
+                listOf(CustardDeleteContinuationAction(type = "delete"), smartDelete),
+            ),
+        )
+        assertEquals(
+            null,
+            backwardSmartDeleteContinuationStartIndex(
+                listOf(smartDelete.copy(direction = "forward")),
+            ),
+        )
+    }
+
+    @Test
     fun custardReplacementKeepsTheWholeWordAndUsesTheLongestSuffix() {
         val result = replaceLastCharactersIn(
             "前のことばしよ",

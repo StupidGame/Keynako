@@ -568,8 +568,8 @@ final class KeyboardViewController: UIInputViewController {
     private func systemImageLabel(_ name: String) -> String {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         switch trimmedName.lowercased() {
-        case "delete.left": return "⌫"
-        case "delete.right": return "⌦"
+        case "delete.left", "delete.left.fill": return "⌫"
+        case "delete.right", "delete.right.fill": return "⌦"
         case "xmark": return "×"
         case "globe", "globe.europe.africa": return "🌐"
         case "return", "return.left": return "↵"
@@ -2591,7 +2591,7 @@ private final class CustardButton: DirectionalKeyButton {
     private var variationDidLongPress = false
     private var longPressDirection: String?
     private var centerLongPressRollback: (() -> Void)?
-    private var skipLeadingDeleteOnVariationRelease = false
+    private var continueDeleteVariationOnRelease = false
 
     init(
         title: String,
@@ -2624,7 +2624,7 @@ private final class CustardButton: DirectionalKeyButton {
         variationDidLongPress = false
         longPressDirection = nil
         centerLongPressRollback = nil
-        skipLeadingDeleteOnVariationRelease = false
+        continueDeleteVariationOnRelease = false
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let startActions = longPress["start"] as? [[String: Any]] ?? []
         let repeated = longPress["repeat"] as? [[String: Any]] ?? []
@@ -2688,7 +2688,7 @@ private final class CustardButton: DirectionalKeyButton {
                 longPressWorkItem?.cancel()
                 if didLongPress {
                     centerLongPressRollback?()
-                    skipLeadingDeleteOnVariationRelease =
+                    continueDeleteVariationOnRelease =
                         centerLongPressRollback == nil && canContinueAfterDelete
                     centerLongPressRollback = nil
                     longPressFlicked = true
@@ -2753,7 +2753,7 @@ private final class CustardButton: DirectionalKeyButton {
         }
         if longPressFlicked && variationDidLongPress { return }
         let continuedVariation: [String: Any]?
-        if skipLeadingDeleteOnVariationRelease, let longPressDirection {
+        if continueDeleteVariationOnRelease, let longPressDirection {
             let variation = variations(type: "flick_variation").first {
                 $0["direction"] as? String == longPressDirection
             }
@@ -2763,9 +2763,9 @@ private final class CustardButton: DirectionalKeyButton {
         }
         let selected = continuedVariation ?? selectedGestureKey(at: end)
         let actions = selected["press_actions"] as? [[String: Any]] ?? []
-        if skipLeadingDeleteOnVariationRelease,
-           isBackwardWordDeleteVariation(actions) {
-            callback(Array(actions.dropFirst()))
+        if continueDeleteVariationOnRelease,
+           let startIndex = backwardWordDeleteContinuationStartIndex(actions) {
+            callback(Array(actions.dropFirst(startIndex)))
         } else {
             callback(actions)
         }
@@ -2791,15 +2791,22 @@ private final class CustardButton: DirectionalKeyButton {
         return count > 0
     }
 
-    private func isBackwardWordDeleteVariation(_ actions: [[String: Any]]) -> Bool {
+    private func backwardWordDeleteContinuationStartIndex(
+        _ actions: [[String: Any]]
+    ) -> Int? {
+        if actions.first?["type"] as? String == "smart_delete",
+           actions.first?["direction"] as? String == "backward" {
+            return 0
+        }
         guard actions.count >= 2,
-              positiveBackwardDelete(actions[0]) else { return false }
-        return actions[1]["type"] as? String == "smart_delete" &&
-            actions[1]["direction"] as? String == "backward"
+              positiveBackwardDelete(actions[0]),
+              actions[1]["type"] as? String == "smart_delete",
+              actions[1]["direction"] as? String == "backward" else { return nil }
+        return 1
     }
 
     private func canContinueDeleteLongPress(into variationActions: [[String: Any]]) -> Bool {
-        guard isBackwardWordDeleteVariation(variationActions) else { return false }
+        guard backwardWordDeleteContinuationStartIndex(variationActions) != nil else { return false }
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let centerActions =
             (longPress["start"] as? [[String: Any]] ?? []) +

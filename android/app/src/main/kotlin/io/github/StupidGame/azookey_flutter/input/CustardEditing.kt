@@ -43,6 +43,38 @@ internal fun smartDeleteCount(
     return if (distance == 0) 1 else distance
 }
 
+internal data class CustardDeleteContinuationAction(
+    val type: String,
+    val count: Int = 1,
+    val direction: String = "",
+)
+
+/**
+ * Returns where a backward smart-delete should resume after the center key's
+ * long-press delete has already fired.
+ */
+internal fun backwardSmartDeleteContinuationStartIndex(
+    actions: List<CustardDeleteContinuationAction>,
+): Int? {
+    if (
+        actions.firstOrNull()?.let {
+            it.type == "smart_delete" && it.direction == "backward"
+        } == true
+    ) {
+        return 0
+    }
+    return if (
+        actions.firstOrNull()?.let { it.type == "delete" && it.count > 0 } == true &&
+        actions.getOrNull(1)?.let {
+            it.type == "smart_delete" && it.direction == "backward"
+        } == true
+    ) {
+        1
+    } else {
+        null
+    }
+}
+
 internal data class LastCharactersReplacement(
     val removedLength: Int,
     val replacement: String,

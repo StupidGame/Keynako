@@ -6,8 +6,8 @@ import java.util.Locale
 internal fun custardSystemImageLabel(name: String): String {
     val trimmedName = name.trim()
     return when (trimmedName.lowercase(Locale.ROOT)) {
-        "delete.left" -> "⌫"
-        "delete.right" -> "⌦"
+        "delete.left", "delete.left.fill" -> "⌫"
+        "delete.right", "delete.right.fill" -> "⌦"
         "xmark" -> "×"
         "globe", "globe.europe.africa" -> "🌐"
         "return", "return.left" -> "↵"

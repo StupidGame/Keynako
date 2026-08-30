@@ -59,7 +59,9 @@ import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
+import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationAction
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
+import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
@@ -772,7 +774,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var repeating = false
         var longPressFlicked = false
         var variationDidLongPress = false
-        var skipLeadingDeleteOnVariationRelease = false
+        var continueDeleteVariationOnRelease = false
         var centerLongPressCheckpoint: CompositionSnapshot? = null
         val longPressSelection = FlickLongPressSelection(key)
         val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
@@ -831,7 +833,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     repeating = false
                     longPressFlicked = false
                     variationDidLongPress = false
-                    skipLeadingDeleteOnVariationRelease = false
+                    continueDeleteVariationOnRelease = false
                     centerLongPressCheckpoint = null
                     activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
                     target.isPressed = true
@@ -857,17 +859,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                             val direction = if (!variationsEnabled || abs(dx) < threshold && abs(dy) < threshold) null
                             else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
                             else if (dy < 0) "top" else "bottom"
-                            val variation = if (skipLeadingDeleteOnVariationRelease) {
+                            val variation = if (continueDeleteVariationOnRelease) {
                                 longPressSelection.target
                             } else {
                                 findCustardVariation(key, "flick_variation", direction)
                             }
                             val pressActions = variation?.optJSONArray("press_actions")
                                 ?: key.optJSONArray("press_actions")
-                            val startIndex = if (
-                                skipLeadingDeleteOnVariationRelease &&
-                                isBackwardWordDeleteVariation(pressActions)
-                            ) 1 else 0
+                            val startIndex = if (continueDeleteVariationOnRelease) {
+                                backwardWordDeleteContinuationStartIndex(pressActions) ?: 0
+                            } else 0
                             dispatchActions(pressActions, startIndex)
                             feedback(target)
                         }
@@ -936,7 +937,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                                 // a slower flick crosses the threshold. Keep that
                                 // first delete and run the remaining variation
                                 // actions when the finger is released.
-                                skipLeadingDeleteOnVariationRelease = true
+                                continueDeleteVariationOnRelease = true
                                 centerLongPressCheckpoint = null
                                 longPressFlicked = true
                                 didLongPress = false
@@ -2502,21 +2503,27 @@ class AzooKeyInputMethodService : InputMethodService() {
         return count > 0
     }
 
-    private fun isBackwardWordDeleteVariation(actions: JSONArray?): Boolean =
-        actions != null &&
-            actions.length() >= 2 &&
-            positiveBackwardDelete(actions.optJSONObject(0)) &&
-            actions.optJSONObject(1)?.let {
-                it.optString("type") == "smart_delete" &&
-                    it.optString("direction", "forward") == "backward"
-            } == true
+    private fun backwardWordDeleteContinuationStartIndex(actions: JSONArray?): Int? {
+        if (actions == null) return null
+        return backwardSmartDeleteContinuationStartIndex(
+            (0 until actions.length()).mapNotNull { index ->
+                val action = actions.optJSONObject(index) ?: return@mapNotNull null
+                CustardDeleteContinuationAction(
+                    type = action.optString("type"),
+                    count = if (action.has("count")) action.optInt("count", 1)
+                    else action.optString("value").toIntOrNull() ?: 1,
+                    direction = action.optString("direction", "forward"),
+                )
+            },
+        )
+    }
 
     private fun canContinueDeleteLongPressIntoVariation(
         startActions: JSONArray,
         repeatActions: JSONArray,
         variationActions: JSONArray?,
     ): Boolean {
-        if (!isBackwardWordDeleteVariation(variationActions)) return false
+        if (backwardWordDeleteContinuationStartIndex(variationActions) == null) return false
         val centerActions = listOf(startActions, repeatActions)
         var foundDelete = false
         for (actions in centerActions) {
