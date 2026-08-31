@@ -22,6 +22,7 @@
 
 #include "keynako_resources.h"
 #include "keynako_ime_core.h"
+#include "keynako_shortcut_policy.h"
 #include "zenzai_client.h"
 
 namespace {
@@ -32,6 +33,12 @@ constexpr CLSID kTextService = {0xf7959d5b, 0x0818, 0x43cc, {0x99, 0x19, 0x6a, 0
 constexpr GUID kLanguageProfile = {0x9e061a9a, 0xa339, 0x4ae0, {0xb6, 0xdc, 0xa1, 0x3f, 0x21, 0xa3, 0x40, 0xc2}};
 // {3116A7F8-8F02-4327-BA10-3625B689E948}
 constexpr GUID kPreservedToggle = {0x3116a7f8, 0x8f02, 0x4327, {0xba, 0x10, 0x36, 0x25, 0xb6, 0x89, 0xe9, 0x48}};
+// {A40D40D9-C3AD-492D-8234-944FAFB7E56E}
+constexpr GUID kPreservedConvert = {0xa40d40d9, 0xc3ad, 0x492d, {0x82, 0x34, 0x94, 0x4f, 0xaf, 0xb7, 0xe5, 0x6e}};
+// {6A2F2DBD-3E9D-4C08-90A7-415366D1CB19}
+constexpr GUID kPreservedCtrlSpace = {0x6a2f2dbd, 0x3e9d, 0x4c08, {0x90, 0xa7, 0x41, 0x53, 0x66, 0xd1, 0xcb, 0x19}};
+// {AFE3FF6D-EB6A-4021-BB2A-36BBF7A4C232}
+constexpr GUID kPreservedAltGrave = {0xafe3ff6d, 0xeb6a, 0x4021, {0xbb, 0x2a, 0x36, 0xbb, 0xf7, 0xa4, 0xc2, 0x32}};
 // GUID_LBI_INPUTMODE is not declared by every supported Windows SDK, even
 // though Windows 8 and later require this value for the taskbar mode button.
 constexpr GUID kLangBarInputMode = {0x2c77a81e, 0x41cc, 0x4178, {0xa3, 0xa7, 0x5f, 0x8a, 0x98, 0x75, 0x68, 0xe6}};
@@ -44,6 +51,20 @@ constexpr HRESULT kConnectNoConnection = static_cast<HRESULT>(0x80040200UL);
 constexpr HRESULT kConnectAdviseLimit = static_cast<HRESULT>(0x80040201UL);
 constexpr HRESULT kConnectCannotConnect = static_cast<HRESULT>(0x80040202UL);
 constexpr wchar_t kDescription[] = L"Keynako Japanese IME";
+
+struct PreservedKeyDefinition {
+    GUID command;
+    UINT virtual_key;
+    UINT modifiers;
+    const wchar_t *description;
+};
+
+constexpr PreservedKeyDefinition kPreservedKeys[] = {
+    {kPreservedToggle, VK_KANJI, 0, L"Toggle Keynako input mode"},
+    {kPreservedConvert, VK_CONVERT, 0, L"Convert or toggle Keynako input mode"},
+    {kPreservedCtrlSpace, VK_SPACE, TF_MOD_CONTROL, L"Toggle Keynako input mode (US keyboard)"},
+    {kPreservedAltGrave, VK_OEM_3, TF_MOD_ALT, L"Toggle Keynako input mode (US keyboard)"},
+};
 
 constexpr UINT kMenuJapanese = 1;
 constexpr UINT kMenuEnglish = 2;
@@ -225,9 +246,12 @@ public:
         const HRESULT result = thread_manager_->QueryInterface(IID_PPV_ARGS(&keys));
         if (SUCCEEDED(result)) {
             keys->AdviseKeyEventSink(client_id_, this, TRUE);
-            const TF_PRESERVEDKEY toggle_key{VK_KANJI, 0};
-            keys->PreserveKey(client_id_, kPreservedToggle, &toggle_key,
-                              L"Toggle Keynako input mode", 25);
+            for (const auto &definition : kPreservedKeys) {
+                const TF_PRESERVEDKEY key{definition.virtual_key, definition.modifiers};
+                keys->PreserveKey(client_id_, definition.command, &key,
+                                  definition.description,
+                                  static_cast<ULONG>(wcslen(definition.description)));
+            }
             keys->Release();
         }
         initialize_language_bar();
@@ -241,8 +265,10 @@ public:
         if (thread_manager_) {
             ITfKeystrokeMgr *keys = nullptr;
             if (SUCCEEDED(thread_manager_->QueryInterface(IID_PPV_ARGS(&keys)))) {
-                const TF_PRESERVEDKEY toggle_key{VK_KANJI, 0};
-                keys->UnpreserveKey(kPreservedToggle, &toggle_key);
+                for (const auto &definition : kPreservedKeys) {
+                    const TF_PRESERVEDKEY key{definition.virtual_key, definition.modifiers};
+                    keys->UnpreserveKey(definition.command, &key);
+                }
                 keys->UnadviseKeyEventSink(client_id_);
                 keys->Release();
             }
@@ -265,18 +291,22 @@ public:
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        if (control && key == VK_SPACE) {
+        const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const auto shortcut = keynako::windows::shortcut_action(
+            static_cast<std::uint32_t>(key), control, alt,
+            !session_.raw_input().empty());
+        if (shortcut == keynako::windows::ShortcutAction::toggle_input_mode) {
             toggle_input_mode(context);
+            *eaten = TRUE;
+            return S_OK;
+        }
+        if (shortcut == keynako::windows::ShortcutAction::convert_or_cycle) {
+            convert_or_toggle(context);
             *eaten = TRUE;
             return S_OK;
         }
         if (!handles_key(key)) return S_OK;
 
-        if (key == VK_KANJI) {
-            toggle_input_mode(context);
-            *eaten = TRUE;
-            return S_OK;
-        }
         if (key == VK_KANA || key == kVirtualKeyDbeHiragana) {
             set_input_mode(keynako::InputMode::japanese, context);
             *eaten = TRUE;
@@ -287,12 +317,6 @@ public:
             *eaten = TRUE;
             return S_OK;
         }
-        if (key == VK_CONVERT && session_.raw_input().empty()) {
-            toggle_input_mode(context);
-            *eaten = TRUE;
-            return S_OK;
-        }
-
         EditAction action = EditAction::update;
         if (key >= '1' && key <= '9' && session_.is_converting()) {
             if (!session_.select_candidate(static_cast<std::size_t>(key - '1'))) return S_OK;
@@ -312,7 +336,7 @@ public:
             if (session_.raw_input().empty()) return S_OK;
             if (!session_.cancel_conversion()) session_.backspace();
             action = session_.raw_input().empty() ? EditAction::cancel : EditAction::update;
-        } else if (key == VK_SPACE || key == VK_CONVERT || key == VK_DOWN ||
+        } else if (key == VK_SPACE || key == VK_DOWN ||
                    key == VK_TAB || key == VK_NEXT) {
             if (session_.raw_input().empty()) return S_OK;
             reload_shared_dictionary();
@@ -358,9 +382,13 @@ public:
         return S_OK;
     }
     STDMETHODIMP OnPreservedKey(ITfContext *context, REFGUID guid, BOOL *eaten) override {
-        if (!eaten) return E_INVALIDARG;
+        if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
-        if (guid == kPreservedToggle) {
+        if (guid == kPreservedConvert) {
+            convert_or_toggle(context);
+            *eaten = TRUE;
+        } else if (guid == kPreservedToggle || guid == kPreservedCtrlSpace ||
+                   guid == kPreservedAltGrave) {
             toggle_input_mode(context);
             *eaten = TRUE;
         }
@@ -446,10 +474,28 @@ private:
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
 
+    void convert_or_toggle(ITfContext *context) {
+        if (session_.raw_input().empty()) {
+            toggle_input_mode(context);
+            return;
+        }
+        reload_shared_dictionary();
+        if (!session_.is_converting()) {
+            if (session_.mode() == keynako::InputMode::japanese) add_zenzai_candidate();
+            session_.begin_conversion();
+        } else {
+            session_.select_next();
+        }
+        request_edit(context, EditAction::update);
+    }
+
     bool handles_key(WPARAM key) const {
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        if (control && key == VK_SPACE) return true;
-        if (control || (GetKeyState(VK_MENU) & 0x8000) != 0) return false;
+        const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        if (keynako::windows::shortcut_action(static_cast<std::uint32_t>(key), control, alt,
+                                              !session_.raw_input().empty()) !=
+            keynako::windows::ShortcutAction::none) return true;
+        if (control || alt) return false;
         if (key == VK_KANJI || key == VK_KANA || key == kVirtualKeyDbeHiragana ||
             key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT || key == VK_CONVERT) return true;
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
@@ -1092,9 +1138,17 @@ HRESULT register_server() {
         result = profiles->Register(kTextService);
         if (SUCCEEDED(result)) {
             const LANGID language = MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT);
+            // Refreshing the profile makes upgrades idempotent and replaces the
+            // icon metadata cached by the Windows input switcher.
+            profiles->RemoveLanguageProfile(kTextService, language, kLanguageProfile);
+            std::error_code icon_error;
+            const auto standalone_icon = module_directory() / L"KeynakoProfile.ico";
+            const std::wstring icon_file = std::filesystem::exists(standalone_icon, icon_error) && !icon_error
+                                               ? standalone_icon.wstring()
+                                               : std::wstring(module);
             result = profiles->AddLanguageProfile(kTextService, language, kLanguageProfile,
-                kDescription, static_cast<ULONG>(std::size(kDescription) - 1), module,
-                static_cast<ULONG>(wcslen(module)), 0);
+                kDescription, static_cast<ULONG>(std::size(kDescription) - 1), icon_file.c_str(),
+                static_cast<ULONG>(icon_file.size()), 0);
             if (SUCCEEDED(result)) {
                 result = profiles->EnableLanguageProfile(kTextService, language, kLanguageProfile, TRUE);
             }

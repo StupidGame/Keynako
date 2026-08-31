@@ -244,6 +244,7 @@ jobs:
         run: |
           cmake -S platforms/windows -B build/windows-ime -A x64
           cmake --build build/windows-ime --config Release --parallel 2
+          ctest --test-dir build/windows-ime -C Release --output-on-failure
 
       - name: Build the Flutter desktop app
         working-directory: apps/desktop
@@ -261,6 +262,7 @@ jobs:
           $imeRoot = Join-Path $packageRoot 'ime'
           New-Item -ItemType Directory -Force -Path $imeRoot | Out-Null
           Copy-Item -Force 'build/windows-ime/Release/KeynakoIME.dll' $imeRoot
+          Copy-Item -Force 'build/windows-ime/Release/KeynakoProfile.ico' $imeRoot
           Copy-Item -Force 'build/zenzai/Release/keynako_zenzai.exe' $imeRoot
           Copy-Item -Force 'assets/dictionaries/shared_dictionary.tsv' (Join-Path $imeRoot 'bundled_shared_dictionary.tsv')
           New-Item -ItemType Directory -Force -Path (Join-Path $imeRoot 'azookey_dictionary') | Out-Null
@@ -277,7 +279,7 @@ jobs:
           $outputRoot = Join-Path $env:GITHUB_WORKSPACE 'build/windows-installer'
           New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
-          & $iscc "/DPackageRoot=$packageRoot" "/DOutputDir=$outputRoot" 'platforms/windows/installer.iss'
+          & $iscc "/DPackageRoot=$packageRoot" "/DOutputDir=$outputRoot" "/DBuildId=${{ github.run_number }}" 'platforms/windows/installer.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
           Get-FileHash -Algorithm SHA256 (Join-Path $outputRoot 'KeynakoSetup.exe') |
             ForEach-Object { "$($_.Hash.ToLower())  KeynakoSetup.exe" } |

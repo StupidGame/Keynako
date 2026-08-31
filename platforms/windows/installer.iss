@@ -4,6 +4,9 @@
 #ifndef OutputDir
   #define OutputDir "."
 #endif
+#ifndef BuildId
+  #define BuildId "local"
+#endif
 
 #define ProductName "Keynako"
 #define ProductVersion "1.0.0"
@@ -31,10 +34,12 @@ UninstallDisplayName=Keynako Japanese IME
 UninstallDisplayIcon={app}\Keynako.exe
 UninstallFilesDir={app}\Uninstall
 CloseApplications=yes
+CloseApplicationsFilter=Keynako.exe
 RestartApplications=no
 
 [Files]
-Source: "{#PackageRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageRoot}\*"; DestDir: "{app}"; Excludes: "ime\KeynakoIME.dll"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageRoot}\ime\KeynakoIME.dll"; DestDir: "{app}\ime"; DestName: "KeynakoIME-{#BuildId}.dll"; Flags: ignoreversion uninsrestartdelete
 Source: "{#PackageRoot}\ime\bundled_shared_dictionary.tsv"; DestDir: "{commonappdata}\Keynako"; DestName: "shared_dictionary.tsv"; Flags: ignoreversion onlyifdoesntexist
 
 [Dirs]
@@ -45,11 +50,11 @@ Name: "{group}\Keynako settings"; Filename: "{app}\Keynako.exe"; WorkingDir: "{a
 Name: "{group}\Uninstall Keynako"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\ime\KeynakoIME.dll"""; Flags: runhidden waituntilterminated; StatusMsg: "Registering Keynako IME..."
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\ime\KeynakoIME-{#BuildId}.dll"""; Flags: runhidden waituntilterminated; StatusMsg: "Registering Keynako IME..."
 Filename: "{app}\Keynako.exe"; Description: "Open Keynako settings"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\regsvr32.exe"; Parameters: "/s /u ""{app}\ime\KeynakoIME.dll"""; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterKeynakoIME"
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s /u ""{app}\ime\KeynakoIME-{#BuildId}.dll"""; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterKeynakoIME"
 
 [UninstallDelete]
 Type: files; Name: "{commonappdata}\Keynako\shared_dictionary.tsv"
