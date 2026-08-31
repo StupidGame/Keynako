@@ -57,7 +57,7 @@ enum class EditAction { update, commit, cancel };
 class EditSession final : public ITfEditSession {
 public:
     EditSession(TextService *service, ITfContext *context, EditAction action);
-    ~EditSession() override;
+    ~EditSession();
     STDMETHODIMP QueryInterface(REFIID iid, void **object) override;
     STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
     STDMETHODIMP_(ULONG) Release() override {
@@ -79,7 +79,7 @@ class TextService final : public ITfTextInputProcessorEx,
                           public ITfCompositionSink {
 public:
     TextService() { ++g_objects; }
-    ~TextService() override {
+    ~TextService() {
         hide_candidates();
         if (composition_) composition_->Release();
         if (thread_manager_) thread_manager_->Release();
@@ -483,11 +483,11 @@ BOOL APIENTRY DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     return TRUE;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllCanUnloadNow() {
+STDAPI DllCanUnloadNow() {
     return g_objects.load() == 0 ? S_OK : S_FALSE;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(REFCLSID clsid, REFIID iid, void **object) {
+STDAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **object) {
     if (clsid != kTextService) return CLASS_E_CLASSNOTAVAILABLE;
     auto *factory = new ClassFactory();
     const HRESULT result = factory->QueryInterface(iid, object);
@@ -495,14 +495,14 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(REFCLSID cl
     return result;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer() {
+STDAPI DllRegisterServer() {
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const HRESULT result = register_server();
     if (SUCCEEDED(initialized)) CoUninitialize();
     return result;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllUnregisterServer() {
+STDAPI DllUnregisterServer() {
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const HRESULT result = unregister_server();
     if (SUCCEEDED(initialized)) CoUninitialize();

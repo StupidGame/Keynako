@@ -9,6 +9,7 @@ set(KEYNAKO_CORE "${KEYNAKO_ROOT}/packages/keynako_conversion/native/ime_core")
 
 add_library(KeynakoIME SHARED
   keynako_tsf.cpp
+  KeynakoIME.def
   "${KEYNAKO_CORE}/keynako_ime_core.cpp"
   "${KEYNAKO_CORE}/zenzai_client.cpp"
 )
