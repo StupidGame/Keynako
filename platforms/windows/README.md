@@ -5,6 +5,8 @@ It owns composition, Japanese/English input mode, live conversion, candidate
 selection, the shared Keynako dictionary and optional Zenzai conversion.
 `Space` and the Japanese Convert key start/cycle conversion. With no active
 composition, Convert toggles Japanese/English mode on both JIS and US layouts.
+The physical JIS Convert scan code is also recognized when a US layout does not
+map that key to `VK_CONVERT`.
 US keyboards without a Convert key can use `Alt+Backquote` (the Microsoft IME
 shortcut) or `Ctrl+Space` for the same toggle.
 

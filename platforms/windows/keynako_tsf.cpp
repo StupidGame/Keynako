@@ -282,18 +282,19 @@ public:
     }
 
     STDMETHODIMP OnSetFocus(BOOL) override { return S_OK; }
-    STDMETHODIMP OnTestKeyDown(ITfContext *, WPARAM key, LPARAM, BOOL *eaten) override {
+    STDMETHODIMP OnTestKeyDown(ITfContext *, WPARAM key, LPARAM key_data, BOOL *eaten) override {
         if (!eaten) return E_INVALIDARG;
-        *eaten = handles_key(key) ? TRUE : FALSE;
+        *eaten = handles_key(key, key_data) ? TRUE : FALSE;
         return S_OK;
     }
-    STDMETHODIMP OnKeyDown(ITfContext *context, WPARAM key, LPARAM, BOOL *eaten) override {
+    STDMETHODIMP OnKeyDown(ITfContext *context, WPARAM key, LPARAM key_data, BOOL *eaten) override {
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
         const auto shortcut = keynako::windows::shortcut_action(
-            static_cast<std::uint32_t>(key), control, alt,
+            static_cast<std::uint32_t>(key), scan_code, control, alt,
             !session_.raw_input().empty());
         if (shortcut == keynako::windows::ShortcutAction::toggle_input_mode) {
             toggle_input_mode(context);
@@ -305,7 +306,7 @@ public:
             *eaten = TRUE;
             return S_OK;
         }
-        if (!handles_key(key)) return S_OK;
+        if (!handles_key(key, key_data)) return S_OK;
 
         if (key == VK_KANA || key == kVirtualKeyDbeHiragana) {
             set_input_mode(keynako::InputMode::japanese, context);
@@ -489,10 +490,12 @@ private:
         request_edit(context, EditAction::update);
     }
 
-    bool handles_key(WPARAM key) const {
+    bool handles_key(WPARAM key, LPARAM key_data) const {
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-        if (keynako::windows::shortcut_action(static_cast<std::uint32_t>(key), control, alt,
+        const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
+        if (keynako::windows::shortcut_action(static_cast<std::uint32_t>(key), scan_code,
+                                              control, alt,
                                               !session_.raw_input().empty()) !=
             keynako::windows::ShortcutAction::none) return true;
         if (control || alt) return false;
@@ -571,7 +574,10 @@ private:
 
     void sync_input_compartments() {
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
-        set_compartment_value(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, japanese ? 1 : 0);
+        // Keep the active text service open even in direct English mode. Closing
+        // it stops ordinary key callbacks, which makes a physical Convert key
+        // impossible to observe when a US layout does not map it to VK_CONVERT.
+        set_compartment_value(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
         set_compartment_value(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
                               japanese ? TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE |
                                              TF_CONVERSIONMODE_ROMAN

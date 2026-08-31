@@ -10,6 +10,7 @@ constexpr std::uint32_t kKeyKanji = 0x19;
 constexpr std::uint32_t kKeyConvert = 0x1c;
 constexpr std::uint32_t kKeySpace = 0x20;
 constexpr std::uint32_t kKeyOemGrave = 0xc0;
+constexpr std::uint32_t kScanCodeJisConvert = 0x79;
 
 enum class ShortcutAction {
     none,
@@ -17,8 +18,10 @@ enum class ShortcutAction {
     convert_or_cycle,
 };
 
-constexpr ShortcutAction shortcut_action(std::uint32_t key, bool control,
-                                          bool alt, bool has_composition) {
+constexpr ShortcutAction shortcut_action(std::uint32_t key,
+                                          std::uint32_t scan_code,
+                                          bool control, bool alt,
+                                          bool has_composition) {
     if (control && !alt && key == kKeySpace) {
         return ShortcutAction::toggle_input_mode;
     }
@@ -27,7 +30,9 @@ constexpr ShortcutAction shortcut_action(std::uint32_t key, bool control,
     }
     if (control || alt) return ShortcutAction::none;
     if (key == kKeyKanji) return ShortcutAction::toggle_input_mode;
-    if (key == kKeyConvert) {
+    // A physical JIS Convert key uses scan code 0x79. Some US layouts do not
+    // map it to VK_CONVERT, so the scan code is the layout-independent fallback.
+    if (key == kKeyConvert || scan_code == kScanCodeJisConvert) {
         return has_composition ? ShortcutAction::convert_or_cycle
                                : ShortcutAction::toggle_input_mode;
     }
