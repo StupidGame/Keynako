@@ -61,7 +61,7 @@ struct PreservedKeyDefinition {
 
 constexpr PreservedKeyDefinition kPreservedKeys[] = {
     {kPreservedToggle, VK_KANJI, 0, L"Toggle Keynako input mode"},
-    {kPreservedConvert, VK_CONVERT, 0, L"Convert or toggle Keynako input mode"},
+    {kPreservedConvert, VK_CONVERT, 0, L"Convert the current Keynako composition"},
     {kPreservedCtrlSpace, VK_SPACE, TF_MOD_CONTROL, L"Toggle Keynako input mode (US keyboard)"},
     {kPreservedAltGrave, VK_OEM_3, TF_MOD_ALT, L"Toggle Keynako input mode (US keyboard)"},
 };
@@ -177,6 +177,7 @@ class TextService final : public ITfTextInputProcessorEx,
 public:
     TextService() { ++g_objects; }
     ~TextService() {
+        remove_keyboard_hook();
         hide_candidates();
         remove_language_bar();
         if (composition_) composition_->Release();
@@ -254,6 +255,7 @@ public:
             }
             keys->Release();
         }
+        install_keyboard_hook();
         initialize_language_bar();
         sync_input_compartments();
         session_.set_bundled_dictionary_path(path_utf8(
@@ -262,6 +264,7 @@ public:
         return result;
     }
     STDMETHODIMP Deactivate() override {
+        remove_keyboard_hook();
         if (thread_manager_) {
             ITfKeystrokeMgr *keys = nullptr;
             if (SUCCEEDED(thread_manager_->QueryInterface(IID_PPV_ARGS(&keys)))) {
@@ -295,14 +298,14 @@ public:
         const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
         const auto shortcut = keynako::windows::shortcut_action(
             static_cast<std::uint32_t>(key), scan_code, control, alt,
-            !session_.raw_input().empty());
+            !session_.raw_input().empty(), uses_japanese_keyboard());
         if (shortcut == keynako::windows::ShortcutAction::toggle_input_mode) {
             toggle_input_mode(context);
             *eaten = TRUE;
             return S_OK;
         }
         if (shortcut == keynako::windows::ShortcutAction::convert_or_cycle) {
-            convert_or_toggle(context);
+            convert_or_cycle(context);
             *eaten = TRUE;
             return S_OK;
         }
@@ -386,8 +389,10 @@ public:
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
         if (guid == kPreservedConvert) {
-            convert_or_toggle(context);
-            *eaten = TRUE;
+            if (!session_.raw_input().empty()) {
+                convert_or_cycle(context);
+                *eaten = TRUE;
+            }
         } else if (guid == kPreservedToggle || guid == kPreservedCtrlSpace ||
                    guid == kPreservedAltGrave) {
             toggle_input_mode(context);
@@ -474,12 +479,88 @@ private:
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
+    HHOOK keyboard_hook_ = nullptr;
+    bool physical_shortcut_down_ = false;
+    inline static thread_local TextService *keyboard_hook_owner_ = nullptr;
 
-    void convert_or_toggle(ITfContext *context) {
-        if (session_.raw_input().empty()) {
-            toggle_input_mode(context);
-            return;
+    static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM key, LPARAM key_data) {
+        TextService *owner = keyboard_hook_owner_;
+        if (!owner || code != HC_ACTION) {
+            return CallNextHookEx(owner ? owner->keyboard_hook_ : nullptr, code, key,
+                                  key_data);
         }
+        return owner->handle_keyboard_hook(key, key_data);
+    }
+
+    LRESULT handle_keyboard_hook(WPARAM key, LPARAM key_data) {
+        const auto data = static_cast<ULONG_PTR>(key_data);
+        const auto scan_code = static_cast<std::uint32_t>((data >> 16) & 0xff);
+        const bool japanese_keyboard = uses_japanese_keyboard();
+        const bool convert_key = keynako::windows::is_convert_key(
+            static_cast<std::uint32_t>(key), scan_code);
+        const bool hankaku_zenkaku_key =
+            keynako::windows::is_hankaku_zenkaku_key(
+                static_cast<std::uint32_t>(key), scan_code,
+                japanese_keyboard);
+        if (!convert_key && !hankaku_zenkaku_key) {
+            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
+        }
+
+        const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool alt = (data & (static_cast<ULONG_PTR>(1) << 29)) != 0;
+        if (control || alt) {
+            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
+        }
+
+        const bool released = (data & (static_cast<ULONG_PTR>(1) << 31)) != 0;
+        if (released) {
+            if (physical_shortcut_down_) {
+                physical_shortcut_down_ = false;
+                return 1;
+            }
+            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
+        }
+
+        const auto action = keynako::windows::shortcut_action(
+            static_cast<std::uint32_t>(key), scan_code, false, false,
+            !session_.raw_input().empty(), japanese_keyboard);
+        if (action == keynako::windows::ShortcutAction::none) {
+            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
+        }
+
+        const bool was_down = (data & (static_cast<ULONG_PTR>(1) << 30)) != 0;
+        if (!was_down && !physical_shortcut_down_) {
+            if (action == keynako::windows::ShortcutAction::toggle_input_mode) {
+                toggle_input_mode();
+            } else {
+                convert_or_cycle_active();
+            }
+        }
+        physical_shortcut_down_ = true;
+        return 1;
+    }
+
+    void install_keyboard_hook() {
+        if (keyboard_hook_) return;
+        if (keyboard_hook_owner_ && keyboard_hook_owner_ != this) {
+            keyboard_hook_owner_->remove_keyboard_hook();
+        }
+        keyboard_hook_ = SetWindowsHookExW(WH_KEYBOARD, keyboard_hook_proc, nullptr,
+                                           GetCurrentThreadId());
+        if (keyboard_hook_) keyboard_hook_owner_ = this;
+    }
+
+    void remove_keyboard_hook() {
+        if (keyboard_hook_) {
+            UnhookWindowsHookEx(keyboard_hook_);
+            keyboard_hook_ = nullptr;
+        }
+        if (keyboard_hook_owner_ == this) keyboard_hook_owner_ = nullptr;
+        physical_shortcut_down_ = false;
+    }
+
+    void convert_or_cycle(ITfContext *context) {
+        if (session_.raw_input().empty()) return;
         reload_shared_dictionary();
         if (!session_.is_converting()) {
             if (session_.mode() == keynako::InputMode::japanese) add_zenzai_candidate();
@@ -490,26 +571,47 @@ private:
         request_edit(context, EditAction::update);
     }
 
+    void convert_or_cycle_active() {
+        if (!thread_manager_) return;
+        ITfDocumentMgr *document = nullptr;
+        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return;
+        ITfContext *context = nullptr;
+        if (SUCCEEDED(document->GetTop(&context)) && context) {
+            convert_or_cycle(context);
+            context->Release();
+        }
+        document->Release();
+    }
+
     bool handles_key(WPARAM key, LPARAM key_data) const {
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
         if (keynako::windows::shortcut_action(static_cast<std::uint32_t>(key), scan_code,
                                               control, alt,
-                                              !session_.raw_input().empty()) !=
+                                              !session_.raw_input().empty(),
+                                              uses_japanese_keyboard()) !=
             keynako::windows::ShortcutAction::none) return true;
         if (control || alt) return false;
         if (key == VK_KANJI || key == VK_KANA || key == kVirtualKeyDbeHiragana ||
-            key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT || key == VK_CONVERT) return true;
+            key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT) return true;
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
         if (japanese && (key == VK_OEM_MINUS || key == VK_OEM_COMMA || key == VK_OEM_PERIOD)) return true;
         if (session_.raw_input().empty()) return false;
         if (session_.is_converting() && key >= '1' && key <= '9') return true;
-        return key == VK_BACK || key == VK_SPACE || key == VK_CONVERT || key == VK_UP ||
+        return key == VK_BACK || key == VK_SPACE || key == VK_UP ||
                key == VK_DOWN || key == VK_TAB || key == VK_PRIOR || key == VK_NEXT ||
                key == VK_RETURN || key == VK_ESCAPE;
+    }
+
+    static bool uses_japanese_keyboard() {
+        // GetKeyboardType(0) returns 7 for a Japanese 106/109-key keyboard.
+        // This lets its physical Hankaku/Zenkaku key keep working when the
+        // active logical layout is US, without stealing bare Backquote from an
+        // actual US 101/102-key keyboard.
+        return GetKeyboardType(0) == 0x07;
     }
 
     void request_edit(ITfContext *context, EditAction action) {
@@ -575,8 +677,7 @@ private:
     void sync_input_compartments() {
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         // Keep the active text service open even in direct English mode. Closing
-        // it stops ordinary key callbacks, which makes a physical Convert key
-        // impossible to observe when a US layout does not map it to VK_CONVERT.
+        // it stops key callbacks, including Hankaku/Zenkaku mode switching.
         set_compartment_value(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
         set_compartment_value(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
                               japanese ? TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE |
