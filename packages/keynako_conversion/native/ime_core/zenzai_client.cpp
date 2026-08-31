@@ -118,7 +118,7 @@ private:
         PROCESS_INFORMATION process{};
         const auto utf8_to_wide = [](const std::string &value) {
             const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
-            std::wstring wide(static_cast<std::size_t>(std::max(0, size)), L'\0');
+            std::wstring wide(static_cast<std::size_t>(size > 0 ? size : 0), L'\0');
             if (size > 0) MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), wide.data(), size);
             return wide;
         };
