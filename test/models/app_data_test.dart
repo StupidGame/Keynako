@@ -26,6 +26,7 @@ void main() {
     data.learning['にほん\t日本'] = 3;
     data.themes[0] = data.themes.first.copyWith(
       backgroundImage: '/app/theme_backgrounds/classic.image',
+      backgroundImageRevision: 123456,
       keyOpacity: 0.45,
     );
     data.azooKeyHotfixDictionary = const AzooKeyHotfixDictionary(
@@ -62,6 +63,7 @@ void main() {
       decoded.themes.first.backgroundImage,
       '/app/theme_backgrounds/classic.image',
     );
+    expect(decoded.themes.first.backgroundImageRevision, 123456);
     expect(decoded.themes.first.keyOpacity, 0.45);
     expect(decoded.azooKeyHotfixDictionary?.entries.single.word, 'azooKey');
     expect(decoded.azooKeyHotfixLatestTag, 'v1');

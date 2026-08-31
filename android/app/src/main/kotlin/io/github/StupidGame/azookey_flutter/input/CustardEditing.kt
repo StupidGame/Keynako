@@ -43,6 +43,56 @@ internal fun smartDeleteCount(
     return if (distance == 0) 1 else distance
 }
 
+/**
+ * Resolves Custard's common `delete` + backward smart-delete sequence in one
+ * pass. Keeping the pair atomic avoids reading stale surrounding text between
+ * the two editor operations, which is especially visible with Japanese IMEs.
+ */
+internal fun combinedBackwardSmartDeleteCount(
+    text: String,
+    leadingDeleteCount: Int,
+    targets: List<String>,
+): Int {
+    if (text.isEmpty()) return 0
+    val leading = leadingDeleteCount.coerceAtLeast(0).coerceAtMost(text.length)
+    val remaining = text.dropLast(leading)
+    if (remaining.isEmpty()) return leading
+    return (leading + smartDeleteCount(remaining, targets, backward = true))
+        .coerceAtMost(text.length)
+}
+
+internal data class CustardDeleteContinuationAction(
+    val type: String,
+    val count: Int = 1,
+    val direction: String = "",
+)
+
+/**
+ * Returns where a backward smart-delete should resume after the center key's
+ * long-press delete has already fired.
+ */
+internal fun backwardSmartDeleteContinuationStartIndex(
+    actions: List<CustardDeleteContinuationAction>,
+): Int? {
+    fun CustardDeleteContinuationAction.isBackwardSmartDelete(): Boolean =
+        type == "smart_delete_default" ||
+            (type == "smart_delete" && direction == "backward")
+
+    if (
+        actions.firstOrNull()?.isBackwardSmartDelete() == true
+    ) {
+        return 0
+    }
+    return if (
+        actions.firstOrNull()?.let { it.type == "delete" && it.count > 0 } == true &&
+        actions.getOrNull(1)?.isBackwardSmartDelete() == true
+    ) {
+        1
+    } else {
+        null
+    }
+}
+
 internal data class LastCharactersReplacement(
     val removedLength: Int,
     val replacement: String,
