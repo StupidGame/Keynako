@@ -220,15 +220,18 @@ final class KeyboardViewController: UIInputViewController {
         } else {
             signature = nil
         }
-        if signature == nil {
+        if path == nil {
             backgroundImageView.image = nil
             backgroundImageSignature = nil
-        } else if signature != backgroundImageSignature,
+        } else if let signature,
+                  (signature != backgroundImageSignature || backgroundImageView.image == nil),
                   let image = path.flatMap({ UIImage(contentsOfFile: $0) }) {
             backgroundImageView.image = image
             backgroundImageSignature = signature
         }
-        let hasImage = signature != nil && backgroundImageView.image != nil
+        // Keep the decoded image through a transient app-group file lookup
+        // failure and reload it if UIKit recreated the view/image storage.
+        let hasImage = path != nil && backgroundImageView.image != nil
         backgroundImageView.isHidden = !hasImage
         rootStack.backgroundColor = hasImage ? .clear : palette.background
         keyboardStack.backgroundColor = hasImage ? .clear : palette.background

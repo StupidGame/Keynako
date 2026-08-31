@@ -13,4 +13,28 @@ class KeyboardBackgroundLayoutTest {
     fun fillsKeyboardAfterParentSizeIsFixed() {
         assertEquals(258, decorativeImageMeasuredDimension(isExact = true, exactSize = 258))
     }
+
+    @Test
+    fun reloadsImageWhenInputViewWasRecreatedWithTheSameSignature() {
+        assertEquals(
+            true,
+            shouldReloadKeyboardBackground(
+                signature = "theme.image:1",
+                loadedSignature = "theme.image:1",
+                hasDrawable = false,
+            ),
+        )
+    }
+
+    @Test
+    fun keepsAnExistingImageWhenNothingChanged() {
+        assertEquals(
+            false,
+            shouldReloadKeyboardBackground(
+                signature = "theme.image:1",
+                loadedSignature = "theme.image:1",
+                hasDrawable = true,
+            ),
+        )
+    }
 }

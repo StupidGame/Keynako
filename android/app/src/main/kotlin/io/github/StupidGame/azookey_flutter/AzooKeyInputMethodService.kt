@@ -357,15 +357,21 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun applyKeyboardBackground() {
         inputViewFrame.setBackgroundColor(palette.background)
-        val file = palette.backgroundImage?.let(::File)?.takeIf { it.isFile }
+        val configuredPath = palette.backgroundImage
+        val file = configuredPath?.let(::File)?.takeIf { it.isFile }
         val signature = file?.let {
             val revision = palette.backgroundImageRevision ?: it.lastModified()
             "${it.absolutePath}:$revision"
         }
-        if (signature == null) {
+        if (configuredPath == null) {
             backgroundImageView.setImageDrawable(null)
             backgroundImageSignature = null
-        } else if (signature != backgroundImageSignature) {
+        } else if (signature != null && shouldReloadKeyboardBackground(
+                signature = signature,
+                loadedSignature = backgroundImageSignature,
+                hasDrawable = backgroundImageView.drawable != null,
+            )
+        ) {
             val bitmap = file.let(::decodeKeyboardBackground)
             if (bitmap != null) {
                 backgroundImageView.setImageBitmap(bitmap)
@@ -377,7 +383,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                 )
             }
         }
-        val hasImage = signature != null && backgroundImageView.drawable != null
+        // A state/file replacement is atomic, but the filesystem can still be
+        // briefly unavailable. Keep the already decoded image instead of
+        // flashing the palette fallback until the next refresh.
+        val hasImage = configuredPath != null && backgroundImageView.drawable != null
         backgroundImageView.visibility = if (hasImage) View.VISIBLE else View.GONE
         root.setBackgroundColor(if (hasImage) Color.TRANSPARENT else palette.background)
     }
@@ -3318,3 +3327,9 @@ private class KeyboardBackgroundImageView(context: Context) : ImageView(context)
 
 internal fun decorativeImageMeasuredDimension(isExact: Boolean, exactSize: Int): Int =
     if (isExact) exactSize else 0
+
+internal fun shouldReloadKeyboardBackground(
+    signature: String,
+    loadedSignature: String?,
+    hasDrawable: Boolean,
+): Boolean = signature != loadedSignature || !hasDrawable
