@@ -54,13 +54,45 @@ void main() {
     expect(candidates.first.text, '高い候補');
   });
 
-  test('applies learning without depending on application state', () {
+  test('pins live conversion, hiragana, and katakana in that order', () {
+    final candidates = converter.candidates(
+      input: 'nihongo',
+      romanInput: true,
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(
+            reading: 'にほんご',
+            value: '日本語入力',
+            importance: 5,
+          ),
+        ],
+      ),
+    );
+
+    expect(candidates.take(3).map((candidate) => candidate.text), [
+      '日本語入力',
+      'にほんご',
+      'ニホンゴ',
+    ]);
+  });
+
+  test('normalizes katakana before looking up candidates', () {
+    final candidates = converter.candidates(input: 'キョウ');
+
+    expect(candidates.take(2).map((candidate) => candidate.text), [
+      'きょう',
+      'キョウ',
+    ]);
+    expect(candidates.map((candidate) => candidate.text), contains('今日'));
+  });
+
+  test('applies learning while preserving pinned kana order', () {
     final values = converter.candidates(
       input: 'にほんご',
       options: const ConversionOptions(learning: {'にほんご\tニホンゴ': 5}),
     );
 
-    expect(values.first.text, 'ニホンゴ');
+    expect(values.take(2).map((candidate) => candidate.text), ['にほんご', 'ニホンゴ']);
   });
 
   test('provides optional half-width, full-width and Unicode candidates', () {

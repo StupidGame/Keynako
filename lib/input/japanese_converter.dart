@@ -17,6 +17,9 @@ class JapaneseConverter {
   String hiraganaToKatakana(String value) =>
       _converter.hiraganaToKatakana(value);
 
+  String katakanaToHiragana(String value) =>
+      _converter.katakanaToHiragana(value);
+
   String katakanaToHalfWidth(String value) =>
       _converter.katakanaToHalfWidth(value);
 
@@ -48,6 +51,7 @@ class JapaneseConverter {
         emojiCandidate: data.settings['emoji_dictionary_enabled'] == true,
         kaomojiCandidate: data.settings['kaomoji_dictionary_enabled'] == true,
         romanEnglishCandidate: data.settings['roman_english_candidate'] == true,
+        liveConversion: data.settings['live_conversion'] == true,
       ),
     );
   }

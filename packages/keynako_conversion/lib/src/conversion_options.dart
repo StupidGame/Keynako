@@ -27,6 +27,7 @@ class ConversionOptions {
     this.emojiCandidate = true,
     this.kaomojiCandidate = true,
     this.romanEnglishCandidate = true,
+    this.liveConversion = true,
   });
 
   final List<ConversionDictionaryEntry> userDictionary;
@@ -38,4 +39,5 @@ class ConversionOptions {
   final bool emojiCandidate;
   final bool kaomojiCandidate;
   final bool romanEnglishCandidate;
+  final bool liveConversion;
 }
