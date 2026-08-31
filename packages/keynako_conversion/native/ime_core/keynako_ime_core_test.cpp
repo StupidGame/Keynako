@@ -1,6 +1,8 @@
 #include "keynako_ime_core.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdlib>
 
 int main() {
     using keynako::ImeSession;
@@ -31,5 +33,22 @@ int main() {
     session.backspace();
     assert(session.raw_input() == "henka");
     assert(!session.is_converting());
+
+    const char *dictionary_path = std::getenv("KEYNAKO_TEST_AZOOKEY_DICTIONARY");
+    assert(dictionary_path != nullptr);
+    ImeSession bundled;
+    assert(bundled.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("nihongo")) bundled.append_ascii(value);
+    const auto has_japanese = std::any_of(
+        bundled.candidates().begin(), bundled.candidates().end(),
+        [](const keynako::Candidate &candidate) { return candidate.text == "日本語"; });
+    assert(has_japanese);
+    bundled.set_user_dictionary({
+        {"にほん", "共有", 5, 1000.0f, 1285, 1285, true},
+    });
+    const auto has_combined_shared_entry = std::any_of(
+        bundled.candidates().begin(), bundled.candidates().end(),
+        [](const keynako::Candidate &candidate) { return candidate.text.rfind("共有", 0) == 0; });
+    assert(has_combined_shared_entry);
     return 0;
 }

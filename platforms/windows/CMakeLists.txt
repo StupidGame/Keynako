@@ -11,6 +11,7 @@ add_library(KeynakoIME SHARED
   keynako_tsf.cpp
   KeynakoIME.def
   KeynakoIME.rc
+  "${KEYNAKO_CORE}/azookey_dictionary.cpp"
   "${KEYNAKO_CORE}/keynako_ime_core.cpp"
   "${KEYNAKO_CORE}/zenzai_client.cpp"
 )

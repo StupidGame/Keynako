@@ -40,6 +40,8 @@ class NativeSession:
         self.library.keynako_ime_is_converting.restype = ctypes.c_int
         self.library.keynako_ime_load_user_dictionary.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_load_user_dictionary.restype = ctypes.c_int
+        self.library.keynako_ime_set_bundled_dictionary_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self.library.keynako_ime_set_bundled_dictionary_path.restype = ctypes.c_int
         for name in ("keynako_ime_reading", "keynako_ime_display_text", "keynako_ime_selected_text"):
             function = getattr(self.library, name)
             function.argtypes = [ctypes.c_void_p]
@@ -56,6 +58,10 @@ class NativeSession:
         self.handle = self.library.keynako_ime_create()
         if not self.handle:
             raise RuntimeError("could not create Keynako IME session")
+        dictionary_root = Path(__file__).resolve().parent / "azookey_dictionary" / "Dictionary"
+        self.library.keynako_ime_set_bundled_dictionary_path(
+            self.handle, os.fsencode(dictionary_root),
+        )
 
     def close(self) -> None:
         if self.handle:
@@ -205,6 +211,7 @@ class KeynakoEngine(IBus.Engine):
         if xdg:
             candidates.append(Path(xdg) / "keynako" / "shared_dictionary.tsv")
         candidates.append(home / ".local" / "share" / "keynako" / "shared_dictionary.tsv")
+        candidates.append(Path(__file__).resolve().parent / "bundled_shared_dictionary.tsv")
         return candidates
 
     def _reload_shared_dictionary(self, force: bool = False) -> None:
@@ -306,6 +313,15 @@ class KeynakoEngine(IBus.Engine):
         )
         if keyval in conversion_keys:
             if not self.raw:
+                if keyval in (
+                    getattr(IBus, "KEY_Henkan", -1),
+                    getattr(IBus, "KEY_Henkan_Mode", -1),
+                ):
+                    self.mode = "en" if self.mode == "ja" else "ja"
+                    self.session.set_mode(self.mode == "en")
+                    self._update_mode_property()
+                    self._render()
+                    return True
                 return False
             self._reload_shared_dictionary()
             if not self.session.is_converting():

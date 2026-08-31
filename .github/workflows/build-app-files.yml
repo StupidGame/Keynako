@@ -224,6 +224,14 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Refresh the bundled Dictionary/data_v1.json snapshot
+        working-directory: apps/desktop
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          flutter pub get
+          dart run tool/update_bundled_shared_dictionary.dart ../../assets/dictionaries/shared_dictionary.tsv
+
       - name: Build the Zenzai runtime
         shell: pwsh
         run: |
@@ -254,6 +262,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $imeRoot | Out-Null
           Copy-Item -Force 'build/windows-ime/Release/KeynakoIME.dll' $imeRoot
           Copy-Item -Force 'build/zenzai/Release/keynako_zenzai.exe' $imeRoot
+          Copy-Item -Force 'assets/dictionaries/shared_dictionary.tsv' (Join-Path $imeRoot 'bundled_shared_dictionary.tsv')
+          New-Item -ItemType Directory -Force -Path (Join-Path $imeRoot 'azookey_dictionary') | Out-Null
+          Copy-Item -Recurse -Force 'third_party/azookey_dictionary_storage/Dictionary' (Join-Path $imeRoot 'azookey_dictionary')
           New-Item -ItemType Directory -Force -Path (Join-Path $imeRoot 'zenzai') | Out-Null
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-small-gguf' (Join-Path $imeRoot 'zenzai')
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-xsmall-gguf' (Join-Path $imeRoot 'zenzai')
@@ -302,6 +313,14 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Refresh the bundled Dictionary/data_v1.json snapshot
+        working-directory: apps/desktop
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          flutter pub get
+          dart run tool/update_bundled_shared_dictionary.dart ../../assets/dictionaries/shared_dictionary.tsv
+
       - name: Build the Zenzai runtime
         run: |
           cmake -S packages/keynako_conversion/native -B build/zenzai -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -331,6 +350,9 @@ jobs:
             platforms/linux/install-ime.sh platforms/linux/uninstall-ime.sh "$package_root/"
           cp apps/desktop/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png \
             "$package_root/keynako.png"
+          cp assets/dictionaries/shared_dictionary.tsv "$package_root/bundled_shared_dictionary.tsv"
+          mkdir -p "$package_root/azookey_dictionary"
+          cp -R third_party/azookey_dictionary_storage/Dictionary "$package_root/azookey_dictionary/"
           chmod +x "$package_root/keynako_engine.py" "$package_root/keynako_zenzai" "$package_root/"*.sh
           mkdir -p "$package_root/zenzai"
           cp -R assets/zenz-v3.2-small-gguf "$package_root/zenzai/"
@@ -362,6 +384,14 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Refresh the bundled Dictionary/data_v1.json snapshot
+        working-directory: apps/desktop
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          flutter pub get
+          dart run tool/update_bundled_shared_dictionary.dart ../../assets/dictionaries/shared_dictionary.tsv
+
       - name: Build the Zenzai runtime
         run: |
           cmake -S packages/keynako_conversion/native -B build/zenzai -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -390,6 +420,8 @@ jobs:
           cp -R "$source_app" "$package_app"
           cp build/zenzai/keynako_zenzai "$package_app/Contents/MacOS/"
           chmod +x "$package_app/Contents/MacOS/keynako_zenzai"
+          cp assets/dictionaries/shared_dictionary.tsv \
+            "$package_app/Contents/Resources/bundled_shared_dictionary.tsv"
           mkdir -p "$package_app/Contents/Resources/zenzai"
           cp -R assets/zenz-v3.2-small-gguf "$package_app/Contents/Resources/zenzai/"
           cp -R assets/zenz-v3.2-xsmall-gguf "$package_app/Contents/Resources/zenzai/"

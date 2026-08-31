@@ -5,6 +5,9 @@ install_root="${XDG_DATA_HOME:-$HOME/.local/share}/keynako"
 component_root="${XDG_DATA_HOME:-$HOME/.local/share}/ibus/component"
 mkdir -p "$install_root" "$component_root"
 cp -R "$source_root/." "$install_root/"
+if [[ ! -f "$install_root/shared_dictionary.tsv" && -f "$source_root/bundled_shared_dictionary.tsv" ]]; then
+  cp "$source_root/bundled_shared_dictionary.tsv" "$install_root/shared_dictionary.tsv"
+fi
 chmod +x "$install_root/keynako_engine.py" "$install_root/keynako_zenzai" 2>/dev/null || true
 sed -e "s|@EXECUTABLE@|$install_root/keynako_engine.py|g" \
     -e "s|@SETUP@|$install_root/keynako_desktop|g" \

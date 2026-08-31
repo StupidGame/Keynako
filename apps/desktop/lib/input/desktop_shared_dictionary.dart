@@ -19,7 +19,7 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
 
   @override
   Future<SharedDictionarySnapshot?> load() async {
-    for (final file in _candidateFiles()) {
+    for (final file in [..._writableFiles(), ..._bundledFiles()]) {
       if (!await file.exists()) continue;
       try {
         final snapshot = NativeSharedDictionaryCodec.decode(
@@ -49,7 +49,7 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
     final snapshot = await _client.fetch();
     final content = NativeSharedDictionaryCodec.encode(snapshot);
     Object? lastError;
-    for (final file in _candidateFiles()) {
+    for (final file in _writableFiles()) {
       try {
         await file.parent.create(recursive: true);
         await file.writeAsString(content, flush: true);
@@ -67,13 +67,13 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
   }
 
   Future<File?> _firstExistingFile() async {
-    for (final file in _candidateFiles()) {
+    for (final file in _writableFiles()) {
       if (await file.exists()) return file;
     }
     return null;
   }
 
-  List<File> _candidateFiles() {
+  List<File> _writableFiles() {
     final paths = <String>[];
     if (Platform.isWindows) {
       final programData = Platform.environment['ProgramData'];
@@ -105,5 +105,21 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
       paths.add('${Directory.systemTemp.path}/Keynako/shared_dictionary.tsv');
     }
     return paths.map(File.new).toList(growable: false);
+  }
+
+  List<File> _bundledFiles() {
+    final executable = File(Platform.resolvedExecutable);
+    final directory = executable.parent;
+    if (Platform.isWindows) {
+      return [File('${directory.path}\\ime\\bundled_shared_dictionary.tsv')];
+    }
+    if (Platform.isMacOS) {
+      return [
+        File(
+          '${directory.parent.path}/Resources/bundled_shared_dictionary.tsv',
+        ),
+      ];
+    }
+    return [File('${directory.path}/bundled_shared_dictionary.tsv')];
   }
 }

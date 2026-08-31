@@ -35,6 +35,7 @@ RestartApplications=no
 
 [Files]
 Source: "{#PackageRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageRoot}\ime\bundled_shared_dictionary.tsv"; DestDir: "{commonappdata}\Keynako"; DestName: "shared_dictionary.tsv"; Flags: ignoreversion onlyifdoesntexist
 
 [Dirs]
 Name: "{commonappdata}\Keynako"; Permissions: users-modify
@@ -49,6 +50,12 @@ Filename: "{app}\Keynako.exe"; Description: "Open Keynako settings"; Flags: nowa
 
 [UninstallRun]
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s /u ""{app}\ime\KeynakoIME.dll"""; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterKeynakoIME"
+
+[UninstallDelete]
+Type: files; Name: "{commonappdata}\Keynako\shared_dictionary.tsv"
+Type: dirifempty; Name: "{commonappdata}\Keynako"
+Type: files; Name: "{localappdata}\Keynako\shared_dictionary.tsv"
+Type: dirifempty; Name: "{localappdata}\Keynako"
 
 [Code]
 function InitializeSetup(): Boolean;

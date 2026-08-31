@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CTest)
 
 add_library(keynako_ime_core STATIC
+  ime_core/azookey_dictionary.cpp
   ime_core/keynako_ime_core.cpp
   ime_core/zenzai_client.cpp
 )
@@ -21,6 +22,9 @@ if(BUILD_TESTING)
   add_executable(keynako_ime_core_test ime_core/keynako_ime_core_test.cpp)
   target_link_libraries(keynako_ime_core_test PRIVATE keynako_ime_core)
   add_test(NAME keynako_ime_core_test COMMAND keynako_ime_core_test)
+  get_filename_component(KEYNAKO_TEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+  set_tests_properties(keynako_ime_core_test PROPERTIES ENVIRONMENT
+    "KEYNAKO_TEST_AZOOKEY_DICTIONARY=${KEYNAKO_TEST_ROOT}/third_party/azookey_dictionary_storage/Dictionary")
 
   add_executable(keynako_ime_c_api_test ime_core/keynako_ime_c_api_test.cpp)
   target_link_libraries(keynako_ime_c_api_test PRIVATE keynako_ime_bridge)

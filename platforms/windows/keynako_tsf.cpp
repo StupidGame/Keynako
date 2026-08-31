@@ -232,6 +232,8 @@ public:
         }
         initialize_language_bar();
         sync_input_compartments();
+        session_.set_bundled_dictionary_path(path_utf8(
+            module_directory() / L"azookey_dictionary" / L"Dictionary"));
         reload_shared_dictionary(true);
         return result;
     }
@@ -282,6 +284,11 @@ public:
         }
         if (key == kVirtualKeyDbeAlphanumeric) {
             set_input_mode(keynako::InputMode::english, context);
+            *eaten = TRUE;
+            return S_OK;
+        }
+        if (key == VK_CONVERT && session_.raw_input().empty()) {
+            toggle_input_mode(context);
             *eaten = TRUE;
             return S_OK;
         }
@@ -444,7 +451,7 @@ private:
         if (control && key == VK_SPACE) return true;
         if (control || (GetKeyState(VK_MENU) & 0x8000) != 0) return false;
         if (key == VK_KANJI || key == VK_KANA || key == kVirtualKeyDbeHiragana ||
-            key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT) return true;
+            key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT || key == VK_CONVERT) return true;
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
@@ -536,6 +543,7 @@ private:
         const auto local_app_data = environment_path(L"LOCALAPPDATA");
         if (!program_data.empty()) files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
         if (!local_app_data.empty()) files.push_back(local_app_data / L"Keynako" / L"shared_dictionary.tsv");
+        files.push_back(module_directory() / L"bundled_shared_dictionary.tsv");
 
         std::error_code error;
         for (const auto &file : files) {
@@ -554,8 +562,13 @@ private:
             if (!stream) continue;
             std::vector<keynako::DictionaryEntry> entries;
             std::string line;
+            bool valid_header = false;
             while (std::getline(stream, line)) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.rfind("# keynako-shared-dictionary-v1", 0) == 0) {
+                    valid_header = true;
+                    continue;
+                }
                 if (line.empty() || line.front() == '#') continue;
                 const auto first_tab = line.find('\t');
                 const auto second_tab = first_tab == std::string::npos
@@ -565,14 +578,31 @@ private:
                 try {
                     const int importance = std::clamp(std::stoi(line.substr(0, first_tab)), 1, 5);
                     std::string reading = line.substr(first_tab + 1, second_tab - first_tab - 1);
-                    std::string value = line.substr(second_tab + 1);
+                    const auto third_tab = line.find('\t', second_tab + 1);
+                    std::string value = third_tab == std::string::npos
+                        ? line.substr(second_tab + 1)
+                        : line.substr(second_tab + 1, third_tab - second_tab - 1);
                     if (!reading.empty() && !value.empty()) {
-                        entries.push_back({std::move(reading), std::move(value), importance});
+                        keynako::DictionaryEntry entry{std::move(reading), std::move(value), importance};
+                        if (third_tab != std::string::npos) {
+                            const auto fourth_tab = line.find('\t', third_tab + 1);
+                            const auto fifth_tab = fourth_tab == std::string::npos
+                                ? std::string::npos
+                                : line.find('\t', fourth_tab + 1);
+                            if (fourth_tab != std::string::npos && fifth_tab != std::string::npos) {
+                                entry.word_weight = std::stof(line.substr(third_tab + 1, fourth_tab - third_tab - 1));
+                                entry.lcid = std::stoi(line.substr(fourth_tab + 1, fifth_tab - fourth_tab - 1));
+                                entry.rcid = std::stoi(line.substr(fifth_tab + 1));
+                                entry.has_word_weight = true;
+                            }
+                        }
+                        entries.push_back(std::move(entry));
                     }
                 } catch (const std::exception &) {
                     continue;
                 }
             }
+            if (!valid_header || entries.empty()) continue;
             session_.set_user_dictionary(std::move(entries));
             shared_dictionary_path_ = file;
             shared_dictionary_write_time_ = write_time;

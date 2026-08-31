@@ -16,6 +16,8 @@ void main() {
           'word': 'Keynako共有',
           'ruby': 'きーなこ',
           'word_weight': -10.0,
+          'lcid': 1285,
+          'rcid': 1285,
           'importance': 5,
         },
       ],
@@ -36,6 +38,9 @@ void main() {
     expect(snapshot.revision, 'abc123');
     expect(snapshot.entries.single.value, 'Keynako共有');
     expect(snapshot.entries.single.importance, 5);
+    expect(snapshot.entries.single.wordWeight, -10.0);
+    expect(snapshot.entries.single.leftContextId, 1285);
+    expect(snapshot.entries.single.rightContextId, 1285);
   });
 
   test('round trips the native dictionary cache', () {
@@ -48,6 +53,9 @@ void main() {
           reading: 'きーなこ',
           value: 'Keynako',
           importance: 4,
+          wordWeight: -10,
+          leftContextId: 1285,
+          rightContextId: 1285,
         ),
       ],
     );
@@ -60,5 +68,8 @@ void main() {
     expect(decoded.entries.single.reading, 'きーなこ');
     expect(decoded.entries.single.value, 'Keynako');
     expect(decoded.entries.single.importance, 4);
+    expect(decoded.entries.single.wordWeight, -10);
+    expect(decoded.entries.single.leftContextId, 1285);
+    expect(decoded.entries.single.rightContextId, 1285);
   });
 }

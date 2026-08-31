@@ -86,6 +86,8 @@ class KeynakoSharedDictionaryClient {
       final reading = entry['ruby'];
       final value = entry['word'];
       final weight = entry['word_weight'];
+      final leftContextId = entry['lcid'];
+      final rightContextId = entry['rcid'];
       if (reading is! String || value is! String || weight is! num) {
         throw const FormatException(
           'Keynako shared dictionary entry is malformed.',
@@ -100,6 +102,9 @@ class KeynakoSharedDictionaryClient {
           reading: reading,
           value: value,
           importance: importance,
+          wordWeight: weight.toDouble(),
+          leftContextId: leftContextId is num ? leftContextId.toInt() : null,
+          rightContextId: rightContextId is num ? rightContextId.toInt() : null,
         ),
       );
     }
@@ -126,6 +131,13 @@ class KeynakoSharedDictionaryClient {
     try {
       final request = await client.getUrl(uri);
       headers.forEach(request.headers.set);
+      final githubToken = Platform.environment['GITHUB_TOKEN'];
+      if (githubToken != null && githubToken.isNotEmpty) {
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $githubToken',
+        );
+      }
       final response = await request.close().timeout(
         const Duration(seconds: 30),
       );
@@ -165,10 +177,21 @@ class NativeSharedDictionaryCodec {
       '${clean(snapshot.version)}\t${clean(snapshot.lastUpdate)}\n',
     );
     for (final entry in snapshot.entries) {
-      output.writeln(
+      final scored =
+          entry.wordWeight != null &&
+          entry.leftContextId != null &&
+          entry.rightContextId != null;
+      output.write(
         '${entry.importance.clamp(1, 5)}\t'
         '${clean(entry.reading)}\t${clean(entry.value)}',
       );
+      if (scored) {
+        output.write(
+          '\t${entry.wordWeight}\t${entry.leftContextId}\t'
+          '${entry.rightContextId}',
+        );
+      }
+      output.writeln();
     }
     return output.toString();
   }
@@ -186,7 +209,7 @@ class NativeSharedDictionaryCodec {
     for (final line in lines.skip(1)) {
       if (line.trim().isEmpty || line.startsWith('#')) continue;
       final fields = line.split('\t');
-      if (fields.length != 3) continue;
+      if (fields.length < 3) continue;
       final importance = int.tryParse(fields[0]);
       if (importance == null || fields[1].isEmpty || fields[2].isEmpty) {
         continue;
@@ -196,6 +219,9 @@ class NativeSharedDictionaryCodec {
           reading: fields[1],
           value: fields[2],
           importance: importance.clamp(1, 5),
+          wordWeight: fields.length >= 6 ? double.tryParse(fields[3]) : null,
+          leftContextId: fields.length >= 6 ? int.tryParse(fields[4]) : null,
+          rightContextId: fields.length >= 6 ? int.tryParse(fields[5]) : null,
         ),
       );
     }

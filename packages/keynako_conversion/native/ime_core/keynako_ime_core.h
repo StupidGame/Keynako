@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "azookey_dictionary.h"
 
 namespace keynako {
 
@@ -17,6 +20,10 @@ struct DictionaryEntry {
     std::string reading;
     std::string value;
     int importance = 3;
+    float word_weight = 0;
+    int lcid = 1285;
+    int rcid = 1285;
+    bool has_word_weight = false;
 };
 
 // Platform-neutral input state. Strings crossing this boundary are UTF-8.
@@ -34,6 +41,7 @@ public:
     bool select_candidate(std::size_t index);
     bool select_reading();
     void set_user_dictionary(std::vector<DictionaryEntry> entries);
+    bool set_bundled_dictionary_path(const std::string &utf8_path);
 
     const std::string &raw_input() const { return raw_input_; }
     const std::string &reading() const { return reading_; }
@@ -59,6 +67,7 @@ private:
     std::string reading_;
     std::vector<Candidate> candidates_;
     std::vector<DictionaryEntry> user_dictionary_;
+    std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;
     std::size_t selected_index_ = 0;
 };
 

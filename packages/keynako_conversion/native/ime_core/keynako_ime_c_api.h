@@ -26,6 +26,7 @@ KEYNAKO_IME_EXPORT int keynako_ime_cancel_conversion(keynako_ime_session session
 KEYNAKO_IME_EXPORT int keynako_ime_is_converting(keynako_ime_session session);
 KEYNAKO_IME_EXPORT int keynako_ime_select_candidate(keynako_ime_session session, size_t index);
 KEYNAKO_IME_EXPORT int keynako_ime_load_user_dictionary(keynako_ime_session session, const char *utf8_path);
+KEYNAKO_IME_EXPORT int keynako_ime_set_bundled_dictionary_path(keynako_ime_session session, const char *utf8_path);
 KEYNAKO_IME_EXPORT const char *keynako_ime_reading(keynako_ime_session session);
 KEYNAKO_IME_EXPORT const char *keynako_ime_display_text(keynako_ime_session session);
 KEYNAKO_IME_EXPORT const char *keynako_ime_selected_text(keynako_ime_session session);

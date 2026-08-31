@@ -6,6 +6,9 @@ class ConversionDictionaryEntry {
     this.template = false,
     this.format,
     this.importance = 3,
+    this.wordWeight,
+    this.leftContextId,
+    this.rightContextId,
   });
 
   final String reading;
@@ -13,6 +16,9 @@ class ConversionDictionaryEntry {
   final bool template;
   final String? format;
   final int importance;
+  final double? wordWeight;
+  final int? leftContextId;
+  final int? rightContextId;
 }
 
 /// Per-request candidate switches and personalization data.

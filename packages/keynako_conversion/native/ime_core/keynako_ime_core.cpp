@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -116,6 +117,18 @@ void ImeSession::set_user_dictionary(std::vector<DictionaryEntry> entries) {
     user_dictionary_ = std::move(entries);
     if (!raw_input_.empty()) rebuild_candidates();
 }
+bool ImeSession::set_bundled_dictionary_path(const std::string &utf8_path) {
+    if (utf8_path.empty()) {
+        bundled_dictionary_.reset();
+        if (!raw_input_.empty()) rebuild_candidates();
+        return false;
+    }
+    auto dictionary = std::make_unique<AzooKeyDictionary>(std::filesystem::u8path(utf8_path));
+    if (!dictionary->available()) return false;
+    bundled_dictionary_ = std::move(dictionary);
+    if (!raw_input_.empty()) rebuild_candidates();
+    return true;
+}
 std::string ImeSession::display_text() const { return (converting_ || (live_conversion_ && !live_conversion_suspended_)) && !candidates_.empty() ? candidates_[selected_index_].text : reading_; }
 std::string ImeSession::selected_text() const { return candidates_.empty() ? reading_ : candidates_[selected_index_].text; }
 void ImeSession::select_next() { if (!candidates_.empty()) selected_index_ = (selected_index_ + 1) % candidates_.size(); }
@@ -175,6 +188,17 @@ void ImeSession::rebuild_candidates() {
     reading_ = roman_to_hiragana(raw_input_);
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == reading_) append_unique(candidates_, seen, entry.value, "shared");
+    }
+    if (bundled_dictionary_) {
+        std::vector<AzooKeyAdditionalEntry> additional_entries;
+        for (const auto &entry : user_dictionary_) {
+            if (!entry.has_word_weight) continue;
+            additional_entries.push_back({entry.value, entry.reading, entry.lcid,
+                                          entry.rcid, entry.word_weight});
+        }
+        for (auto &value : bundled_dictionary_->candidates(reading_, 48, additional_entries)) {
+            append_unique(candidates_, seen, std::move(value), "azookey");
+        }
     }
     const auto dictionary = kDictionary.find(reading_);
     if (dictionary != kDictionary.end()) for (const auto &value : dictionary->second) append_unique(candidates_, seen, value, "dictionary");
