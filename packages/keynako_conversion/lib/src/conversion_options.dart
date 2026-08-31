@@ -5,12 +5,14 @@ class ConversionDictionaryEntry {
     required this.value,
     this.template = false,
     this.format,
+    this.importance = 3,
   });
 
   final String reading;
   final String value;
   final bool template;
   final String? format;
+  final int importance;
 }
 
 /// Per-request candidate switches and personalization data.

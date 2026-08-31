@@ -32,6 +32,28 @@ void main() {
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
 
+  test('orders user dictionary entries by importance', () {
+    final candidates = converter.candidates(
+      input: 'きーなこ',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(
+            reading: 'きーなこ',
+            value: '低い候補',
+            importance: 1,
+          ),
+          ConversionDictionaryEntry(
+            reading: 'きーなこ',
+            value: '高い候補',
+            importance: 5,
+          ),
+        ],
+      ),
+    );
+
+    expect(candidates.first.text, '高い候補');
+  });
+
   test('applies learning without depending on application state', () {
     final values = converter.candidates(
       input: 'にほんご',

@@ -353,7 +353,7 @@ class JapaneseConverter {
             text: entry.template ? _renderTemplate(entry) : entry.value,
             reading: reading,
             source: 'user',
-            score: 400,
+            score: 340 + entry.importance.clamp(1, 5).toInt() * 20,
           ),
         );
       }

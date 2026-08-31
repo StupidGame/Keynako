@@ -36,6 +36,7 @@ class JapaneseConverter {
                 value: entry.word,
                 template: entry.isTemplateMode,
                 format: entry.formatLiteral,
+                importance: entry.importance,
               ),
             )
             .toList(growable: false),
