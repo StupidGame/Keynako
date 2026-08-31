@@ -26,13 +26,18 @@ OutputBaseFilename=KeynakoSetup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\..\apps\desktop\windows\runner\resources\app_icon.ico
 UninstallDisplayName=Keynako Japanese IME
+UninstallDisplayIcon={app}\Keynako.exe
 UninstallFilesDir={app}\Uninstall
 CloseApplications=yes
 RestartApplications=no
 
 [Files]
 Source: "{#PackageRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Dirs]
+Name: "{commonappdata}\Keynako"; Permissions: users-modify
 
 [Icons]
 Name: "{group}\Keynako settings"; Filename: "{app}\Keynako.exe"; WorkingDir: "{app}"

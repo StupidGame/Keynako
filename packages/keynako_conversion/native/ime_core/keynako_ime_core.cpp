@@ -75,11 +75,48 @@ void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> 
 }  // namespace
 
 void ImeSession::set_mode(InputMode mode) { if (mode_ != mode) { mode_ = mode; clear(); } }
-void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; }
-void ImeSession::append_ascii(char value) { raw_input_.push_back(value); rebuild_candidates(); }
-void ImeSession::backspace() { if (!raw_input_.empty()) { raw_input_.pop_back(); rebuild_candidates(); } }
-void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; }
-std::string ImeSession::display_text() const { return live_conversion_ && !candidates_.empty() ? candidates_[selected_index_].text : reading_; }
+void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
+void ImeSession::append_ascii(char value) { converting_ = false; live_conversion_suspended_ = false; raw_input_.push_back(value); rebuild_candidates(); }
+void ImeSession::backspace() { if (!raw_input_.empty()) { converting_ = false; live_conversion_suspended_ = false; raw_input_.pop_back(); rebuild_candidates(); } }
+void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; }
+bool ImeSession::begin_conversion() {
+    if (raw_input_.empty() || candidates_.empty()) return false;
+    converting_ = true;
+    live_conversion_suspended_ = false;
+    selected_index_ = 0;
+    return true;
+}
+bool ImeSession::cancel_conversion() {
+    if (!converting_) return false;
+    converting_ = false;
+    live_conversion_suspended_ = true;
+    selected_index_ = 0;
+    return true;
+}
+bool ImeSession::select_candidate(std::size_t index) {
+    if (!converting_ || index >= candidates_.size()) return false;
+    selected_index_ = index;
+    return true;
+}
+bool ImeSession::select_reading() {
+    if (raw_input_.empty()) return false;
+    const auto found = std::find_if(candidates_.begin(), candidates_.end(), [](const Candidate &candidate) {
+        return candidate.source == "reading" || candidate.source == "english";
+    });
+    if (found == candidates_.end()) return false;
+    converting_ = true;
+    selected_index_ = static_cast<std::size_t>(std::distance(candidates_.begin(), found));
+    return true;
+}
+void ImeSession::set_user_dictionary(std::vector<DictionaryEntry> entries) {
+    std::stable_sort(entries.begin(), entries.end(), [](const DictionaryEntry &left, const DictionaryEntry &right) {
+        if (left.reading != right.reading) return left.reading < right.reading;
+        return left.importance > right.importance;
+    });
+    user_dictionary_ = std::move(entries);
+    if (!raw_input_.empty()) rebuild_candidates();
+}
+std::string ImeSession::display_text() const { return (converting_ || (live_conversion_ && !live_conversion_suspended_)) && !candidates_.empty() ? candidates_[selected_index_].text : reading_; }
 std::string ImeSession::selected_text() const { return candidates_.empty() ? reading_ : candidates_[selected_index_].text; }
 void ImeSession::select_next() { if (!candidates_.empty()) selected_index_ = (selected_index_ + 1) % candidates_.size(); }
 void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ = (selected_index_ + candidates_.size() - 1) % candidates_.size(); }
@@ -122,7 +159,7 @@ std::string ImeSession::roman_to_hiragana(const std::string &input) {
 }
 
 void ImeSession::rebuild_candidates() {
-    candidates_.clear(); selected_index_ = 0;
+    candidates_.clear(); selected_index_ = 0; converting_ = false;
     if (raw_input_.empty()) { reading_.clear(); return; }
     std::unordered_set<std::string> seen;
     if (mode_ == InputMode::english) {
@@ -136,6 +173,9 @@ void ImeSession::rebuild_candidates() {
         return;
     }
     reading_ = roman_to_hiragana(raw_input_);
+    for (const auto &entry : user_dictionary_) {
+        if (entry.reading == reading_) append_unique(candidates_, seen, entry.value, "shared");
+    }
     const auto dictionary = kDictionary.find(reading_);
     if (dictionary != kDictionary.end()) for (const auto &value : dictionary->second) append_unique(candidates_, seen, value, "dictionary");
     append_unique(candidates_, seen, reading_, "reading");

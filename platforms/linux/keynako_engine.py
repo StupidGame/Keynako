@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import gi
 
@@ -31,6 +32,14 @@ class NativeSession:
         self.library.keynako_ime_append_ascii.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_backspace.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_clear.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_begin_conversion.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_begin_conversion.restype = ctypes.c_int
+        self.library.keynako_ime_cancel_conversion.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_cancel_conversion.restype = ctypes.c_int
+        self.library.keynako_ime_is_converting.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_is_converting.restype = ctypes.c_int
+        self.library.keynako_ime_load_user_dictionary.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self.library.keynako_ime_load_user_dictionary.restype = ctypes.c_int
         for name in ("keynako_ime_reading", "keynako_ime_display_text", "keynako_ime_selected_text"):
             function = getattr(self.library, name)
             function.argtypes = [ctypes.c_void_p]
@@ -65,11 +74,28 @@ class NativeSession:
     def clear(self) -> None:
         self.library.keynako_ime_clear(self.handle)
 
+    def begin_conversion(self) -> bool:
+        return bool(self.library.keynako_ime_begin_conversion(self.handle))
+
+    def cancel_conversion(self) -> bool:
+        return bool(self.library.keynako_ime_cancel_conversion(self.handle))
+
+    def is_converting(self) -> bool:
+        return bool(self.library.keynako_ime_is_converting(self.handle))
+
+    def load_user_dictionary(self, path: Path) -> bool:
+        return bool(self.library.keynako_ime_load_user_dictionary(
+            self.handle, os.fsencode(path),
+        ))
+
     def reading(self) -> str:
         return self.library.keynako_ime_reading(self.handle).decode()
 
     def selected_text(self) -> str:
         return self.library.keynako_ime_selected_text(self.handle).decode()
+
+    def display_text(self) -> str:
+        return self.library.keynako_ime_display_text(self.handle).decode()
 
     def candidates(self) -> list[str]:
         count = self.library.keynako_ime_candidate_count(self.handle)
@@ -153,6 +179,58 @@ class KeynakoEngine(IBus.Engine):
         self.mode = "ja"
         self.lookup = IBus.LookupTable.new(9, 0, True, True)
         self.zenzai = Zenzai()
+        self.dictionary_path: Path | None = None
+        self.dictionary_mtime_ns = -1
+        self.last_dictionary_check = 0.0
+        self._reload_shared_dictionary(force=True)
+        self.mode_property = IBus.Property.new(
+            "InputMode",
+            IBus.PropType.NORMAL,
+            IBus.Text.new_from_string("あ"),
+            "",
+            IBus.Text.new_from_string("Keynako ひらがな"),
+            True,
+            True,
+            IBus.PropState.UNCHECKED,
+            None,
+        )
+        properties = IBus.PropList()
+        properties.append(self.mode_property)
+        self.register_properties(properties)
+
+    def _dictionary_candidates(self) -> list[Path]:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        home = Path.home()
+        candidates = []
+        if xdg:
+            candidates.append(Path(xdg) / "keynako" / "shared_dictionary.tsv")
+        candidates.append(home / ".local" / "share" / "keynako" / "shared_dictionary.tsv")
+        return candidates
+
+    def _reload_shared_dictionary(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self.last_dictionary_check < 5:
+            return
+        self.last_dictionary_check = now
+        for path in self._dictionary_candidates():
+            try:
+                mtime_ns = path.stat().st_mtime_ns
+            except OSError:
+                continue
+            if path == self.dictionary_path and mtime_ns == self.dictionary_mtime_ns:
+                return
+            if self.session.load_user_dictionary(path):
+                self.dictionary_path = path
+                self.dictionary_mtime_ns = mtime_ns
+                return
+
+    def _update_mode_property(self) -> None:
+        japanese = self.mode == "ja"
+        self.mode_property.set_label(IBus.Text.new_from_string("あ" if japanese else "A"))
+        self.mode_property.set_tooltip(IBus.Text.new_from_string(
+            "Keynako ひらがな" if japanese else "Keynako 英数",
+        ))
+        self.update_property(self.mode_property)
 
     def _render(self) -> None:
         candidates = self.session.candidates()
@@ -161,8 +239,11 @@ class KeynakoEngine(IBus.Engine):
             self.hide_lookup_table()
             return
         selected = self.session.selected_index()
-        visible = candidates[selected]
+        visible = self.session.display_text()
         self.update_preedit_text(IBus.Text.new_from_string(visible), len(visible), True)
+        if not self.session.is_converting():
+            self.hide_lookup_table()
+            return
         self.lookup.clear()
         for candidate in candidates:
             self.lookup.append_candidate(IBus.Text.new_from_string(candidate))
@@ -190,6 +271,7 @@ class KeynakoEngine(IBus.Engine):
             self.mode = "en" if self.mode == "ja" else "ja"
             self.session.set_mode(self.mode == "en")
             self.raw = ""
+            self._update_mode_property()
             self._render()
             return True
         if control or state & (IBus.ModifierType.MOD1_MASK | IBus.ModifierType.MOD4_MASK):
@@ -197,29 +279,48 @@ class KeynakoEngine(IBus.Engine):
         if keyval == IBus.KEY_BackSpace:
             if not self.raw:
                 return False
-            self.raw = self.raw[:-1]
-            self.session.backspace()
+            if not self.session.cancel_conversion():
+                self.raw = self.raw[:-1]
+                self.session.backspace()
             self._render()
             return True
         if keyval == IBus.KEY_Escape:
             if not self.raw:
                 return False
-            self._clear()
+            if self.session.cancel_conversion():
+                self._render()
+            else:
+                self._clear()
             return True
         if keyval in (IBus.KEY_Return, IBus.KEY_KP_Enter):
             if not self.raw:
                 return False
             self._commit()
             return True
-        if keyval in (IBus.KEY_space, IBus.KEY_Down, IBus.KEY_Up):
+        conversion_keys = (
+            IBus.KEY_space,
+            IBus.KEY_Down,
+            IBus.KEY_Up,
+            getattr(IBus, "KEY_Henkan", -1),
+            getattr(IBus, "KEY_Henkan_Mode", -1),
+        )
+        if keyval in conversion_keys:
             if not self.raw:
                 return False
-            generated = None
-            if keyval == IBus.KEY_space and self.mode == "ja":
-                generated = self.zenzai.generate(self.session.reading())
-                if generated:
-                    self.session.insert_zenzai(generated)
-            if not generated:
+            self._reload_shared_dictionary()
+            if not self.session.is_converting():
+                if keyval in (
+                    IBus.KEY_space,
+                    getattr(IBus, "KEY_Henkan", -1),
+                    getattr(IBus, "KEY_Henkan_Mode", -1),
+                ) and self.mode == "ja":
+                    generated = self.zenzai.generate(self.session.reading())
+                    if generated:
+                        self.session.insert_zenzai(generated)
+                self.session.begin_conversion()
+                if keyval == IBus.KEY_Up:
+                    self.session.select_previous()
+            else:
                 if keyval == IBus.KEY_Up:
                     self.session.select_previous()
                 else:
@@ -228,7 +329,10 @@ class KeynakoEngine(IBus.Engine):
             return True
         scalar = IBus.keyval_to_unicode(keyval)
         if scalar and chr(scalar).lower() in "abcdefghijklmnopqrstuvwxyz-,.":
+            if self.mode == "en":
+                return False
             value = chr(scalar)
+            self._reload_shared_dictionary()
             self.raw += value
             self.session.append(value)
             self._render()
@@ -240,6 +344,16 @@ class KeynakoEngine(IBus.Engine):
         if 0 <= index < len(self.session.candidates()):
             self.session.select(index)
             self._commit()
+
+    def do_property_activate(self, prop_name: str, prop_state: int) -> None:
+        del prop_state
+        if prop_name != "InputMode":
+            return
+        self.mode = "en" if self.mode == "ja" else "ja"
+        self.session.set_mode(self.mode == "en")
+        self.raw = ""
+        self._update_mode_property()
+        self._render()
 
     def do_cursor_up(self) -> bool:
         if not self.raw:

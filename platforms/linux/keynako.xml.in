@@ -16,6 +16,7 @@
       <language>ja;en</language>
       <license>MIT</license>
       <author>Keynako contributors</author>
+      <icon>@ICON@</icon>
       <layout>us</layout>
       <symbol>な</symbol>
       <setup>@SETUP@</setup>

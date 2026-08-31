@@ -15,7 +15,7 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 - 変換報告と、重要度付きユーザ辞書のKeynako共有
 - `StupidGame/keynako_hotfix_dictionary_storage`の共有変換辞書を5分ごとに同期
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
-- Windows TSF／macOS InputMethodKit／Linux IBusへ登録できる日本語・英語IME、ライブ変換、候補選択、Zenzai
+- Windows TSF／macOS InputMethodKit／Linux IBusへ登録できる日本語・英語IME、ライブ変換、共有辞書、候補選択、Zenzai
 
 Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey forkの`llama.cpp`をJNIから呼び出し、iOSは固定リビジョンの`AzooKeyKanaKanjiConverter`を`ZenzaiCPU` trait付きで利用します。PC版は同じ`llama.cpp`を静的リンクした常駐実行ファイルをFlutterから呼び出します。モデルの出所とハッシュは[assets/ZENZAI_MODELS.md](assets/ZENZAI_MODELS.md)にあります。
 
@@ -78,7 +78,7 @@ WindowsではiOS SDKとXcodeが利用できないため、このリポジトリ�
 
 ### Windows／Linux／macOS
 
-PC版はローマ字日本語入力、英語直接入力、ライブ変換、候補選択、Zenzai v3.2 small／xsmallを含むシステムIMEです。Flutterアプリは設定と入力動作確認を担当し、実際の入力欄との接続はWindows TSF、macOS InputMethodKit、Linux IBusが担当します。
+PC版はローマ字日本語入力、英語直接入力、ライブ変換、5分間隔の共有辞書更新、候補選択、Zenzai v3.2 small／xsmallを含むシステムIMEです。Flutterアプリは設定と入力動作確認を担当し、実際の入力欄との接続はWindows TSF、macOS InputMethodKit、Linux IBusが担当します。Windowsではアプリのブランドアイコンと`あ`／`A`の入力モードを入力インジケーターへ個別表示します。
 
 ```sh
 cd apps/desktop

@@ -4,6 +4,8 @@ import 'package:characters/characters.dart';
 import 'package:flutter/foundation.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
 
+import 'desktop_shared_dictionary.dart';
+
 enum InputMode { japanese, english }
 
 enum ZenzaiModel { off, xsmall, small }
@@ -11,15 +13,22 @@ enum ZenzaiModel { off, xsmall, small }
 typedef ZenzaiEngineFactory = Future<ZenzaiEngine?> Function(ZenzaiModel model);
 
 class DesktopInputController extends ChangeNotifier {
-  factory DesktopInputController({ZenzaiEngineFactory? zenzaiEngineFactory}) =>
-      DesktopInputController._(zenzaiEngineFactory);
+  factory DesktopInputController({
+    ZenzaiEngineFactory? zenzaiEngineFactory,
+    SharedDictionaryRepository? sharedDictionaryRepository,
+  }) =>
+      DesktopInputController._(zenzaiEngineFactory, sharedDictionaryRepository);
 
-  DesktopInputController._(this._zenzaiEngineFactory);
+  DesktopInputController._(
+    this._zenzaiEngineFactory,
+    this._sharedDictionaryRepository,
+  );
 
   static const _japaneseConverter = JapaneseConverter();
   static const _englishConverter = EnglishConverter();
 
   final ZenzaiEngineFactory? _zenzaiEngineFactory;
+  final SharedDictionaryRepository? _sharedDictionaryRepository;
   final Map<String, int> _learning = {};
 
   InputMode _mode = InputMode.japanese;
@@ -34,6 +43,12 @@ class DesktopInputController extends ChangeNotifier {
   bool _zenzaiWorking = false;
   String _zenzaiStatus = '無効';
   bool _liveConversionEnabled = true;
+  bool _converting = false;
+  List<ConversionDictionaryEntry> _sharedDictionary = const [];
+  Timer? _sharedDictionaryTimer;
+  bool _sharedDictionarySyncing = false;
+  String _sharedDictionaryStatus = '未取得';
+  bool _disposed = false;
 
   InputMode get mode => _mode;
   ZenzaiModel get zenzaiModel => _zenzaiModel;
@@ -44,6 +59,10 @@ class DesktopInputController extends ChangeNotifier {
   bool get zenzaiWorking => _zenzaiWorking;
   String get zenzaiStatus => _zenzaiStatus;
   bool get liveConversionEnabled => _liveConversionEnabled;
+  bool get converting => _converting;
+  bool get sharedDictionarySyncing => _sharedDictionarySyncing;
+  String get sharedDictionaryStatus => _sharedDictionaryStatus;
+  int get sharedDictionaryEntryCount => _sharedDictionary.length;
 
   String get composingText => _mode == InputMode.japanese
       ? _japaneseConverter.romanToHiragana(_rawInput)
@@ -51,7 +70,7 @@ class DesktopInputController extends ChangeNotifier {
 
   String get displayedComposition {
     if (_mode == InputMode.japanese &&
-        _liveConversionEnabled &&
+        (_liveConversionEnabled || _converting) &&
         _candidates.isNotEmpty) {
       return _candidates[_selectedIndex].text;
     }
@@ -62,6 +81,64 @@ class DesktopInputController extends ChangeNotifier {
     if (_liveConversionEnabled == enabled) return;
     _liveConversionEnabled = enabled;
     notifyListeners();
+  }
+
+  Future<void> initializeSharedDictionary() async {
+    final repository = _sharedDictionaryRepository;
+    if (repository == null) return;
+    try {
+      final cached = await repository.load();
+      if (cached != null) _applySharedDictionary(cached);
+    } catch (_) {
+      _sharedDictionaryStatus = '保存データ読込失敗';
+    }
+    _sharedDictionaryTimer?.cancel();
+    _sharedDictionaryTimer = Timer.periodic(
+      desktopSharedDictionaryInterval,
+      (_) => unawaited(importSharedDictionary()),
+    );
+    try {
+      if (await repository.isRefreshDue()) {
+        unawaited(importSharedDictionary());
+      }
+    } catch (_) {
+      unawaited(importSharedDictionary());
+    }
+  }
+
+  Future<bool> importSharedDictionary() async {
+    final repository = _sharedDictionaryRepository;
+    if (repository == null || _sharedDictionarySyncing || _disposed) {
+      return false;
+    }
+    _sharedDictionarySyncing = true;
+    _sharedDictionaryStatus = '更新中';
+    notifyListeners();
+    try {
+      final snapshot = await repository.refresh();
+      if (_disposed) return false;
+      _applySharedDictionary(snapshot);
+      return true;
+    } catch (_) {
+      if (!_disposed) {
+        _sharedDictionaryStatus = '更新失敗';
+        notifyListeners();
+      }
+      return false;
+    } finally {
+      if (!_disposed) {
+        _sharedDictionarySyncing = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _applySharedDictionary(SharedDictionarySnapshot snapshot) {
+    _sharedDictionary = snapshot.entries;
+    _sharedDictionaryStatus =
+        'v${snapshot.version} · ${snapshot.entries.length}語';
+    if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> setZenzaiModel(ZenzaiModel model) async {
@@ -96,6 +173,7 @@ class DesktopInputController extends ChangeNotifier {
     _rawInput = '';
     _candidates = const [];
     _selectedIndex = 0;
+    _converting = false;
     _requestSequence += 1;
     _zenzaiDebounce?.cancel();
     _zenzaiWorking = false;
@@ -105,6 +183,7 @@ class DesktopInputController extends ChangeNotifier {
   void updateRawInput(String value) {
     _rawInput = value;
     _selectedIndex = 0;
+    _converting = false;
     _rebuildBaseCandidates();
     notifyListeners();
     if (_mode == InputMode.japanese && value.isNotEmpty) {
@@ -124,13 +203,27 @@ class DesktopInputController extends ChangeNotifier {
   void selectCandidate(int index) {
     if (index < 0 || index >= _candidates.length) return;
     _selectedIndex = index;
+    _converting = true;
     notifyListeners();
   }
 
-  void cycleCandidate(int delta) {
+  void beginOrCycleCandidate(int delta) {
     if (_candidates.isEmpty) return;
-    _selectedIndex = (_selectedIndex + delta) % _candidates.length;
+    if (_converting) {
+      _selectedIndex = (_selectedIndex + delta) % _candidates.length;
+    } else {
+      _converting = true;
+      _selectedIndex = delta < 0 ? _candidates.length - 1 : 0;
+    }
     notifyListeners();
+  }
+
+  bool cancelConversion() {
+    if (!_converting) return false;
+    _converting = false;
+    _selectedIndex = 0;
+    notifyListeners();
+    return true;
   }
 
   void commitSelected() {
@@ -152,6 +245,7 @@ class DesktopInputController extends ChangeNotifier {
     _rawInput = '';
     _candidates = const [];
     _selectedIndex = 0;
+    _converting = false;
     _requestSequence += 1;
     _zenzaiDebounce?.cancel();
     _zenzaiWorking = false;
@@ -163,7 +257,10 @@ class DesktopInputController extends ChangeNotifier {
       _candidates = const [];
       return;
     }
-    final options = ConversionOptions(learning: _learning);
+    final options = ConversionOptions(
+      userDictionary: _sharedDictionary,
+      learning: _learning,
+    );
     _candidates = _mode == InputMode.japanese
         ? _japaneseConverter.candidates(
             input: _rawInput,
@@ -232,8 +329,10 @@ class DesktopInputController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _requestSequence += 1;
     _zenzaiDebounce?.cancel();
+    _sharedDictionaryTimer?.cancel();
     _zenzaiEngine?.close();
     super.dispose();
   }

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:keynako_desktop/input/desktop_input_controller.dart';
+import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
   test('places a Zenzai result before base Japanese candidates', () async {
@@ -46,6 +47,40 @@ void main() {
     expect(controller.displayedComposition, 'にほんご');
     controller.dispose();
   });
+
+  test('uses a two-stage explicit conversion and cancellation', () {
+    final controller = DesktopInputController();
+    controller.setLiveConversionEnabled(false);
+    controller.updateRawInput('nihongo');
+
+    expect(controller.displayedComposition, 'にほんご');
+    controller.beginOrCycleCandidate(1);
+    expect(controller.converting, isTrue);
+    expect(controller.displayedComposition, '日本語');
+
+    controller.beginOrCycleCandidate(1);
+    expect(controller.selectedIndex, 1);
+    expect(controller.cancelConversion(), isTrue);
+    expect(controller.displayedComposition, 'にほんご');
+    expect(controller.rawInput, 'nihongo');
+    controller.dispose();
+  });
+
+  test('periodic shared dictionary import feeds Japanese candidates', () async {
+    final repository = _FakeSharedDictionaryRepository();
+    final controller = DesktopInputController(
+      sharedDictionaryRepository: repository,
+    );
+
+    await controller.initializeSharedDictionary();
+    await Future<void>.delayed(Duration.zero);
+    controller.updateRawInput('ki-nako');
+
+    expect(repository.refreshCount, 1);
+    expect(controller.sharedDictionaryEntryCount, 1);
+    expect(controller.candidates.first.text, 'Keynako共有');
+    controller.dispose();
+  });
 }
 
 class _FakeZenzaiEngine implements ZenzaiEngine {
@@ -62,4 +97,33 @@ class _FakeZenzaiEngine implements ZenzaiEngine {
 
   @override
   Future<void> close() async {}
+}
+
+class _FakeSharedDictionaryRepository implements SharedDictionaryRepository {
+  var refreshCount = 0;
+
+  static const snapshot = SharedDictionarySnapshot(
+    revision: 'test',
+    version: '1.1',
+    lastUpdate: 'today',
+    entries: [
+      ConversionDictionaryEntry(
+        reading: 'きーなこ',
+        value: 'Keynako共有',
+        importance: 5,
+      ),
+    ],
+  );
+
+  @override
+  Future<bool> isRefreshDue() async => true;
+
+  @override
+  Future<SharedDictionarySnapshot?> load() async => null;
+
+  @override
+  Future<SharedDictionarySnapshot> refresh() async {
+    refreshCount += 1;
+    return snapshot;
+  }
 }

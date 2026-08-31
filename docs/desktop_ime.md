@@ -5,10 +5,13 @@ PC版は、Flutter製の設定・動作確認アプリと、OSへ入力ソース
 ## 入力機能
 
 - 日本語ローマ字入力、ひらがな／漢字／カタカナ／英字候補
-- 英語直接入力、大文字／先頭大文字候補
+- `A`表示時の英語直接入力
 - 入力ごとに未確定文字列と先頭候補を更新するライブ変換
-- `Space`／上下キーによる候補選択、`Enter`による確定、`Esc`による取消
+- `Space`／変換キーで変換開始と次候補、上下／Page Up／Page Downによる候補選択
+- 候補番号`1`〜`9`またはクリックによる確定、`Enter`による確定
+- 変換中の`Esc`／`Backspace`で読みへ戻り、もう一度`Esc`で入力を取り消す二段階操作
 - `Ctrl+Space`による日本語／英語モード切替
+- Keynako共有辞書を起動時と5分間隔で取得し、三OSのシステムIMEへ反映
 - Zenzai v3.2 xsmall／smallと常駐`llama.cpp`プロセスによる端末内推論
 
 Zenzaiは最初の明示変換時にモデルを読み込みます。モデルや実行ファイルが見つからない場合も、通常辞書、かな、カタカナ、英語候補は利用できます。任意のモデルへ切り替えるときは`KEYNAKO_ZENZAI_MODEL`を指定します。
@@ -16,6 +19,8 @@ Zenzaiは最初の明示変換時にモデルを読み込みます。モデル�
 ## Windows
 
 Actions成果物の`KeynakoSetup.exe`を実行します。セットアップは管理者権限で設定アプリ、64-bit TSF DLL、ZenzaiとモデルをProgram Filesへ配置し、Keynakoを日本語入力プロファイルとして登録します。Windowsの入力設定からKeynakoを選択できます。
+
+選択中はWindowsの入力インジケーターへ、Flutterアプリと同じブランドアイコンと、現在の入力モードを表す`あ`／`A`を個別に表示します。モード項目をクリックすると日本語と英語を切り替えられ、メニューからライブ変換と設定アプリを操作できます。角丸の候補ウィンドウには選択行、候補番号、ページ数、キー操作、共有辞書／Zenzaiの出典を表示します。
 
 Windowsの「インストールされているアプリ」またはスタートメニューの`Uninstall Keynako`を開くと、exe形式のアンインストーラーがTSF登録とファイルを削除します。
 
@@ -30,6 +35,8 @@ cmake --build build/windows-ime --config Release
 
 `Keynako.inputmethod`を`~/Library/Input Methods`へコピーし、ログアウト後に「システム設定 > キーボード > 入力ソース」から追加します。同梱の`install-input-method.sh`と`uninstall-input-method.sh`でも導入・削除できます。配布成果物はad-hoc署名であり、一般配布ではDeveloper IDによる署名と公証が必要です。
 
+メニューバーの入力メニューにはFlutterアプリと同じアイコンを表示し、`ひらがな (あ)`／`英数 (A)`とライブ変換を切り替えられます。かなキーと英数キーにも対応します。
+
 開発用ビルド:
 
 ```sh
@@ -39,6 +46,8 @@ bash platforms/macos/build-input-method.sh build/macos-ime
 ## Linux
 
 IBusとPyGObjectが必要です。Debian／Ubuntu系では`python3-gi`、`gir1.2-ibus-1.0`、`ibus`を導入し、展開した成果物の`install-ime.sh`を実行します。利用者領域へengineとcomponent定義を配置してIBusを再起動します。削除は`uninstall-ime.sh`です。
+
+IBusパネルには現在の入力モードを`あ`／`A`で表示し、クリックで日本語と英語を切り替えられます。
 
 ## Flutter設定・動作確認アプリ
 
@@ -50,4 +59,4 @@ flutter test
 flutter run -d windows
 ```
 
-この画面はIMEと同じ日本語、英語、候補、ライブ変換、Zenzaiの状態遷移を試すためのものです。通常の利用時はOS側でKeynakoを入力ソースとして選び、任意のアプリへ直接入力します。
+この画面はIMEと同じ日本語、英語、候補、ライブ変換、Zenzaiの状態遷移を試すためのものです。ライト／ダークテーマへ追従する画面で、選択候補、候補番号、辞書やZenzaiの出典を見分けられます。共有辞書は保存済みキャッシュを起動時に読み込み、最終取得から5分以上経過していれば更新し、その後もアプリ起動中は5分ごとに更新します。「共有辞書」ボタンから手動更新もできます。通常の利用時はOS側でKeynakoを入力ソースとして選び、任意のアプリへ直接入力します。

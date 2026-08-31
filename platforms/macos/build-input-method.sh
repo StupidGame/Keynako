@@ -9,6 +9,8 @@ core="$repo_root/packages/keynako_conversion/native/ime_core"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$repo_root/platforms/macos/Info.plist" "$bundle/Contents/Info.plist"
+cp "$repo_root/apps/desktop/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png" \
+  "$bundle/Contents/Resources/Keynako.png"
 
 xcrun clang++ -std=c++17 -fobjc-arc -O2 \
   -framework Cocoa -framework InputMethodKit \

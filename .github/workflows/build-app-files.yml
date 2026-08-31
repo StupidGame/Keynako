@@ -329,6 +329,8 @@ jobs:
           cp build/zenzai/libkeynako_ime_bridge.so "$package_root/"
           cp platforms/linux/keynako_engine.py platforms/linux/keynako.xml.in \
             platforms/linux/install-ime.sh platforms/linux/uninstall-ime.sh "$package_root/"
+          cp apps/desktop/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png \
+            "$package_root/keynako.png"
           chmod +x "$package_root/keynako_engine.py" "$package_root/keynako_zenzai" "$package_root/"*.sh
           mkdir -p "$package_root/zenzai"
           cp -R assets/zenz-v3.2-small-gguf "$package_root/zenzai/"

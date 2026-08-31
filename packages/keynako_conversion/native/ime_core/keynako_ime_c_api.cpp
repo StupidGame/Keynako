@@ -2,8 +2,12 @@
 
 #include "keynako_ime_core.h"
 
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -34,6 +38,46 @@ void keynako_ime_append_ascii(keynako_ime_session session, int value) {
 }
 void keynako_ime_backspace(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace(); }
 void keynako_ime_clear(keynako_ime_session session) { if (auto *value = cast(session)) value->clear(); }
+int keynako_ime_begin_conversion(keynako_ime_session session) {
+    return session && cast(session)->begin_conversion() ? 1 : 0;
+}
+int keynako_ime_cancel_conversion(keynako_ime_session session) {
+    return session && cast(session)->cancel_conversion() ? 1 : 0;
+}
+int keynako_ime_is_converting(keynako_ime_session session) {
+    return session && cast(session)->is_converting() ? 1 : 0;
+}
+int keynako_ime_select_candidate(keynako_ime_session session, size_t index) {
+    return session && cast(session)->select_candidate(index) ? 1 : 0;
+}
+int keynako_ime_load_user_dictionary(keynako_ime_session session, const char *utf8_path) {
+    if (!session || !utf8_path || !*utf8_path) return 0;
+    std::ifstream stream(std::filesystem::u8path(utf8_path), std::ios::binary);
+    if (!stream) return 0;
+    std::vector<keynako::DictionaryEntry> entries;
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line.front() == '#') continue;
+        const auto first_tab = line.find('\t');
+        const auto second_tab = first_tab == std::string::npos
+            ? std::string::npos
+            : line.find('\t', first_tab + 1);
+        if (first_tab == std::string::npos || second_tab == std::string::npos) continue;
+        try {
+            const int importance = std::clamp(std::stoi(line.substr(0, first_tab)), 1, 5);
+            std::string reading = line.substr(first_tab + 1, second_tab - first_tab - 1);
+            std::string value = line.substr(second_tab + 1);
+            if (!reading.empty() && !value.empty()) {
+                entries.push_back({std::move(reading), std::move(value), importance});
+            }
+        } catch (const std::exception &) {
+            continue;
+        }
+    }
+    cast(session)->set_user_dictionary(std::move(entries));
+    return 1;
+}
 const char *keynako_ime_reading(keynako_ime_session session) { return session ? cast(session)->reading().c_str() : ""; }
 const char *keynako_ime_display_text(keynako_ime_session session) { return session ? copy_result(cast(session)->display_text()) : ""; }
 const char *keynako_ime_selected_text(keynako_ime_session session) { return session ? copy_result(cast(session)->selected_text()) : ""; }

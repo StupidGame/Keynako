@@ -64,11 +64,11 @@ class _ImePageState extends State<ImePage> {
     }
     if (event.logicalKey == LogicalKeyboardKey.space ||
         event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      controller.cycleCandidate(1);
+      controller.beginOrCycleCandidate(1);
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-      controller.cycleCandidate(-1);
+      controller.beginOrCycleCandidate(-1);
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.enter ||
@@ -77,7 +77,7 @@ class _ImePageState extends State<ImePage> {
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.escape) {
-      controller.cancelComposition();
+      if (!controller.cancelConversion()) controller.cancelComposition();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -87,54 +87,57 @@ class _ImePageState extends State<ImePage> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1120),
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(controller: controller),
-                  const SizedBox(height: 24),
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: _InputCard(
-                            controller: controller,
-                            compositionController: _compositionController,
-                            compositionFocus: _compositionFocus,
-                            onKeyEvent: _handleKey,
+      body: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              colors.primaryContainer.withValues(alpha: 0.28),
+              colors.surfaceContainerLowest,
+              colors.tertiaryContainer.withValues(alpha: 0.18),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1180),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Header(controller: controller),
+                    const SizedBox(height: 18),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            flex: 4,
+                            child: _InputCard(
+                              controller: controller,
+                              compositionController: _compositionController,
+                              compositionFocus: _compositionFocus,
+                              onKeyEvent: _handleKey,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 20),
-                        Expanded(
-                          flex: 4,
-                          child: Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(22),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.edit_note,
-                                        color: colors.primary,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        '確定した文章',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium,
-                                      ),
-                                      const Spacer(),
-                                      IconButton(
+                          const SizedBox(width: 18),
+                          Expanded(
+                            flex: 5,
+                            child: Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _SectionHeading(
+                                      icon: Icons.edit_note_rounded,
+                                      title: '確定した文章',
+                                      subtitle: '入力結果をそのまま編集・コピー',
+                                      trailing: IconButton(
                                         tooltip: 'コピー',
                                         onPressed:
                                             controller.committedText.isEmpty
@@ -145,34 +148,38 @@ class _ImePageState extends State<ImePage> {
                                                       controller.committedText,
                                                 ),
                                               ),
-                                        icon: const Icon(Icons.copy_outlined),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 14),
-                                  Expanded(
-                                    child: TextField(
-                                      key: const Key('committed-editor'),
-                                      controller: _outputController,
-                                      onChanged:
-                                          controller.replaceCommittedText,
-                                      maxLines: null,
-                                      expands: true,
-                                      textAlignVertical: TextAlignVertical.top,
-                                      decoration: const InputDecoration(
-                                        hintText: '確定した文字がここに入る',
+                                        icon: const Icon(
+                                          Icons.copy_all_rounded,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(height: 18),
+                                    Expanded(
+                                      child: TextField(
+                                        key: const Key('committed-editor'),
+                                        controller: _outputController,
+                                        onChanged:
+                                            controller.replaceCommittedText,
+                                        maxLines: null,
+                                        expands: true,
+                                        textAlignVertical:
+                                            TextAlignVertical.top,
+                                        decoration: const InputDecoration(
+                                          hintText: '確定した文字がここに入る',
+                                          alignLabelWithHint: true,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -189,45 +196,110 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: const Icon(Icons.keyboard_alt_outlined),
-        ),
-        const SizedBox(width: 14),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Row(
           children: [
-            Text('Keynako', style: Theme.of(context).textTheme.headlineSmall),
-            Text('日本語・英語入力エンジン', style: Theme.of(context).textTheme.bodyMedium),
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [colors.primary, colors.tertiary],
+                ),
+                borderRadius: BorderRadius.circular(17),
+                boxShadow: [
+                  BoxShadow(
+                    color: colors.primary.withValues(alpha: 0.22),
+                    blurRadius: 18,
+                    offset: const Offset(0, 7),
+                  ),
+                ],
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                controller.mode == InputMode.japanese ? 'あ' : 'A',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  color: colors.onPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Keynako',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '日本語・英語入力エンジン',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              flex: 3,
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  Tooltip(
+                    message: 'アプリ起動中は5分ごとに自動更新',
+                    child: ActionChip(
+                      key: const Key('shared-dictionary-import'),
+                      avatar: controller.sharedDictionarySyncing
+                          ? const SizedBox.square(
+                              dimension: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cloud_done_rounded, size: 18),
+                      onPressed: controller.sharedDictionarySyncing
+                          ? null
+                          : controller.importSharedDictionary,
+                      label: Text(controller.sharedDictionaryStatus),
+                    ),
+                  ),
+                  SegmentedButton<InputMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: InputMode.japanese,
+                        label: Text('日本語'),
+                        icon: Icon(Icons.translate_rounded),
+                      ),
+                      ButtonSegment(
+                        value: InputMode.english,
+                        label: Text('English'),
+                        icon: Icon(Icons.abc_rounded),
+                      ),
+                    ],
+                    selected: {controller.mode},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (selection) {
+                      controller.setMode(selection.single);
+                    },
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
-        const Spacer(),
-        SegmentedButton<InputMode>(
-          segments: const [
-            ButtonSegment(
-              value: InputMode.japanese,
-              label: Text('日本語'),
-              icon: Icon(Icons.translate),
-            ),
-            ButtonSegment(
-              value: InputMode.english,
-              label: Text('English'),
-              icon: Icon(Icons.abc),
-            ),
-          ],
-          selected: {controller.mode},
-          onSelectionChanged: (selection) {
-            controller.setMode(selection.single);
-          },
-        ),
-      ],
+      ),
     );
   }
 }
@@ -248,76 +320,71 @@ class _InputCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final compact = MediaQuery.sizeOf(context).height < 680;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(22),
+        padding: EdgeInsets.all(compact ? 16 : 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                Text('入力', style: Theme.of(context).textTheme.titleMedium),
-                if (controller.mode == InputMode.japanese)
-                  Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('ライブ変換'),
-                          Switch(
-                            value: controller.liveConversionEnabled,
-                            onChanged: controller.setLiveConversionEnabled,
-                          ),
-                        ],
+            const _SectionHeading(
+              icon: Icons.keyboard_rounded,
+              title: '入力と変換',
+              subtitle: 'Space・変換キーで候補を開く',
+            ),
+            if (controller.mode == InputMode.japanese) ...[
+              SizedBox(height: compact ? 6 : 12),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  FilterChip(
+                    selected: controller.liveConversionEnabled,
+                    avatar: const Icon(Icons.bolt_rounded, size: 17),
+                    label: const Text('ライブ変換'),
+                    onSelected: controller.setLiveConversionEnabled,
+                  ),
+                  if (controller.zenzaiWorking)
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      controller.zenzaiStatus == 'モデル未検出' ||
+                              controller.zenzaiStatus == '利用不可'
+                          ? Icons.warning_amber_rounded
+                          : Icons.auto_awesome_rounded,
+                      size: 18,
+                      color: colors.primary,
+                    ),
+                  DropdownButton<ZenzaiModel>(
+                    value: controller.zenzaiModel,
+                    underline: const SizedBox.shrink(),
+                    borderRadius: BorderRadius.circular(16),
+                    items: const [
+                      DropdownMenuItem(
+                        value: ZenzaiModel.off,
+                        child: Text('Zenzai 無効'),
                       ),
-                      if (controller.zenzaiWorking)
-                        const SizedBox.square(
-                          dimension: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        Tooltip(
-                          message: controller.zenzaiStatus,
-                          child: Icon(
-                            controller.zenzaiStatus == 'モデル未検出' ||
-                                    controller.zenzaiStatus == '利用不可'
-                                ? Icons.warning_amber_rounded
-                                : Icons.auto_awesome,
-                            size: 17,
-                          ),
-                        ),
-                      DropdownButton<ZenzaiModel>(
-                        value: controller.zenzaiModel,
-                        underline: const SizedBox.shrink(),
-                        items: const [
-                          DropdownMenuItem(
-                            value: ZenzaiModel.off,
-                            child: Text('Zenzai 無効'),
-                          ),
-                          DropdownMenuItem(
-                            value: ZenzaiModel.xsmall,
-                            child: Text('Zenzai 軽量'),
-                          ),
-                          DropdownMenuItem(
-                            value: ZenzaiModel.small,
-                            child: Text('Zenzai 標準'),
-                          ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) controller.setZenzaiModel(value);
-                        },
+                      DropdownMenuItem(
+                        value: ZenzaiModel.xsmall,
+                        child: Text('Zenzai 軽量'),
+                      ),
+                      DropdownMenuItem(
+                        value: ZenzaiModel.small,
+                        child: Text('Zenzai 標準'),
                       ),
                     ],
+                    onChanged: (value) {
+                      if (value != null) controller.setZenzaiModel(value);
+                    },
                   ),
-              ],
-            ),
-            const SizedBox(height: 16),
+                ],
+              ),
+            ],
+            SizedBox(height: compact ? 8 : 14),
             Focus(
               onKeyEvent: onKeyEvent,
               child: TextField(
@@ -340,23 +407,50 @@ class _InputCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: colors.primaryContainer.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(16),
+            SizedBox(height: compact ? 8 : 16),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: compact ? 10 : 16,
               ),
-              child: Text(
-                controller.displayedComposition.isEmpty
-                    ? '編集中の文字'
-                    : controller.displayedComposition,
-                key: const Key('composing-text'),
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: controller.displayedComposition.isEmpty
-                      ? colors.onSurfaceVariant
-                      : colors.onPrimaryContainer,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: controller.rawInput.isEmpty
+                      ? [
+                          colors.surfaceContainerHighest,
+                          colors.surfaceContainerHigh,
+                        ]
+                      : [
+                          colors.primaryContainer.withValues(alpha: 0.9),
+                          colors.tertiaryContainer.withValues(alpha: 0.55),
+                        ],
                 ),
+                borderRadius: BorderRadius.circular(19),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      controller.displayedComposition.isEmpty
+                          ? '編集中の文字'
+                          : controller.displayedComposition,
+                      key: const Key('composing-text'),
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(
+                            color: controller.displayedComposition.isEmpty
+                                ? colors.onSurfaceVariant
+                                : colors.onPrimaryContainer,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                  if (controller.rawInput.isNotEmpty)
+                    _StatusPill(
+                      label: controller.converting ? '変換中' : 'ライブ',
+                      color: colors.primary,
+                    ),
+                ],
               ),
             ),
             if (controller.mode == InputMode.japanese &&
@@ -368,9 +462,22 @@ class _InputCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-            const SizedBox(height: 18),
-            Text('候補', style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 10),
+            SizedBox(height: compact ? 9 : 18),
+            Row(
+              children: [
+                Icon(Icons.view_list_rounded, size: 18, color: colors.primary),
+                const SizedBox(width: 8),
+                Text('変換候補', style: Theme.of(context).textTheme.labelLarge),
+                const Spacer(),
+                if (controller.candidates.isNotEmpty)
+                  Text(
+                    '${controller.selectedIndex + 1} / ${controller.candidates.length}',
+                    style: Theme.of(context).textTheme.labelSmall
+                        ?.copyWith(color: colors.onSurfaceVariant),
+                  ),
+              ],
+            ),
+            SizedBox(height: compact ? 6 : 10),
             Expanded(
               child: controller.candidates.isEmpty
                   ? Center(
@@ -385,13 +492,30 @@ class _InputCard extends StatelessWidget {
                       itemBuilder: (context, index) {
                         final candidate = controller.candidates[index];
                         final selected = index == controller.selectedIndex;
-                        return Material(
-                          color: selected
-                              ? colors.secondaryContainer
-                              : colors.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(13),
+                        final sourceLabel = switch (candidate.source) {
+                          'zenzai' => 'Zenzai',
+                          'user' || 'shared' => '共有',
+                          _ => null,
+                        };
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 140),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? colors.secondaryContainer
+                                : colors.surfaceContainerHighest.withValues(
+                                    alpha: 0.7,
+                                  ),
+                            borderRadius: BorderRadius.circular(15),
+                            border: Border.all(
+                              color: selected
+                                  ? colors.secondary.withValues(alpha: 0.48)
+                                  : colors.outlineVariant.withValues(
+                                      alpha: 0.48,
+                                    ),
+                            ),
+                          ),
                           child: InkWell(
-                            borderRadius: BorderRadius.circular(13),
+                            borderRadius: BorderRadius.circular(15),
                             onTap: () => controller.selectCandidate(index),
                             onDoubleTap: () {
                               controller.selectCandidate(index);
@@ -404,10 +528,30 @@ class _InputCard extends StatelessWidget {
                               ),
                               child: Row(
                                 children: [
-                                  SizedBox(
-                                    width: 24,
-                                    child: Text('${index + 1}'),
+                                  Container(
+                                    width: 28,
+                                    height: 28,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: selected
+                                          ? colors.secondary
+                                          : colors.surface,
+                                      borderRadius: BorderRadius.circular(9),
+                                    ),
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium
+                                          ?.copyWith(
+                                            color: selected
+                                                ? colors.onSecondary
+                                                : colors.onSurfaceVariant,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
                                   ),
+                                  const SizedBox(width: 12),
                                   Expanded(
                                     child: Text(
                                       candidate.text,
@@ -416,8 +560,21 @@ class _InputCard extends StatelessWidget {
                                           .titleMedium,
                                     ),
                                   ),
-                                  if (candidate.source == 'zenzai')
-                                    const Icon(Icons.auto_awesome, size: 18),
+                                  if (sourceLabel != null)
+                                    _StatusPill(
+                                      label: sourceLabel,
+                                      color: candidate.source == 'zenzai'
+                                          ? colors.tertiary
+                                          : colors.primary,
+                                    ),
+                                  if (selected) ...[
+                                    const SizedBox(width: 8),
+                                    Icon(
+                                      Icons.check_circle_rounded,
+                                      size: 18,
+                                      color: colors.secondary,
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -426,15 +583,22 @@ class _InputCard extends StatelessWidget {
                       },
                     ),
             ),
-            const SizedBox(height: 14),
+            SizedBox(height: compact ? 8 : 14),
             Row(
               children: [
-                Expanded(
-                  child: Text(
-                    'Space 候補選択  ·  Enter 確定  ·  Esc 取消',
-                    style: Theme.of(context).textTheme.bodySmall,
+                if (!compact)
+                  const Expanded(
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _Shortcut(keys: 'Space', action: '次候補'),
+                        _Shortcut(keys: 'Enter', action: '確定'),
+                        _Shortcut(keys: 'Esc', action: '戻る'),
+                      ],
+                    ),
                   ),
-                ),
+                if (compact) const Spacer(),
                 FilledButton.icon(
                   onPressed: controller.rawInput.isEmpty
                       ? null
@@ -446,6 +610,116 @@ class _InputCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SectionHeading extends StatelessWidget {
+  const _SectionHeading({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: colors.primaryContainer,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: colors.onPrimaryContainer, size: 20),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        ?trailing,
+      ],
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: color, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+class _Shortcut extends StatelessWidget {
+  const _Shortcut({required this.keys, required this.action});
+
+  final String keys;
+  final String action;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: keys,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            TextSpan(text: '  $action'),
+          ],
+        ),
+        style: Theme.of(context).textTheme.labelSmall,
       ),
     );
   }

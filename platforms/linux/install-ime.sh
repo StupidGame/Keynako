@@ -8,6 +8,7 @@ cp -R "$source_root/." "$install_root/"
 chmod +x "$install_root/keynako_engine.py" "$install_root/keynako_zenzai" 2>/dev/null || true
 sed -e "s|@EXECUTABLE@|$install_root/keynako_engine.py|g" \
     -e "s|@SETUP@|$install_root/keynako_desktop|g" \
+    -e "s|@ICON@|$install_root/keynako.png|g" \
     "$source_root/keynako.xml.in" > "$component_root/keynako.xml"
 ibus restart 2>/dev/null || true
 echo 'Keynako was installed. Add it from your desktop input-source settings.'

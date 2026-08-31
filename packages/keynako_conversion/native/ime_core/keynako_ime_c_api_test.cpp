@@ -11,6 +11,10 @@ int main() {
     }
     assert(std::strcmp(keynako_ime_reading(session), "にほんご") == 0);
     assert(std::strcmp(keynako_ime_candidate_at(session, 0), "日本語") == 0);
+    assert(keynako_ime_is_converting(session) == 0);
+    assert(keynako_ime_begin_conversion(session) == 1);
+    assert(keynako_ime_is_converting(session) == 1);
+    assert(keynako_ime_cancel_conversion(session) == 1);
     keynako_ime_insert_zenzai(session, "日本語です");
     assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
     keynako_ime_set_mode(session, 1);
