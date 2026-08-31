@@ -15,7 +15,7 @@ add_library(KeynakoIME SHARED
 )
 target_include_directories(KeynakoIME PRIVATE "${KEYNAKO_CORE}")
 target_compile_definitions(KeynakoIME PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(KeynakoIME PRIVATE advapi32 msctf ole32 user32 uuid)
+target_link_libraries(KeynakoIME PRIVATE advapi32 ole32 user32 uuid)
 set_target_properties(KeynakoIME PROPERTIES PREFIX "" OUTPUT_NAME "KeynakoIME")
 
 if(MSVC)
