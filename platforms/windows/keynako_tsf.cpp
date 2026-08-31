@@ -16,14 +16,26 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <new>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
+#include "keynako_improvement_submission.h"
 #include "keynako_resources.h"
 #include "keynako_ime_core.h"
 #include "keynako_shortcut_policy.h"
 #include "zenzai_client.h"
+
+#ifndef KEYNAKO_DICTIONARY_SUBMISSION_URL
+#define KEYNAKO_DICTIONARY_SUBMISSION_URL ""
+#endif
+
+#ifndef KEYNAKO_APP_VERSION
+#define KEYNAKO_APP_VERSION "1.0.0"
+#endif
 
 namespace {
 
@@ -71,6 +83,10 @@ constexpr UINT kMenuEnglish = 2;
 constexpr UINT kMenuLiveConversion = 3;
 constexpr UINT kMenuSettings = 4;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
+constexpr UINT kImprovementSubmissionComplete = WM_APP + 0x4b;
+constexpr UINT_PTR kImprovementDismissTimer = 1;
+constexpr char kDictionarySubmissionUrl[] = KEYNAKO_DICTIONARY_SUBMISSION_URL;
+constexpr char kAppVersion[] = KEYNAKO_APP_VERSION;
 
 HINSTANCE g_instance = nullptr;
 std::atomic<long> g_objects{0};
@@ -111,6 +127,29 @@ std::filesystem::path environment_path(const wchar_t *name) {
     value.resize(written);
     return value;
 }
+
+struct ImprovementWorkerTask {
+    HWND result_window = nullptr;
+    UINT_PTR generation = 0;
+    HMODULE retained_module = nullptr;
+    std::wstring endpoint;
+    std::string payload;
+};
+
+DWORD WINAPI improvement_worker_proc(void *parameter) {
+    std::unique_ptr<ImprovementWorkerTask> task(
+        static_cast<ImprovementWorkerTask *>(parameter));
+    const bool success = keynako::windows::submit_improvement_https(
+        task->endpoint, task->payload);
+    PostMessageW(task->result_window, kImprovementSubmissionComplete,
+                 success ? TRUE : FALSE,
+                 static_cast<LPARAM>(task->generation));
+    const HMODULE retained_module = task->retained_module;
+    task.reset();
+    FreeLibraryAndExitThread(retained_module, 0);
+}
+
+enum class ImprovementWindowState { prompt, sending, sent, failed };
 
 class TextService;
 
@@ -179,6 +218,7 @@ public:
     ~TextService() {
         remove_keyboard_hook();
         hide_candidates();
+        hide_improvement_prompt();
         remove_language_bar();
         if (composition_) composition_->Release();
         if (thread_manager_) thread_manager_->Release();
@@ -281,6 +321,7 @@ public:
         }
         session_.clear();
         hide_candidates();
+        hide_improvement_prompt();
         return S_OK;
     }
 
@@ -293,6 +334,7 @@ public:
     STDMETHODIMP OnKeyDown(ITfContext *context, WPARAM key, LPARAM key_data, BOOL *eaten) override {
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
+        hide_improvement_prompt();
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
@@ -446,6 +488,9 @@ public:
         ITfRange *range = nullptr;
         HRESULT result = composition_->GetRange(&range);
         if (FAILED(result)) return result;
+        const auto improvement = action == EditAction::commit
+            ? improvement_for_current_selection()
+            : std::nullopt;
         const std::wstring text = utf8_to_wide(action == EditAction::commit ? session_.selected_text() : session_.display_text());
         result = range->SetText(edit_cookie, 0, text.data(), static_cast<LONG>(text.size()));
         if (SUCCEEDED(result) && action == EditAction::commit) {
@@ -456,6 +501,7 @@ public:
             ending->Release();
             session_.clear();
             hide_candidates();
+            if (improvement) show_improvement_prompt(*improvement);
         } else if (SUCCEEDED(result)) {
             if (session_.is_converting()) {
                 show_candidates(edit_cookie, context, range);
@@ -475,6 +521,13 @@ private:
     keynako::ImeSession session_;
     std::unique_ptr<keynako::ZenzaiClient> zenzai_;
     HWND candidate_window_ = nullptr;
+    HWND improvement_window_ = nullptr;
+    HWND candidate_owner_ = nullptr;
+    RECT last_candidate_rectangle_{0, 0, 0, 0};
+    ImprovementWindowState improvement_window_state_ = ImprovementWindowState::prompt;
+    std::optional<keynako::windows::ImprovementSubmission> pending_improvement_;
+    std::unordered_set<std::string> reported_improvements_;
+    UINT_PTR improvement_generation_ = 0;
     LanguageBarItem *language_bar_ = nullptr;
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
@@ -780,6 +833,235 @@ private:
         return true;
     }
 
+    static const std::wstring &dictionary_submission_endpoint() {
+        static const std::wstring endpoint = utf8_to_wide(kDictionarySubmissionUrl);
+        return endpoint;
+    }
+
+    static bool reportable_reading(const std::string &reading) {
+        if (reading.empty()) return false;
+        for (const wchar_t character : utf8_to_wide(reading)) {
+            const bool hiragana = character >= 0x3041 && character <= 0x3096;
+            const bool ascii = (character >= L'a' && character <= L'z') ||
+                               (character >= L'A' && character <= L'Z') ||
+                               (character >= L'0' && character <= L'9');
+            if (!hiragana && !ascii) return false;
+        }
+        return true;
+    }
+
+    static std::string improvement_pair_key(
+        const keynako::windows::ImprovementSubmission &submission) {
+        return submission.reading + '\x1f' + submission.word;
+    }
+
+    std::optional<keynako::windows::ImprovementSubmission>
+    improvement_for_current_selection() const {
+        const auto &endpoint = dictionary_submission_endpoint();
+        if (endpoint.rfind(L"https://", 0) != 0 ||
+            session_.mode() != keynako::InputMode::japanese ||
+            !session_.is_converting() || session_.selected_index() == 0 ||
+            session_.selected_index() >= session_.candidates().size() ||
+            !reportable_reading(session_.reading())) {
+            return std::nullopt;
+        }
+
+        const auto &selected = session_.candidates()[session_.selected_index()];
+        if (selected.text.empty() || selected.source == "reading" ||
+            selected.source == "katakana" || selected.source == "latin" ||
+            selected.source == "shared") {
+            return std::nullopt;
+        }
+        const std::string &suggested = session_.candidates().front().text;
+        if (suggested.size() > selected.text.size() &&
+            suggested.compare(0, selected.text.size(), selected.text) == 0) {
+            return std::nullopt;
+        }
+
+        keynako::windows::ImprovementSubmission submission{
+            selected.text, session_.reading(), session_.selected_index()};
+        if (reported_improvements_.count(improvement_pair_key(submission)) != 0) {
+            return std::nullopt;
+        }
+        return submission;
+    }
+
+    void paint_improvement_window(HWND window) {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(window, &paint);
+        RECT client{};
+        GetClientRect(window, &client);
+        FillRect(dc, &client, GetSysColorBrush(COLOR_WINDOW));
+        const UINT dpi = GetDpiForWindow(window);
+        HFONT title_font = CreateFontW(
+            -MulDiv(14, static_cast<int>(dpi), 96), 0, 0, 0, FW_SEMIBOLD,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
+        HFONT detail_font = CreateFontW(
+            -MulDiv(12, static_cast<int>(dpi), 96), 0, 0, 0, FW_NORMAL,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
+        HGDIOBJ old_font = SelectObject(dc, title_font);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+
+        const wchar_t *title = L"共有変換辞書へ改善を送信";
+        if (improvement_window_state_ == ImprovementWindowState::sending) {
+            title = L"改善を送信中…";
+        } else if (improvement_window_state_ == ImprovementWindowState::sent) {
+            title = L"改善を送信した";
+        } else if (improvement_window_state_ == ImprovementWindowState::failed) {
+            title = L"送信できなかった・クリックで再試行";
+        }
+        RECT title_rect{MulDiv(16, static_cast<int>(dpi), 96),
+                        MulDiv(8, static_cast<int>(dpi), 96),
+                        client.right - MulDiv(48, static_cast<int>(dpi), 96),
+                        MulDiv(39, static_cast<int>(dpi), 96)};
+        DrawTextW(dc, title, -1, &title_rect,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+        SelectObject(dc, detail_font);
+        SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+        if (pending_improvement_) {
+            const std::wstring detail = L"「" + utf8_to_wide(pending_improvement_->word) +
+                L"」（" + utf8_to_wide(pending_improvement_->reading) + L"）・第" +
+                std::to_wstring(pending_improvement_->selected_index + 1) + L"候補";
+            RECT detail_rect{MulDiv(16, static_cast<int>(dpi), 96),
+                             MulDiv(36, static_cast<int>(dpi), 96),
+                             client.right - MulDiv(48, static_cast<int>(dpi), 96),
+                             client.bottom - MulDiv(7, static_cast<int>(dpi), 96)};
+            DrawTextW(dc, detail.c_str(), -1, &detail_rect,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        }
+
+        SelectObject(dc, title_font);
+        SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+        RECT close_rect{client.right - MulDiv(44, static_cast<int>(dpi), 96),
+                        0, client.right, client.bottom};
+        DrawTextW(dc, L"×", -1, &close_rect,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(dc, old_font);
+        DeleteObject(detail_font);
+        DeleteObject(title_font);
+        EndPaint(window, &paint);
+    }
+
+    void show_improvement_prompt(
+        const keynako::windows::ImprovementSubmission &submission) {
+        hide_improvement_prompt();
+        pending_improvement_ = submission;
+        improvement_window_state_ = ImprovementWindowState::prompt;
+        ++improvement_generation_;
+        if (!ensure_candidate_window_class()) {
+            pending_improvement_.reset();
+            return;
+        }
+
+        HWND owner = IsWindow(candidate_owner_) ? candidate_owner_ : GetFocus();
+        improvement_window_ = CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            kCandidateWindowClass, L"Keynako improvement", WS_POPUP,
+            0, 0, 440, 78, owner, nullptr, g_instance, this);
+        if (!improvement_window_) {
+            pending_improvement_.reset();
+            return;
+        }
+        constexpr DWORD kRoundedWindowPreference = 2;
+        constexpr auto kWindowCornerPreference = static_cast<DWMWINDOWATTRIBUTE>(33);
+        DwmSetWindowAttribute(improvement_window_, kWindowCornerPreference,
+                              &kRoundedWindowPreference,
+                              sizeof(kRoundedWindowPreference));
+
+        const UINT dpi = GetDpiForWindow(improvement_window_);
+        const int width = MulDiv(440, static_cast<int>(dpi), 96);
+        const int height = MulDiv(78, static_cast<int>(dpi), 96);
+        int left = last_candidate_rectangle_.left;
+        int top = last_candidate_rectangle_.top;
+        if (last_candidate_rectangle_.right <= last_candidate_rectangle_.left) {
+            POINT cursor{};
+            GetCursorPos(&cursor);
+            left = cursor.x;
+            top = cursor.y + MulDiv(4, static_cast<int>(dpi), 96);
+        }
+        RECT popup{left, top, left + width, top + height};
+        MONITORINFO monitor_info{sizeof(monitor_info)};
+        if (GetMonitorInfoW(MonitorFromRect(&popup, MONITOR_DEFAULTTONEAREST),
+                            &monitor_info)) {
+            left = std::clamp(left, static_cast<int>(monitor_info.rcWork.left),
+                              std::max(static_cast<int>(monitor_info.rcWork.left),
+                                       static_cast<int>(monitor_info.rcWork.right) - width));
+            top = std::clamp(top, static_cast<int>(monitor_info.rcWork.top),
+                             std::max(static_cast<int>(monitor_info.rcWork.top),
+                                      static_cast<int>(monitor_info.rcWork.bottom) - height));
+        }
+        SetWindowPos(improvement_window_, HWND_TOPMOST, left, top, width, height,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetTimer(improvement_window_, kImprovementDismissTimer, 8000, nullptr);
+    }
+
+    void hide_improvement_prompt() {
+        ++improvement_generation_;
+        pending_improvement_.reset();
+        if (improvement_window_) {
+            const HWND window = improvement_window_;
+            KillTimer(window, kImprovementDismissTimer);
+            DestroyWindow(window);
+            if (improvement_window_ == window) improvement_window_ = nullptr;
+        }
+    }
+
+    void submit_pending_improvement() {
+        if (!improvement_window_ || !pending_improvement_) return;
+        KillTimer(improvement_window_, kImprovementDismissTimer);
+        improvement_window_state_ = ImprovementWindowState::sending;
+        InvalidateRect(improvement_window_, nullptr, TRUE);
+        ++improvement_generation_;
+
+        std::wstring module_path(32768, L'\0');
+        const DWORD module_path_length = GetModuleFileNameW(
+            g_instance, module_path.data(), static_cast<DWORD>(module_path.size()));
+        if (module_path_length == 0 ||
+            module_path_length >= static_cast<DWORD>(module_path.size())) {
+            improvement_window_state_ = ImprovementWindowState::failed;
+            InvalidateRect(improvement_window_, nullptr, TRUE);
+            SetTimer(improvement_window_, kImprovementDismissTimer, 8000, nullptr);
+            return;
+        }
+        module_path.resize(module_path_length);
+        HMODULE retained_module = LoadLibraryW(module_path.c_str());
+        if (!retained_module) {
+            improvement_window_state_ = ImprovementWindowState::failed;
+            InvalidateRect(improvement_window_, nullptr, TRUE);
+            SetTimer(improvement_window_, kImprovementDismissTimer, 8000, nullptr);
+            return;
+        }
+
+        auto *task = new (std::nothrow) ImprovementWorkerTask{
+            improvement_window_, improvement_generation_, retained_module,
+            dictionary_submission_endpoint(),
+            keynako::windows::build_improvement_payload(
+                *pending_improvement_, kAppVersion)};
+        if (!task) {
+            FreeLibrary(retained_module);
+            improvement_window_state_ = ImprovementWindowState::failed;
+            InvalidateRect(improvement_window_, nullptr, TRUE);
+            SetTimer(improvement_window_, kImprovementDismissTimer, 8000, nullptr);
+            return;
+        }
+        HANDLE thread = CreateThread(nullptr, 0, improvement_worker_proc, task, 0, nullptr);
+        if (!thread) {
+            delete task;
+            FreeLibrary(retained_module);
+            improvement_window_state_ = ImprovementWindowState::failed;
+            InvalidateRect(improvement_window_, nullptr, TRUE);
+            SetTimer(improvement_window_, kImprovementDismissTimer, 8000, nullptr);
+            return;
+        }
+        CloseHandle(thread);
+    }
+
     static LRESULT CALLBACK candidate_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         auto *service = reinterpret_cast<TextService *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
@@ -788,6 +1070,58 @@ private:
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(service));
         }
         if (!service) return DefWindowProcW(window, message, wparam, lparam);
+        if (window == service->improvement_window_) {
+            switch (message) {
+                case WM_PAINT:
+                    service->paint_improvement_window(window);
+                    return 0;
+                case WM_ERASEBKGND:
+                    return 1;
+                case WM_MOUSEACTIVATE:
+                    return MA_NOACTIVATE;
+                case WM_TIMER:
+                    if (wparam == kImprovementDismissTimer) {
+                        service->hide_improvement_prompt();
+                    }
+                    return 0;
+                case WM_LBUTTONDOWN: {
+                    const UINT dpi = GetDpiForWindow(window);
+                    RECT client{};
+                    GetClientRect(window, &client);
+                    const int close_width = MulDiv(44, static_cast<int>(dpi), 96);
+                    if (GET_X_LPARAM(lparam) >= client.right - close_width ||
+                        service->improvement_window_state_ == ImprovementWindowState::sent) {
+                        service->hide_improvement_prompt();
+                    } else if (service->improvement_window_state_ == ImprovementWindowState::prompt ||
+                               service->improvement_window_state_ == ImprovementWindowState::failed) {
+                        service->submit_pending_improvement();
+                    }
+                    return 0;
+                }
+                case kImprovementSubmissionComplete:
+                    if (static_cast<UINT_PTR>(lparam) == service->improvement_generation_) {
+                        KillTimer(window, kImprovementDismissTimer);
+                        service->improvement_window_state_ = wparam != FALSE
+                            ? ImprovementWindowState::sent
+                            : ImprovementWindowState::failed;
+                        if (wparam != FALSE && service->pending_improvement_) {
+                            service->reported_improvements_.insert(
+                                service->improvement_pair_key(*service->pending_improvement_));
+                        }
+                        InvalidateRect(window, nullptr, TRUE);
+                        SetTimer(window, kImprovementDismissTimer,
+                                 wparam != FALSE ? 1600 : 8000, nullptr);
+                    }
+                    return 0;
+                case WM_NCDESTROY:
+                    if (service->improvement_window_ == window) {
+                        service->improvement_window_ = nullptr;
+                    }
+                    return DefWindowProcW(window, message, wparam, lparam);
+                default:
+                    return DefWindowProcW(window, message, wparam, lparam);
+            }
+        }
         switch (message) {
             case WM_PAINT: service->paint_candidate_window(window); return 0;
             case WM_ERASEBKGND: return 1;
@@ -807,6 +1141,11 @@ private:
                 }
                 return 0;
             }
+            case WM_NCDESTROY:
+                if (service->candidate_window_ == window) {
+                    service->candidate_window_ = nullptr;
+                }
+                return DefWindowProcW(window, message, wparam, lparam);
             default: return DefWindowProcW(window, message, wparam, lparam);
         }
     }
@@ -953,6 +1292,8 @@ private:
         const bool was_visible = IsWindowVisible(candidate_window_) != FALSE;
         SetWindowPos(candidate_window_, HWND_TOPMOST, left, top, width, height,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        candidate_owner_ = owner;
+        last_candidate_rectangle_ = {left, top, left + width, top + height};
         InvalidateRect(candidate_window_, nullptr, TRUE);
         NotifyWinEvent(was_visible ? EVENT_OBJECT_IME_CHANGE : EVENT_OBJECT_IME_SHOW,
                        candidate_window_, OBJID_CLIENT, CHILDID_SELF);
@@ -960,9 +1301,11 @@ private:
 
     void hide_candidates() {
         if (candidate_window_) {
+            GetWindowRect(candidate_window_, &last_candidate_rectangle_);
             NotifyWinEvent(EVENT_OBJECT_IME_HIDE, candidate_window_, OBJID_CLIENT, CHILDID_SELF);
-            DestroyWindow(candidate_window_);
-            candidate_window_ = nullptr;
+            const HWND window = candidate_window_;
+            DestroyWindow(window);
+            if (candidate_window_ == window) candidate_window_ = nullptr;
         }
     }
 

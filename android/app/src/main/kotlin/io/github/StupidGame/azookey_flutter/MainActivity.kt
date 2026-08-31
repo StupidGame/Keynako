@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.system.Os
@@ -36,6 +37,18 @@ class MainActivity : FlutterActivity() {
                 "keyboardStatus" -> result.success(keyboardStatus())
                 "openKeyboardSettings" -> {
                     startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                    result.success(null)
+                }
+                "configureDictionarySubmission" -> {
+                    val endpoint = call.argument<String>("endpoint").orEmpty().trim()
+                    val uri = Uri.parse(endpoint)
+                    sharedPreferences().edit().apply {
+                        if (uri.scheme == "https" && !uri.host.isNullOrBlank()) {
+                            putString(DICTIONARY_SUBMISSION_URL_KEY, endpoint)
+                        } else {
+                            remove(DICTIONARY_SUBMISSION_URL_KEY)
+                        }
+                    }.apply()
                     result.success(null)
                 }
                 "shareText" -> {
@@ -205,6 +218,7 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL = "net.azookey/platform"
         const val PREFERENCES_NAME = "azookey_flutter"
         const val STATE_KEY = "azookey_flutter_state"
+        const val DICTIONARY_SUBMISSION_URL_KEY = "keynako_dictionary_submission_url"
         private const val CONTACTS_PERMISSION_REQUEST = 4101
         private const val MAX_BACKGROUND_IMAGE_BYTES = 8 * 1024 * 1024
     }

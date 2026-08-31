@@ -2236,7 +2236,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         pendingReport = report
         candidateRow.removeAllViews()
         addCandidateButton("「${report.selected}」を選択") {}
-        addCandidateButton("改善レポートを送信") { submitPendingReport() }
+        addCandidateButton("共有辞書へ改善を送信") { submitPendingReport() }
         addCandidateButton("詳細") { showReportDetails(report) }
         addCandidateButton("×") {
             pendingReport = null
@@ -2253,7 +2253,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             addCandidateButton("前: ${report.leftContext.takeLast(10)}") {}
             addCandidateButton("後: ${report.rightContext.take(10)}") {}
         }
-        addCandidateButton("送信") { submitPendingReport() }
+        addCandidateButton("改善を送信") { submitPendingReport() }
         addCandidateButton("戻る") { maybeOfferReportWithoutFiltering(report) }
     }
 
@@ -2284,7 +2284,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         pendingReport = report
         candidateRow.removeAllViews()
         addCandidateButton("「${report.selected}」を選択") {}
-        addCandidateButton("改善レポートを送信") { submitPendingReport() }
+        addCandidateButton("共有辞書へ改善を送信") { submitPendingReport() }
         addCandidateButton("詳細") { showReportDetails(report) }
         addCandidateButton("×") {
             pendingReport = null
@@ -2296,17 +2296,18 @@ class AzooKeyInputMethodService : InputMethodService() {
         val report = pendingReport ?: return
         candidateRow.removeAllViews()
         addCandidateButton("送信中…") {}
-        ReportClient.submit(
+        ReportClient.submitSharedConversionImprovement(
+            endpoint = getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getString(MainActivity.DICTIONARY_SUBMISSION_URL_KEY, "")
+                .orEmpty(),
             report = report,
-            settings = settings,
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown Version",
-            osVersion = "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
         ) { success ->
             Handler(Looper.getMainLooper()).post {
                 if (success) registerReportedPair(report)
                 pendingReport = null
                 candidateRow.removeAllViews()
-                addCandidateButton(if (success) "レポートを送信しました" else "送信に失敗しました") {}
+                addCandidateButton(if (success) "変換の改善を送信しました" else "送信に失敗しました") {}
                 candidateRow.postDelayed({ renderCandidates() }, 1600)
             }
         }

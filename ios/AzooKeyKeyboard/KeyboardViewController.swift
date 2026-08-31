@@ -1631,7 +1631,7 @@ final class KeyboardViewController: UIInputViewController {
     private func showReportPrompt(_ report: WrongConversionReport) {
         candidateStack.removeAllArrangedSubviews()
         candidateStack.addArrangedSubview(makeCandidateButton("「\(report.selected)」を選択", action: {}))
-        candidateStack.addArrangedSubview(makeCandidateButton("改善レポートを送信", action: submitPendingReport))
+        candidateStack.addArrangedSubview(makeCandidateButton("共有辞書へ改善を送信", action: submitPendingReport))
         candidateStack.addArrangedSubview(makeCandidateButton("詳細") { [weak self] in self?.showReportDetails(report) })
         candidateStack.addArrangedSubview(makeCandidateButton("×") { [weak self] in
             self?.pendingReport = nil
@@ -1648,7 +1648,7 @@ final class KeyboardViewController: UIInputViewController {
             candidateStack.addArrangedSubview(makeCandidateButton("前: \(report.leftContext.suffix(10))", action: {}))
             candidateStack.addArrangedSubview(makeCandidateButton("後: \(report.rightContext.prefix(10))", action: {}))
         }
-        candidateStack.addArrangedSubview(makeCandidateButton("送信", action: submitPendingReport))
+        candidateStack.addArrangedSubview(makeCandidateButton("改善を送信", action: submitPendingReport))
         candidateStack.addArrangedSubview(makeCandidateButton("戻る") { [weak self] in self?.showReportPrompt(report) })
     }
 
@@ -1686,9 +1686,10 @@ final class KeyboardViewController: UIInputViewController {
         guard let report = pendingReport else { return }
         candidateStack.removeAllArrangedSubviews()
         candidateStack.addArrangedSubview(makeCandidateButton("送信中…", action: {}))
-        ReportClient.submit(
+        ReportClient.submitSharedConversionImprovement(
+            endpoint: UserDefaults(suiteName: "group.com.azooKey.keyboard")?
+                .string(forKey: "keynako_dictionary_submission_url") ?? "",
             report: report,
-            settings: settings,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown Version"
         ) { [weak self] success in
             DispatchQueue.main.async {
@@ -1696,7 +1697,7 @@ final class KeyboardViewController: UIInputViewController {
                 if success { self.registerReportedPair(report) }
                 self.pendingReport = nil
                 self.candidateStack.removeAllArrangedSubviews()
-                self.candidateStack.addArrangedSubview(self.makeCandidateButton(success ? "レポートを送信しました" : "送信に失敗しました", action: {}))
+                self.candidateStack.addArrangedSubview(self.makeCandidateButton(success ? "変換の改善を送信しました" : "送信に失敗しました", action: {}))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in self?.renderCandidates() }
             }
         }

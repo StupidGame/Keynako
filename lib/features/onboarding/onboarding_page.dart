@@ -73,7 +73,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                   _OnboardingStep(
                     icon: Icons.lock_open_outlined,
                     title: '追加機能について',
-                    body: 'クリップボード履歴、連絡先変換、誤変換レポートなどは、OS側の追加権限またはフルアクセスが必要です。必要な機能だけを設定から有効にできます。',
+                    body: 'クリップボード履歴、連絡先変換、共有変換辞書への改善送信などは、OS側の追加権限またはフルアクセスが必要です。必要な機能だけを設定から有効にできます。',
                     action: FilledButton.icon(
                       onPressed: _finish,
                       icon: const Icon(Icons.check),

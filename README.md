@@ -12,7 +12,7 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 - 片手モード、カーソル移動、クリップボード履歴、音・触覚設定
 - 設定のJSONバックアップ／復元、連絡先からの辞書登録
 - URL（custard.azookey.com、GitHub、Gist、直接JSON）からのCustard 1.0〜1.2インポート
-- 変換報告と、重要度付きユーザ辞書のKeynako共有
+- IMEからの変換改善と、重要度付きユーザ辞書のKeynako共有
 - `StupidGame/keynako_hotfix_dictionary_storage`の共有変換辞書を5分ごとに同期
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
 - Windows TSF／macOS InputMethodKit／Linux IBusへ登録できる日本語・英語IME、ライブ変換、共有辞書、候補選択、Zenzai
@@ -97,6 +97,8 @@ flutter run -d windows # linux、macosも指定可能
 「拡張」の読み込みボタンへCustard URLを入力すると、元のazooKeyと同じJSON形式を単体・配列のどちらでも読み込めます。`https://custard.azookey.com/tab/...` は公式API URLへ自動変換されます。キー座標とサイズ、system key、複数アクション、長押し開始・反復、フリック／PCバリエーションは定義を無損失で保持し、AndroidとiOSのネイティブキーボードが直接実行します。
 
 「この変換をKeynakoと共有」をオンにしたユーザ辞書語は、保存時にHTTPSゲートウェイから`StupidGame/keynako_hotfix_dictionary_storage`へ自動送信されます。重要度1〜5も辞書の変換順位に反映します。Android/iOSは`main`の`data_v1.json`を5分間隔で確認し、更新があれば取り込みます。設定の「Keynako共有変換辞書」から手動更新もできます。送信先はビルド時の`KEYNAKO_DICTIONARY_SUBMISSION_URL`で設定します。
+
+Android/iOSでは設定の「共有変換辞書へ改善を送信」をオンにすると、IMEで第一候補以外を選んだあとに改善の送信を提案します。WindowsのシステムIMEでも、変換候補を確定した位置へ同じ送信確認を表示します。確認して送信した読みと選択語は、標準の重要度3で同じ共有変換辞書へ送られます。前後の文脈や入力先の情報は共有先へ送信しません。
 
 組み込みフリック配列は元の5列×4段構成で、`☆123`、`ABC`、`あいう`、`小ﾞﾟ`、`､｡?!`をカスタムキー編集画面から個別に差し替えられます。
 

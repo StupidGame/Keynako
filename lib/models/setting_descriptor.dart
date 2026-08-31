@@ -333,8 +333,8 @@ const List<SettingDescriptor> settingCatalog = [
   SettingDescriptor(
     group: '協力',
     key: 'enable_wrong_conversion_report',
-    title: '誤変換レポートを送信',
-    explanation: '候補選択後に内容を確認してレポートを送信できます。',
+    title: '共有変換辞書へ改善を送信',
+    explanation: '第一候補以外を選んだあと、読みと選択語を確認してKeynakoへ送信できます。',
     kind: SettingKind.toggle,
     requiresFullAccess: true,
   ),
@@ -342,7 +342,7 @@ const List<SettingDescriptor> settingCatalog = [
     group: '協力',
     key: 'wrong_conversion_report_frequency',
     title: '送信を提案する頻度',
-    explanation: '誤変換レポートの提案頻度を調整します。',
+    explanation: '共有変換辞書への改善送信を提案する頻度を調整します。',
     kind: SettingKind.choice,
     options: [
       SettingOption(1, 'とても頻繁'),
@@ -354,15 +354,8 @@ const List<SettingDescriptor> settingCatalog = [
   SettingDescriptor(
     group: '協力',
     key: 'wrong_conversion_include_context',
-    title: '文脈をデフォルトで含める',
-    explanation: 'レポートに前後それぞれ約10文字までの文脈を含めます。',
+    title: '送信前に文脈を表示',
+    explanation: '詳細画面に前後それぞれ約10文字を表示します。文脈は共有先へ送信しません。',
     kind: SettingKind.toggle,
-  ),
-  SettingDescriptor(
-    group: '協力',
-    key: 'wrong_conversion_report_user_nickname',
-    title: 'ユーザニックネーム',
-    explanation: 'レポートに含める任意の名前です。',
-    kind: SettingKind.text,
   ),
 ];

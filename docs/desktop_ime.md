@@ -13,6 +13,7 @@ PC版は、Flutter製の設定・動作確認アプリと、OSへ入力ソース
 - `Ctrl+Space`による日本語／英語モード切替
 - サブモジュールのAzooKey標準辞書と、別リポジトリの`Dictionary/data_v1.json`共有辞書を併用
 - 共有辞書をインストール時から利用し、アプリ版と同じ5分間隔で取得して三OSのシステムIMEへ反映
+- Windowsでは第一候補以外の辞書候補を確定したあと、確認操作によって読みと選択語を共有変換辞書へ改善として送信
 - Zenzai v3.2 xsmall／smallと常駐`llama.cpp`プロセスによる端末内推論
 
 Zenzaiは最初の明示変換時にモデルを読み込みます。モデルや実行ファイルが見つからない場合も、通常辞書、かな、カタカナ、英語候補は利用できます。任意のモデルへ切り替えるときは`KEYNAKO_ZENZAI_MODEL`を指定します。
@@ -21,16 +22,19 @@ Zenzaiは最初の明示変換時にモデルを読み込みます。モデル�
 
 Actions成果物の`KeynakoSetup.exe`を実行します。セットアップは管理者権限で設定アプリ、64-bit TSF DLL、ZenzaiとモデルをProgram Filesへ配置し、Keynakoを日本語入力プロファイルとして登録します。Windowsの入力設定からKeynakoを選択できます。
 
-選択中はWindowsの入力インジケーターへ、Flutterアプリと同じブランドアイコンと、現在の入力モードを表す`あ`／`A`を個別に表示します。モード項目をクリックすると日本語と英語を切り替えられ、メニューからライブ変換と設定アプリを操作できます。角丸の候補ウィンドウには選択行、候補番号、ページ数、キー操作、共有辞書／Zenzaiの出典を表示します。
+選択中はWindowsの入力インジケーターへ、Flutterアプリと同じブランドアイコンと、現在の入力モードを表す`あ`／`A`を個別に表示します。モード項目をクリックすると日本語と英語を切り替えられ、メニューからライブ変換と設定アプリを操作できます。角丸の候補ウィンドウには選択行、候補番号、ページ数、キー操作、共有辞書／Zenzaiの出典を表示します。第一候補以外の辞書候補を確定すると8秒間だけ改善の送信確認を表示し、クリックした場合に限って選択語、読み、候補順位、アプリ版番号をHTTPSで送ります。入力の前後や入力先アプリの情報は送りません。
 
 Windowsの「インストールされているアプリ」またはスタートメニューの`Uninstall Keynako`を開くと、exe形式のアンインストーラーがTSF登録、本体、同梱辞書、更新済み共有辞書キャッシュを削除します。
 
 開発用ビルド:
 
 ```powershell
-cmake -S platforms/windows -B build/windows-ime -A x64
+cmake -S platforms/windows -B build/windows-ime -A x64 `
+  -DKEYNAKO_DICTIONARY_SUBMISSION_URL="https://example.com/submissions"
 cmake --build build/windows-ime --config Release
 ```
+
+送信先を指定しない開発用ビルドでは、改善の送信確認を表示しません。
 
 ## macOS
 
