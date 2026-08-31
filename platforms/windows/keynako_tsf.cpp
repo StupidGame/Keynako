@@ -4,7 +4,6 @@
 #include <dwmapi.h>
 #include <msctf.h>
 #include <objbase.h>
-#include <ocidl.h>
 #include <oleauto.h>
 #include <shellapi.h>
 
@@ -39,6 +38,11 @@ constexpr GUID kLangBarInputMode = {0x2c77a81e, 0x41cc, 0x4178, {0xa3, 0xa7, 0x5
 // The Japanese DBE virtual-key constants are likewise absent from some SDKs.
 constexpr WPARAM kVirtualKeyDbeAlphanumeric = 0xf0;
 constexpr WPARAM kVirtualKeyDbeHiragana = 0xf2;
+// Keep the standard connection-point HRESULT values local because newer
+// trimmed Windows SDK headers no longer expose the CONNECT_E_* aliases.
+constexpr HRESULT kConnectNoConnection = static_cast<HRESULT>(0x80040200UL);
+constexpr HRESULT kConnectAdviseLimit = static_cast<HRESULT>(0x80040201UL);
+constexpr HRESULT kConnectCannotConnect = static_cast<HRESULT>(0x80040202UL);
 constexpr wchar_t kDescription[] = L"Keynako Japanese IME";
 
 constexpr UINT kMenuJapanese = 1;
@@ -953,9 +957,9 @@ STDMETHODIMP LanguageBarItem::GetText(BSTR *text) {
 }
 
 STDMETHODIMP LanguageBarItem::AdviseSink(REFIID iid, IUnknown *unknown, DWORD *cookie) {
-    if (iid != IID_ITfLangBarItemSink) return CONNECT_E_CANNOTCONNECT;
+    if (iid != IID_ITfLangBarItemSink) return kConnectCannotConnect;
     if (!unknown || !cookie) return E_INVALIDARG;
-    if (sink_) return CONNECT_E_ADVISELIMIT;
+    if (sink_) return kConnectAdviseLimit;
     const HRESULT result = unknown->QueryInterface(IID_PPV_ARGS(&sink_));
     if (FAILED(result)) return result;
     *cookie = 1;
@@ -963,7 +967,7 @@ STDMETHODIMP LanguageBarItem::AdviseSink(REFIID iid, IUnknown *unknown, DWORD *c
 }
 
 STDMETHODIMP LanguageBarItem::UnadviseSink(DWORD cookie) {
-    if (cookie != 1 || !sink_) return CONNECT_E_NOCONNECTION;
+    if (cookie != 1 || !sink_) return kConnectNoConnection;
     sink_->Release();
     sink_ = nullptr;
     return S_OK;
