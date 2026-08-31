@@ -228,7 +228,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S packages/keynako_conversion/native -B build/zenzai -A x64 -DBUILD_TESTING=ON
-          cmake --build build/zenzai --config Release --parallel 2
+          cmake --build build/zenzai --config Release --parallel 2 --target keynako_zenzai keynako_ime_core_test keynako_ime_c_api_test
           ctest --test-dir build/zenzai -C Release --output-on-failure
 
       - name: Build the Windows TSF input service
