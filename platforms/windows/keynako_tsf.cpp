@@ -4,6 +4,7 @@
 #include <dwmapi.h>
 #include <msctf.h>
 #include <objbase.h>
+#include <ocidl.h>
 #include <oleauto.h>
 #include <shellapi.h>
 
@@ -32,6 +33,12 @@ constexpr CLSID kTextService = {0xf7959d5b, 0x0818, 0x43cc, {0x99, 0x19, 0x6a, 0
 constexpr GUID kLanguageProfile = {0x9e061a9a, 0xa339, 0x4ae0, {0xb6, 0xdc, 0xa1, 0x3f, 0x21, 0xa3, 0x40, 0xc2}};
 // {3116A7F8-8F02-4327-BA10-3625B689E948}
 constexpr GUID kPreservedToggle = {0x3116a7f8, 0x8f02, 0x4327, {0xba, 0x10, 0x36, 0x25, 0xb6, 0x89, 0xe9, 0x48}};
+// GUID_LBI_INPUTMODE is not declared by every supported Windows SDK, even
+// though Windows 8 and later require this value for the taskbar mode button.
+constexpr GUID kLangBarInputMode = {0x2c77a81e, 0x41cc, 0x4178, {0xa3, 0xa7, 0x5f, 0x8a, 0x98, 0x75, 0x68, 0xe6}};
+// The Japanese DBE virtual-key constants are likewise absent from some SDKs.
+constexpr WPARAM kVirtualKeyDbeAlphanumeric = 0xf0;
+constexpr WPARAM kVirtualKeyDbeHiragana = 0xf2;
 constexpr wchar_t kDescription[] = L"Keynako Japanese IME";
 
 constexpr UINT kMenuJapanese = 1;
@@ -264,12 +271,12 @@ public:
             *eaten = TRUE;
             return S_OK;
         }
-        if (key == VK_KANA || key == VK_DBE_HIRAGANA) {
+        if (key == VK_KANA || key == kVirtualKeyDbeHiragana) {
             set_input_mode(keynako::InputMode::japanese, context);
             *eaten = TRUE;
             return S_OK;
         }
-        if (key == VK_DBE_ALPHANUMERIC) {
+        if (key == kVirtualKeyDbeAlphanumeric) {
             set_input_mode(keynako::InputMode::english, context);
             *eaten = TRUE;
             return S_OK;
@@ -432,8 +439,8 @@ private:
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         if (control && key == VK_SPACE) return true;
         if (control || (GetKeyState(VK_MENU) & 0x8000) != 0) return false;
-        if (key == VK_KANJI || key == VK_KANA || key == VK_DBE_HIRAGANA ||
-            key == VK_DBE_ALPHANUMERIC || key == VK_NONCONVERT) return true;
+        if (key == VK_KANJI || key == VK_KANA || key == kVirtualKeyDbeHiragana ||
+            key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT) return true;
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
@@ -753,8 +760,8 @@ private:
         if (GetMonitorInfoW(MonitorFromRect(&rectangle, MONITOR_DEFAULTTONEAREST), &monitor_info)) {
             if (popup.right > monitor_info.rcWork.right) left = monitor_info.rcWork.right - width;
             if (popup.bottom > monitor_info.rcWork.bottom) top = rectangle.top - height - 2;
-            left = std::max(left, monitor_info.rcWork.left);
-            top = std::max(top, monitor_info.rcWork.top);
+            left = std::max(left, static_cast<int>(monitor_info.rcWork.left));
+            top = std::max(top, static_cast<int>(monitor_info.rcWork.top));
         }
         const bool was_visible = IsWindowVisible(candidate_window_) != FALSE;
         SetWindowPos(candidate_window_, HWND_TOPMOST, left, top, width, height,
@@ -859,7 +866,7 @@ STDMETHODIMP LanguageBarItem::GetInfo(TF_LANGBARITEMINFO *info) {
     if (!info) return E_INVALIDARG;
     *info = {};
     info->clsidService = kTextService;
-    info->guidItem = GUID_LBI_INPUTMODE;
+    info->guidItem = kLangBarInputMode;
     info->dwStyle = TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_BTN_MENU |
                     TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_TEXTCOLORICON;
     info->ulSort = 0;
