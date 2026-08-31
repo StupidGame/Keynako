@@ -26,6 +26,7 @@ final class KeyboardViewController: UIInputViewController {
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
     private var backgroundImageSignature: String?
+    private var hasLoadedState = false
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
@@ -116,12 +117,15 @@ final class KeyboardViewController: UIInputViewController {
         guard let value = defaults.string(forKey: "azookey_flutter_state"),
               let data = value.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            state = [:]
-            settings = [:]
-            palette = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            if !hasLoadedState {
+                state = [:]
+                settings = [:]
+                palette = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            }
             applyKeyboardBackground()
             return
         }
+        hasLoadedState = true
         state = object
         settings = object["settings"] as? [String: Any] ?? [:]
         reloadAzooKeyHotfixDictionary()
@@ -216,8 +220,12 @@ final class KeyboardViewController: UIInputViewController {
         } else {
             signature = nil
         }
-        if signature != backgroundImageSignature {
-            backgroundImageView.image = path.flatMap { UIImage(contentsOfFile: $0) }
+        if signature == nil {
+            backgroundImageView.image = nil
+            backgroundImageSignature = nil
+        } else if signature != backgroundImageSignature,
+                  let image = path.flatMap({ UIImage(contentsOfFile: $0) }) {
+            backgroundImageView.image = image
             backgroundImageSignature = signature
         }
         let hasImage = signature != nil && backgroundImageView.image != nil

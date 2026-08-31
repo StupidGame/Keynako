@@ -108,6 +108,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var hotfixDictionaryEntries = emptyList<AzooKeyHotfixDictionaryEntry>()
     private var hotfixDictionaryVersion = "none"
     private var backgroundImageSignature: String? = null
+    private var hasLoadedState = false
     private var palette = KeyboardPalette.default()
     private var flickGuide: FlickGuide? = null
     private var cursorBarVisible = false
@@ -249,10 +250,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         oneHandedMode = preferences.getString(ONE_HANDED_MODE_KEY, "full")
             ?.takeIf { it == "left" || it == "right" }
             ?: "full"
-        state = try {
-            if (value.isNullOrBlank()) JSONObject() else JSONObject(value)
+        val restoredState = try {
+            value?.takeIf(String::isNotBlank)?.let(::JSONObject)
         } catch (_: Exception) {
-            JSONObject()
+            null
+        }
+        if (restoredState != null) {
+            state = restoredState
+            hasLoadedState = true
+        } else if (hasLoadedState) {
+            // Keep the last valid palette if preferences are briefly unavailable
+            // while the settings app replaces its state.
+            return
+        } else {
+            state = JSONObject()
         }
         settings = state.optJSONObject("settings") ?: JSONObject()
         reloadAzooKeyHotfixDictionary()
@@ -351,10 +362,20 @@ class AzooKeyInputMethodService : InputMethodService() {
             val revision = palette.backgroundImageRevision ?: it.lastModified()
             "${it.absolutePath}:$revision"
         }
-        if (signature != backgroundImageSignature) {
-            val bitmap = file?.let(::decodeKeyboardBackground)
-            backgroundImageView.setImageBitmap(bitmap)
-            backgroundImageSignature = signature
+        if (signature == null) {
+            backgroundImageView.setImageDrawable(null)
+            backgroundImageSignature = null
+        } else if (signature != backgroundImageSignature) {
+            val bitmap = file.let(::decodeKeyboardBackground)
+            if (bitmap != null) {
+                backgroundImageView.setImageBitmap(bitmap)
+                backgroundImageSignature = signature
+            } else {
+                Log.w(
+                    "KeynakoIME",
+                    "Keeping the previous keyboard background after a decode failure",
+                )
+            }
         }
         val hasImage = signature != null && backgroundImageView.drawable != null
         backgroundImageView.visibility = if (hasImage) View.VISIBLE else View.GONE
