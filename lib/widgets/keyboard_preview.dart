@@ -24,15 +24,18 @@ class KeyboardPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final background = Color(theme.backgroundColor);
+    final storedImage = theme.backgroundImage == null
+        ? null
+        : File(theme.backgroundImage!);
     final image = backgroundImageBytes != null
         ? Image.memory(
             backgroundImageBytes!,
             fit: BoxFit.cover,
             errorBuilder: (_, _, _) => const SizedBox.shrink(),
           )
-        : theme.backgroundImage != null
+        : storedImage != null && storedImage.existsSync()
         ? Image.file(
-            File(theme.backgroundImage!),
+            storedImage,
             fit: BoxFit.cover,
             errorBuilder: (_, _, _) => const SizedBox.shrink(),
           )
@@ -76,9 +79,8 @@ class KeyboardPreview extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.all(compact ? 1.5 : 2.5),
                   child: Material(
-                    color: Color(theme.keyColor).withValues(
-                      alpha: hasImage ? theme.keyOpacity : 1,
-                    ),
+                    color: Color(theme.keyColor)
+                        .withValues(alpha: hasImage ? theme.keyOpacity : 1),
                     borderRadius: BorderRadius.circular(compact ? 4 : 6),
                     elevation: compact ? 0.5 : 1,
                     child: Center(

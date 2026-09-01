@@ -21,7 +21,11 @@ class CustardSystemImageLabelsTest {
     fun rendersEveryAdditionalSystemImageUsedBy123Jp() {
         val expected = mapOf(
             "delete.left" to "⌫",
+            "delete.left.fill" to "⌫",
             "delete.right" to "⌦",
+            "delete.right.fill" to "⌦",
+            "globe.asia.australia" to "🌐",
+            "capslock.fill" to "⇪",
             "globe.europe.africa" to "🌐",
             "chevron.left" to "←",
             "chevron.left.2" to "←",

@@ -26,6 +26,7 @@ final class KeyboardViewController: UIInputViewController {
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
     private var backgroundImageSignature: String?
+    private var hasLoadedState = false
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
@@ -116,12 +117,15 @@ final class KeyboardViewController: UIInputViewController {
         guard let value = defaults.string(forKey: "azookey_flutter_state"),
               let data = value.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            state = [:]
-            settings = [:]
-            palette = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            if !hasLoadedState {
+                state = [:]
+                settings = [:]
+                palette = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            }
             applyKeyboardBackground()
             return
         }
+        hasLoadedState = true
         state = object
         settings = object["settings"] as? [String: Any] ?? [:]
         reloadAzooKeyHotfixDictionary()
@@ -185,6 +189,7 @@ final class KeyboardViewController: UIInputViewController {
             return dark ? .dark : .light
         }
         let backgroundImage = theme["backgroundImage"] as? String
+        let backgroundImageRevision = (theme["backgroundImageRevision"] as? NSNumber)?.int64Value
         let keyOpacity: CGFloat = backgroundImage == nil
             ? 1
             : CGFloat(((theme["keyOpacity"] as? Double) ?? 0.72).clamped(to: 0.15 ... 1))
@@ -194,7 +199,8 @@ final class KeyboardViewController: UIInputViewController {
             special: color(theme["specialKeyColor"], fallback: dark ? 0xff1f2937 : 0xffadb5bd).withAlphaComponent(keyOpacity),
             text: color(theme["textColor"], fallback: dark ? 0xfff9fafb : 0xff111827),
             accent: color(theme["accentColor"], fallback: dark ? 0xff60a5fa : 0xff2563eb).withAlphaComponent(keyOpacity),
-            backgroundImage: backgroundImage
+            backgroundImage: backgroundImage,
+            backgroundImageRevision: backgroundImageRevision
         )
     }
 
@@ -208,15 +214,24 @@ final class KeyboardViewController: UIInputViewController {
         }
         let signature: String?
         if let path, FileManager.default.fileExists(atPath: path) {
-            signature = "\(path):\(modificationDate?.timeIntervalSince1970 ?? 0)"
+            let revision = palette.backgroundImageRevision.map { String($0) }
+                ?? String(modificationDate?.timeIntervalSince1970 ?? 0)
+            signature = "\(path):\(revision)"
         } else {
             signature = nil
         }
-        if signature != backgroundImageSignature {
-            backgroundImageView.image = path.flatMap { UIImage(contentsOfFile: $0) }
+        if path == nil {
+            backgroundImageView.image = nil
+            backgroundImageSignature = nil
+        } else if let signature,
+                  (signature != backgroundImageSignature || backgroundImageView.image == nil),
+                  let image = path.flatMap({ UIImage(contentsOfFile: $0) }) {
+            backgroundImageView.image = image
             backgroundImageSignature = signature
         }
-        let hasImage = signature != nil && backgroundImageView.image != nil
+        // Keep the decoded image through a transient app-group file lookup
+        // failure and reload it if UIKit recreated the view/image storage.
+        let hasImage = path != nil && backgroundImageView.image != nil
         backgroundImageView.isHidden = !hasImage
         rootStack.backgroundColor = hasImage ? .clear : palette.background
         keyboardStack.backgroundColor = hasImage ? .clear : palette.background
@@ -568,10 +583,10 @@ final class KeyboardViewController: UIInputViewController {
     private func systemImageLabel(_ name: String) -> String {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         switch trimmedName.lowercased() {
-        case "delete.left": return "⌫"
-        case "delete.right": return "⌦"
+        case "delete.left", "delete.left.fill": return "⌫"
+        case "delete.right", "delete.right.fill": return "⌦"
         case "xmark": return "×"
-        case "globe", "globe.europe.africa": return "🌐"
+        case "globe", "globe.asia.australia", "globe.europe.africa": return "🌐"
         case "return", "return.left": return "↵"
         case "space": return "空白"
         case "list.bullet": return "☰"
@@ -586,6 +601,7 @@ final class KeyboardViewController: UIInputViewController {
         case "face.smiling": return "🙂"
         case "doc.on.clipboard", "list.bullet.clipboard": return "📋"
         case "shift", "shift.fill": return "⇧"
+        case "capslock", "capslock.fill": return "⇪"
         default: return trimmedName
         }
     }
@@ -1020,7 +1036,102 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func dispatch(_ actions: [[String: Any]]) {
-        for action in actions { dispatch(action) }
+        var index = 0
+        while index < actions.count {
+            if index + 1 < actions.count,
+               positiveBackwardDelete(actions[index]),
+               isBackwardSmartDelete(actions[index + 1]) {
+                dispatchCombinedBackwardSmartDelete(
+                    deleteAction: actions[index],
+                    smartDeleteAction: actions[index + 1]
+                )
+                index += 2
+            } else {
+                dispatch(actions[index])
+                index += 1
+            }
+        }
+    }
+
+    private func positiveBackwardDelete(_ action: [String: Any]) -> Bool {
+        guard action["type"] as? String == "delete" else { return false }
+        let count = (action["count"] as? NSNumber)?.intValue
+            ?? Int(action["value"] as? String ?? "")
+            ?? 1
+        return count > 0
+    }
+
+    private func isBackwardSmartDelete(_ action: [String: Any]) -> Bool {
+        switch action["type"] as? String {
+        case "smart_delete_default": return true
+        case "smart_delete": return action["direction"] as? String == "backward"
+        default: return false
+        }
+    }
+
+    private func backwardSmartDeleteCount(in text: String, targets: [String]) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let boundaries = targets.compactMap { target -> String.Index? in
+            text.range(of: target, options: .backwards)?.upperBound
+        }
+        let boundary = boundaries.max() ?? text.startIndex
+        let distance = text.distance(from: boundary, to: text.endIndex)
+        return distance == 0 ? 1 : distance
+    }
+
+    private func combinedBackwardSmartDeleteCount(
+        in text: String,
+        leadingDeleteCount: Int,
+        targets: [String]
+    ) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let leading = min(max(0, leadingDeleteCount), text.count)
+        let remaining = String(text.dropLast(leading))
+        guard !remaining.isEmpty else { return leading }
+        return min(
+            text.count,
+            leading + backwardSmartDeleteCount(in: remaining, targets: targets)
+        )
+    }
+
+    private func dispatchCombinedBackwardSmartDelete(
+        deleteAction: [String: Any],
+        smartDeleteAction: [String: Any]
+    ) {
+        let leadingCount = (deleteAction["count"] as? NSNumber)?.intValue
+            ?? Int(deleteAction["value"] as? String ?? "")
+            ?? 1
+        let targets = smartDeleteAction["type"] as? String == "smart_delete_default"
+            ? Self.defaultScanTargets
+            : actionTargets(smartDeleteAction)
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            if !rawRoman.isEmpty || smartDeleteAction["type"] as? String == "smart_delete_default" {
+                smartDeleteDefault()
+                return
+            }
+            let count = combinedBackwardSmartDeleteCount(
+                in: composing,
+                leadingDeleteCount: leadingCount,
+                targets: targets
+            )
+            composing.removeLast(min(count, composing.count))
+            if composing.isEmpty {
+                replaceDisplayed(with: "", commit: true)
+                resetComposition()
+                renderCandidates()
+            } else {
+                updateComposition()
+            }
+            return
+        }
+        let text = textDocumentProxy.documentContextBeforeInput ?? ""
+        let count = combinedBackwardSmartDeleteCount(
+            in: text,
+            leadingDeleteCount: leadingCount,
+            targets: targets
+        )
+        for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+        refreshCursorBar()
     }
 
     private func activeCustard() -> [String: Any]? {
@@ -1387,8 +1498,19 @@ final class KeyboardViewController: UIInputViewController {
         if layout == "qwerty", boolSetting("roman_english_candidate", fallback: true), !rawRoman.isEmpty {
             result.append(rawRoman)
         }
+        let hiragana = katakanaToHiragana(composing)
+        let fullKatakana = hiraganaToKatakana(hiragana)
+        let liveCandidate = boolSetting("live_conversion", fallback: true) ? result.first : nil
+        var prioritized: [String] = []
+        if let liveCandidate,
+           liveCandidate != hiragana,
+           liveCandidate != fullKatakana {
+            prioritized.append(liveCandidate)
+        }
+        prioritized.append(contentsOf: [hiragana, fullKatakana])
+        prioritized.append(contentsOf: result)
         var seen = Set<String>()
-        return result.filter { !$0.isEmpty && seen.insert($0).inserted }
+        return prioritized.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     private func buildEnglishCandidates(_ input: String) -> [String] {
@@ -2591,7 +2713,7 @@ private final class CustardButton: DirectionalKeyButton {
     private var variationDidLongPress = false
     private var longPressDirection: String?
     private var centerLongPressRollback: (() -> Void)?
-    private var skipLeadingDeleteOnVariationRelease = false
+    private var continueDeleteVariationOnRelease = false
 
     init(
         title: String,
@@ -2624,7 +2746,7 @@ private final class CustardButton: DirectionalKeyButton {
         variationDidLongPress = false
         longPressDirection = nil
         centerLongPressRollback = nil
-        skipLeadingDeleteOnVariationRelease = false
+        continueDeleteVariationOnRelease = false
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let startActions = longPress["start"] as? [[String: Any]] ?? []
         let repeated = longPress["repeat"] as? [[String: Any]] ?? []
@@ -2688,7 +2810,7 @@ private final class CustardButton: DirectionalKeyButton {
                 longPressWorkItem?.cancel()
                 if didLongPress {
                     centerLongPressRollback?()
-                    skipLeadingDeleteOnVariationRelease =
+                    continueDeleteVariationOnRelease =
                         centerLongPressRollback == nil && canContinueAfterDelete
                     centerLongPressRollback = nil
                     longPressFlicked = true
@@ -2753,7 +2875,7 @@ private final class CustardButton: DirectionalKeyButton {
         }
         if longPressFlicked && variationDidLongPress { return }
         let continuedVariation: [String: Any]?
-        if skipLeadingDeleteOnVariationRelease, let longPressDirection {
+        if continueDeleteVariationOnRelease, let longPressDirection {
             let variation = variations(type: "flick_variation").first {
                 $0["direction"] as? String == longPressDirection
             }
@@ -2763,9 +2885,9 @@ private final class CustardButton: DirectionalKeyButton {
         }
         let selected = continuedVariation ?? selectedGestureKey(at: end)
         let actions = selected["press_actions"] as? [[String: Any]] ?? []
-        if skipLeadingDeleteOnVariationRelease,
-           isBackwardWordDeleteVariation(actions) {
-            callback(Array(actions.dropFirst()))
+        if continueDeleteVariationOnRelease,
+           let startIndex = backwardWordDeleteContinuationStartIndex(actions) {
+            callback(Array(actions.dropFirst(startIndex)))
         } else {
             callback(actions)
         }
@@ -2791,15 +2913,29 @@ private final class CustardButton: DirectionalKeyButton {
         return count > 0
     }
 
-    private func isBackwardWordDeleteVariation(_ actions: [[String: Any]]) -> Bool {
+    private func backwardWordDeleteContinuationStartIndex(
+        _ actions: [[String: Any]]
+    ) -> Int? {
+        if isBackwardSmartDelete(actions.first) {
+            return 0
+        }
         guard actions.count >= 2,
-              positiveBackwardDelete(actions[0]) else { return false }
-        return actions[1]["type"] as? String == "smart_delete" &&
-            actions[1]["direction"] as? String == "backward"
+              positiveBackwardDelete(actions[0]),
+              isBackwardSmartDelete(actions[1]) else { return nil }
+        return 1
+    }
+
+    private func isBackwardSmartDelete(_ action: [String: Any]?) -> Bool {
+        guard let action else { return false }
+        switch action["type"] as? String {
+        case "smart_delete_default": return true
+        case "smart_delete": return action["direction"] as? String == "backward"
+        default: return false
+        }
     }
 
     private func canContinueDeleteLongPress(into variationActions: [[String: Any]]) -> Bool {
-        guard isBackwardWordDeleteVariation(variationActions) else { return false }
+        guard backwardWordDeleteContinuationStartIndex(variationActions) != nil else { return false }
         let longPress = key["longpress_actions"] as? [String: Any] ?? [:]
         let centerActions =
             (longPress["start"] as? [[String: Any]] ?? []) +
@@ -2834,9 +2970,10 @@ private struct KeyboardPalette {
     let text: UIColor
     let accent: UIColor
     let backgroundImage: String?
+    let backgroundImageRevision: Int64?
 
-    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb), backgroundImage: nil)
-    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa), backgroundImage: nil)
+    static let light = KeyboardPalette(background: UIColor(argb: 0xffd1d5db), key: .white, special: UIColor(argb: 0xffadb5bd), text: UIColor(argb: 0xff111827), accent: UIColor(argb: 0xff2563eb), backgroundImage: nil, backgroundImageRevision: nil)
+    static let dark = KeyboardPalette(background: UIColor(argb: 0xff111827), key: UIColor(argb: 0xff374151), special: UIColor(argb: 0xff1f2937), text: .white, accent: UIColor(argb: 0xff60a5fa), backgroundImage: nil, backgroundImageRevision: nil)
 }
 
 private extension UIColor {

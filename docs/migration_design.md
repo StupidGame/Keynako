@@ -16,12 +16,23 @@ Flutter application (Dart)
           +-- platform share sheet
           `-- contact import
 
+Desktop input application (Flutter)
+  `-- settings / input behavior preview
+
+Desktop system IME
+  |-- Windows TSF
+  |-- macOS InputMethodKit
+  |-- Linux IBus
+  `-- native ime_core
+          |-- Japanese / English / live candidates
+          `-- persistent llama.cpp process / Zenzai v3.2
+
 Android InputMethodService <---- shared JSON state ----> iOS Keyboard Extension
         |                                               |
         `-- llama.cpp JNI / Zenzai                      `-- AzooKeyKanaKanjiConverter / ZenzaiCPU
 ```
 
-システムIMEは通常のFlutter Widgetとして登録できません。Androidの`InputMethodService`とiOSの`UIInputViewController`を薄いプラットフォーム層として残し、設定、辞書、テーマ、カスタム定義は共通JSONから読み込みます。
+システムIMEは通常のFlutter Widgetとして登録できません。Androidの`InputMethodService`、iOSの`UIInputViewController`、WindowsのTSF、macOSのInputMethodKit、LinuxのIBusを薄いプラットフォーム層として残し、入力と変換の状態遷移は共通モジュールへ集約します。
 
 ## 共有状態
 
@@ -62,6 +73,7 @@ Android InputMethodService <---- shared JSON state ----> iOS Keyboard Extension
 
 - Android: モデルをAPK assetsからアプリ専用領域へ一度だけ展開し、azooKey forkのllama.cppをJNI経由で実行します。生成候補と既存候補をv3.2 scoringで再順位付けします。不正Unicode、制御文字、異常な長さの生成結果は候補に採用しません。
 - iOS: azooKey本体と同じ`AzooKeyKanaKanjiConverter`の固定commit `93766c46e31fa6a18b7ced49dab31337780f6f45`と`ZenzaiCPU` traitを使い、モデルをKeyboard Extension resourceとして参照します。
+- PC: `keynako_zenzai`をIMEプロセスから常駐起動し、Windows TSF、macOS InputMethodKit、Linux IBusの明示変換候補へ生成結果を挿入します。通常候補とライブ変換はモデルの起動を待たずに動作します。
 
 モデルの正確なサイズとSHA-256は`assets/ZENZAI_MODELS.md`に記録しています。推論は端末内で完結します。
 

@@ -159,6 +159,7 @@ class KeyboardThemeConfig {
     required this.textColor,
     required this.accentColor,
     this.backgroundImage,
+    this.backgroundImageRevision = 0,
     this.keyOpacity = 0.72,
   });
 
@@ -170,6 +171,7 @@ class KeyboardThemeConfig {
   final int textColor;
   final int accentColor;
   final String? backgroundImage;
+  final int backgroundImageRevision;
   final double keyOpacity;
 
   KeyboardThemeConfig copyWith({
@@ -181,6 +183,7 @@ class KeyboardThemeConfig {
     int? textColor,
     int? accentColor,
     String? backgroundImage,
+    int? backgroundImageRevision,
     double? keyOpacity,
     bool clearBackgroundImage = false,
   }) {
@@ -195,6 +198,9 @@ class KeyboardThemeConfig {
       backgroundImage: clearBackgroundImage
           ? null
           : (backgroundImage ?? this.backgroundImage),
+      backgroundImageRevision: clearBackgroundImage
+          ? 0
+          : (backgroundImageRevision ?? this.backgroundImageRevision),
       keyOpacity: (keyOpacity ?? this.keyOpacity).clamp(0.15, 1.0).toDouble(),
     );
   }
@@ -210,6 +216,8 @@ class KeyboardThemeConfig {
       textColor: (json['textColor'] as num?)?.toInt() ?? 0xff111827,
       accentColor: (json['accentColor'] as num?)?.toInt() ?? 0xff2563eb,
       backgroundImage: backgroundImage,
+      backgroundImageRevision:
+          (json['backgroundImageRevision'] as num?)?.toInt() ?? 0,
       keyOpacity:
           ((json['keyOpacity'] as num?)?.toDouble() ??
                   (backgroundImage == null ? 1.0 : 0.72))
@@ -227,6 +235,7 @@ class KeyboardThemeConfig {
     'textColor': textColor,
     'accentColor': accentColor,
     'backgroundImage': backgroundImage,
+    'backgroundImageRevision': backgroundImageRevision,
     'keyOpacity': keyOpacity,
   };
 }

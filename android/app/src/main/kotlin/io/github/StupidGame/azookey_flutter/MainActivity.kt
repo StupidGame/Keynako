@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.provider.ContactsContract
 import android.provider.Settings
+import android.system.Os
 import android.view.inputmethod.InputMethodManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -183,7 +184,9 @@ class MainActivity : FlutterActivity() {
             // Keep the source aspect ratio. The IME crops it against its actual
             // bounds, which vary with device width, height scale, and one-handed mode.
             temporary.writeBytes(bytes)
-            temporary.copyTo(target, overwrite = true)
+            // The IME can read this file while the settings app is open. A POSIX
+            // rename replaces it atomically, so the decoder never sees a partial image.
+            Os.rename(temporary.absolutePath, target.absolutePath)
         } finally {
             temporary.delete()
         }

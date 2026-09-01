@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <name>org.freedesktop.IBus.Keynako</name>
+  <description>Keynako Japanese and English input engine</description>
+  <exec>@EXECUTABLE@</exec>
+  <version>1.0.0</version>
+  <author>Keynako contributors</author>
+  <license>MIT</license>
+  <homepage>https://github.com/StupidGame/Keynako</homepage>
+  <textdomain>keynako</textdomain>
+  <engines>
+    <engine>
+      <name>keynako</name>
+      <longname>Keynako</longname>
+      <description>Japanese, English, live conversion and Zenzai</description>
+      <language>ja;en</language>
+      <license>MIT</license>
+      <author>Keynako contributors</author>
+      <icon>@ICON@</icon>
+      <layout>us</layout>
+      <symbol>な</symbol>
+      <setup>@SETUP@</setup>
+      <rank>80</rank>
+    </engine>
+  </engines>
+</component>

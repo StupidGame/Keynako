@@ -17,22 +17,32 @@ void main() {
     });
   });
 
-  test('puts a matching user dictionary entry before system candidates', () {
-    final data = AppData.defaults();
-    data.userDictionary.add(
-      const UserDictionaryEntry(id: 10, ruby: 'にほんご', word: '日本語入力'),
-    );
+  test(
+    'puts a live conversion before hiragana, katakana, and dictionaries',
+    () {
+      final data = AppData.defaults();
+      data.userDictionary.add(
+        const UserDictionaryEntry(id: 10, ruby: 'にほんご', word: '日本語入力'),
+      );
 
-    final values = converter.candidates(
-      input: 'nihongo',
-      data: data,
-      romanInput: true,
-    );
+      final values = converter.candidates(
+        input: 'nihongo',
+        data: data,
+        romanInput: true,
+      );
 
-    expect(values.first.text, '日本語入力');
-    expect(values.map((value) => value.text), contains('日本語'));
-    expect(values.map((value) => value.text), contains('ニホンゴ'));
-  });
+      expect(values.take(3).map((value) => value.text), [
+        '日本語入力',
+        'にほんご',
+        'ニホンゴ',
+      ]);
+      expect(values.map((value) => value.text), contains('日本語'));
+      expect(
+        values.indexWhere((value) => value.text == '日本語入力'),
+        lessThan(values.indexWhere((value) => value.text == '日本語')),
+      );
+    },
+  );
 
   test('orders matching user words by conversion importance', () {
     final data = AppData.defaults();
@@ -48,7 +58,30 @@ void main() {
       values.indexWhere((value) => value.text == '高い候補'),
       lessThan(values.indexWhere((value) => value.text == '低い候補')),
     );
+    expect(values.skip(1).take(2).map((value) => value.text), ['きーなこ', 'キーナコ']);
   });
+
+  test('pins hiragana and katakana first when live conversion is disabled', () {
+    final data = AppData.defaults();
+    data.settings['live_conversion'] = false;
+
+    final values = converter.candidates(input: 'にほんご', data: data);
+
+    expect(values.take(2).map((value) => value.text), ['にほんご', 'ニホンゴ']);
+    expect(values.map((value) => value.text), contains('日本語'));
+  });
+
+  test(
+    'normalizes katakana input without treating raw text as a live conversion',
+    () {
+      final values = converter.candidates(
+        input: 'キョウ',
+        data: AppData.defaults(),
+      );
+
+      expect(values.take(2).map((value) => value.text), ['きょう', 'キョウ']);
+    },
+  );
 
   test('renders date templates locally', () {
     final data = AppData.defaults();

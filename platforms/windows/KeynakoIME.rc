@@ -1,0 +1,3 @@
+#include "keynako_resources.h"
+
+IDI_KEYNAKO_APP ICON "../../apps/desktop/windows/runner/resources/app_icon.ico"
