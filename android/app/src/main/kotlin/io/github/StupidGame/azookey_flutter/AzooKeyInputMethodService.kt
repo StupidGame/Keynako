@@ -51,6 +51,7 @@ import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
+import io.github.StupidGame.azookey_flutter.view.custardVariationLongPressDuration
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -774,7 +775,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
-                            handler.postDelayed(longPress, longPressDelay(longPressData.optString("duration")))
+                            val duration = custardVariationLongPressDuration(
+                                parentDuration = longPressData.optString("duration"),
+                                variationDuration = variationLongPress?.optString("duration"),
+                            )
+                            handler.postDelayed(longPress, longPressDelay(duration))
                         }
                     }
                     true
