@@ -8,6 +8,7 @@ int main() {
     using keynako::ImeSession;
     assert(ImeSession::roman_to_hiragana("nihongo") == "にほんご");
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
+    assert(ImeSession::roman_to_hiragana("nani?") == "なに?");
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},
@@ -33,6 +34,20 @@ int main() {
     session.backspace();
     assert(session.raw_input() == "henka");
     assert(!session.is_converting());
+
+    ImeSession question_mark;
+    question_mark.set_user_dictionary({
+        {"なに", "何", 5},
+    });
+    for (const char value : std::string("nani")) question_mark.append_ascii(value);
+    assert(question_mark.display_text() == "何");
+    question_mark.insert_zenzai_candidate("何なの");
+    assert(question_mark.begin_conversion());
+    question_mark.append_ascii('?');
+    assert(question_mark.raw_input() == "nani?");
+    assert(question_mark.reading() == "なに?");
+    assert(question_mark.display_text() == "何なの?");
+    assert(question_mark.is_converting());
 
     const char *dictionary_path = std::getenv("KEYNAKO_TEST_AZOOKEY_DICTIONARY");
     assert(dictionary_path != nullptr);
