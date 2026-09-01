@@ -252,14 +252,17 @@ public:
     bool live_conversion() const { return session_.live_conversion(); }
     void set_input_mode(keynako::InputMode mode, ITfContext *context = nullptr) {
         if (session_.mode() == mode) return;
+        if (!session_.raw_input().empty()) {
+            // Keep the visible Japanese or English text when changing modes.
+            // Canceling the TSF composition here used to erase it.
+            const bool committed = context
+                ? request_edit(context, EditAction::commit)
+                : request_active_edit(EditAction::commit);
+            if (!committed) return;
+        }
         session_.set_mode(mode);
         sync_input_compartments();
         if (language_bar_) language_bar_->notify_mode_changed();
-        if (context) {
-            request_edit(context, EditAction::cancel);
-        } else {
-            request_active_edit(EditAction::cancel);
-        }
     }
     void toggle_input_mode(ITfContext *context = nullptr) {
         set_input_mode(session_.mode() == keynako::InputMode::japanese
@@ -428,30 +431,54 @@ public:
             action = EditAction::commit;
         } else if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') ||
                    keynako::windows::is_oem_text_key(
-                       static_cast<std::uint32_t>(key))) {
+                       static_cast<std::uint32_t>(key), scan_code)) {
             reload_shared_dictionary();
             BYTE keyboard[256]{};
             WCHAR translated[4]{};
             GetKeyboardState(keyboard);
-            const int count = ToUnicode(static_cast<UINT>(key), scan_code,
-                                        keyboard, translated, 4, 0);
+            const bool shift = (keyboard[VK_SHIFT] & 0x80) != 0 ||
+                               (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                               (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
             char value = 0;
-            if (count > 0 && translated[0] < 128) value = static_cast<char>(translated[0]);
-            if (!value && keynako::windows::is_oem_text_key(
-                              static_cast<std::uint32_t>(key))) {
-                const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (keynako::windows::is_slash_text_key(
+                    static_cast<std::uint32_t>(key), scan_code)) {
+                // The virtual key reported for /? varies between active JIS,
+                // US, and remapped layouts. The physical key and Shift state
+                // are stable, so do not depend on ToUnicode for this key.
                 value = keynako::windows::oem_text_fallback(
-                    static_cast<std::uint32_t>(key), shift);
+                    static_cast<std::uint32_t>(key), shift, scan_code);
+            } else {
+                const int count = ToUnicode(static_cast<UINT>(key), scan_code,
+                                            keyboard, translated, 4, 0);
+                if (count > 0 && translated[0] < 128) {
+                    value = static_cast<char>(translated[0]);
+                }
+            }
+            if (!value && keynako::windows::is_oem_text_key(
+                              static_cast<std::uint32_t>(key), scan_code)) {
+                value = keynako::windows::oem_text_fallback(
+                    static_cast<std::uint32_t>(key), shift, scan_code);
             }
             if (!value) {
                 value = static_cast<char>(
                     std::tolower(static_cast<unsigned char>(key)));
             }
-            session_.append_ascii(value);
+            const bool literal_english =
+                session_.mode() == keynako::InputMode::japanese &&
+                ((key >= 'A' && key <= 'Z' && shift) ||
+                 session_.has_literal_suffix());
+            if (literal_english) {
+                session_.append_literal_ascii(value);
+            } else {
+                session_.append_ascii(value);
+            }
         } else if (key == VK_BACK) {
             if (session_.raw_input().empty()) return S_OK;
             if (!session_.cancel_conversion()) session_.backspace();
             action = session_.raw_input().empty() ? EditAction::cancel : EditAction::update;
+        } else if (key == VK_SPACE && session_.has_literal_suffix()) {
+            session_.append_literal_ascii(' ');
+            action = EditAction::commit;
         } else if (key == VK_SPACE || key == VK_DOWN ||
                    key == VK_TAB || key == VK_NEXT) {
             if (session_.raw_input().empty()) return S_OK;
@@ -724,7 +751,7 @@ private:
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
         if (japanese && keynako::windows::is_oem_text_key(
-                            static_cast<std::uint32_t>(key))) return true;
+                            static_cast<std::uint32_t>(key), scan_code)) return true;
         if (session_.raw_input().empty()) return false;
         if (session_.is_converting() && key >= '1' && key <= '9') return true;
         return key == VK_BACK || key == VK_SPACE || key == VK_UP ||
@@ -740,23 +767,28 @@ private:
         return GetKeyboardType(0) == 0x07;
     }
 
-    void request_edit(ITfContext *context, EditAction action) {
+    bool request_edit(ITfContext *context, EditAction action) {
+        if (!context) return false;
         auto *edit = new EditSession(this, context, action);
         HRESULT session_result = E_FAIL;
-        context->RequestEditSession(client_id_, edit, TF_ES_SYNC | TF_ES_READWRITE, &session_result);
+        const HRESULT request_result = context->RequestEditSession(
+            client_id_, edit, TF_ES_SYNC | TF_ES_READWRITE, &session_result);
         edit->Release();
+        return SUCCEEDED(request_result) && SUCCEEDED(session_result);
     }
 
-    void request_active_edit(EditAction action) {
-        if (!thread_manager_) return;
+    bool request_active_edit(EditAction action) {
+        if (!thread_manager_) return false;
         ITfDocumentMgr *document = nullptr;
-        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return;
+        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return false;
+        bool edited = false;
         ITfContext *context = nullptr;
         if (SUCCEEDED(document->GetTop(&context)) && context) {
-            request_edit(context, action);
+            edited = request_edit(context, action);
             context->Release();
         }
         document->Release();
+        return edited;
     }
 
     void initialize_language_bar() {

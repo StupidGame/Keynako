@@ -34,6 +34,7 @@ public:
     void set_live_conversion(bool enabled);
     bool live_conversion() const { return live_conversion_; }
     void append_ascii(char value);
+    void append_literal_ascii(char value);
     void backspace();
     void clear();
     bool begin_conversion();
@@ -48,6 +49,9 @@ public:
     const std::vector<Candidate> &candidates() const { return candidates_; }
     std::size_t selected_index() const { return selected_index_; }
     bool is_converting() const { return converting_; }
+    bool has_literal_suffix() const {
+        return literal_suffix_start_ != std::string::npos;
+    }
     std::string display_text() const;
     std::string selected_text() const;
 
@@ -57,6 +61,8 @@ public:
     static std::string roman_to_hiragana(const std::string &input);
 
 private:
+    void append_ascii_internal(char value, bool preserve_selection,
+                               bool extend_literal_suffix);
     void rebuild_candidates();
 
     InputMode mode_ = InputMode::japanese;
@@ -65,6 +71,7 @@ private:
     bool live_conversion_suspended_ = false;
     std::string raw_input_;
     std::string reading_;
+    std::size_t literal_suffix_start_ = std::string::npos;
     std::vector<Candidate> candidates_;
     std::vector<DictionaryEntry> user_dictionary_;
     std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;
