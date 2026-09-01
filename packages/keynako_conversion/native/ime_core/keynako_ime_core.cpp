@@ -82,8 +82,16 @@ bool is_literal_candidate_suffix(char value) {
 void ImeSession::set_mode(InputMode mode) { if (mode_ != mode) { mode_ = mode; clear(); } }
 void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
 void ImeSession::append_ascii(char value) {
-    const bool preserve_selection = is_literal_candidate_suffix(value) &&
-                                    !candidates_.empty();
+    append_ascii_internal(value, is_literal_candidate_suffix(value), false);
+}
+
+void ImeSession::append_literal_ascii(char value) {
+    append_ascii_internal(value, true, true);
+}
+
+void ImeSession::append_ascii_internal(char value, bool preserve_selection,
+                                       bool extend_literal_suffix) {
+    preserve_selection = preserve_selection && !candidates_.empty();
     const bool was_converting = converting_;
     const std::size_t previous_selected_index = selected_index_;
     const std::string selected_prefix = preserve_selection
@@ -94,6 +102,9 @@ void ImeSession::append_ascii(char value) {
         : std::string{};
     converting_ = false;
     live_conversion_suspended_ = false;
+    if (extend_literal_suffix && literal_suffix_start_ == std::string::npos) {
+        literal_suffix_start_ = raw_input_.size();
+    }
     raw_input_.push_back(value);
     rebuild_candidates();
     if (!preserve_selection) return;
@@ -116,8 +127,47 @@ void ImeSession::append_ascii(char value) {
     }
     converting_ = was_converting;
 }
-void ImeSession::backspace() { if (!raw_input_.empty()) { converting_ = false; live_conversion_suspended_ = false; raw_input_.pop_back(); rebuild_candidates(); } }
-void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; }
+void ImeSession::backspace() {
+    if (raw_input_.empty()) return;
+    const bool preserve_selection = !candidates_.empty() &&
+        (has_literal_suffix() ||
+         is_literal_candidate_suffix(raw_input_.back()));
+    const bool was_converting = converting_;
+    const std::size_t previous_selected_index = selected_index_;
+    std::string expected = preserve_selection
+        ? candidates_[selected_index_].text
+        : std::string{};
+    const std::string selected_source = preserve_selection
+        ? candidates_[selected_index_].source
+        : std::string{};
+    if (preserve_selection && !expected.empty()) expected.pop_back();
+    converting_ = false;
+    live_conversion_suspended_ = false;
+    raw_input_.pop_back();
+    if (literal_suffix_start_ != std::string::npos &&
+        raw_input_.size() <= literal_suffix_start_) {
+        literal_suffix_start_ = std::string::npos;
+    }
+    rebuild_candidates();
+    if (!preserve_selection || expected.empty()) return;
+    const auto found = std::find_if(
+        candidates_.begin(), candidates_.end(),
+        [&expected](const Candidate &candidate) {
+            return candidate.text == expected;
+        });
+    if (found != candidates_.end()) {
+        selected_index_ = static_cast<std::size_t>(
+            std::distance(candidates_.begin(), found));
+    } else {
+        const std::size_t insertion_index =
+            std::min(previous_selected_index, candidates_.size());
+        candidates_.insert(candidates_.begin() + insertion_index,
+                           {expected, selected_source});
+        selected_index_ = insertion_index;
+    }
+    converting_ = was_converting;
+}
+void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
     converting_ = true;
@@ -227,14 +277,21 @@ void ImeSession::rebuild_candidates() {
     // A slash or question mark terminates the reading rather than becoming
     // part of its dictionary key. Keep it on every candidate so adding
     // punctuation cannot replace the text already shown by live conversion.
-    std::string conversion_input = raw_input_;
+    std::string conversion_input;
     std::string literal_suffix;
-    while (!conversion_input.empty() &&
-           is_literal_candidate_suffix(conversion_input.back())) {
-        literal_suffix.push_back(conversion_input.back());
-        conversion_input.pop_back();
+    if (literal_suffix_start_ != std::string::npos &&
+        literal_suffix_start_ <= raw_input_.size()) {
+        conversion_input = raw_input_.substr(0, literal_suffix_start_);
+        literal_suffix = raw_input_.substr(literal_suffix_start_);
+    } else {
+        conversion_input = raw_input_;
+        while (!conversion_input.empty() &&
+               is_literal_candidate_suffix(conversion_input.back())) {
+            literal_suffix.push_back(conversion_input.back());
+            conversion_input.pop_back();
+        }
+        std::reverse(literal_suffix.begin(), literal_suffix.end());
     }
-    std::reverse(literal_suffix.begin(), literal_suffix.end());
     const std::string conversion_reading = roman_to_hiragana(conversion_input);
     reading_ = conversion_reading + literal_suffix;
     const auto append_converted = [&](std::string text, const char *source) {

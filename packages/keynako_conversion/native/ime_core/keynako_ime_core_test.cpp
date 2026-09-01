@@ -49,6 +49,26 @@ int main() {
     assert(question_mark.display_text() == "何なの?");
     assert(question_mark.is_converting());
 
+    ImeSession mixed_text;
+    mixed_text.set_user_dictionary({
+        {"にほんご", "日本語", 5},
+    });
+    for (const char value : std::string("nihongo")) mixed_text.append_ascii(value);
+    assert(mixed_text.display_text() == "日本語");
+    mixed_text.insert_zenzai_candidate("日本語入力");
+    assert(mixed_text.begin_conversion());
+    for (const char value : std::string("OpenAI")) {
+        mixed_text.append_literal_ascii(value);
+    }
+    assert(mixed_text.raw_input() == "nihongoOpenAI");
+    assert(mixed_text.reading() == "にほんごOpenAI");
+    assert(mixed_text.display_text() == "日本語入力OpenAI");
+    assert(mixed_text.has_literal_suffix());
+    mixed_text.append_ascii('?');
+    assert(mixed_text.display_text() == "日本語入力OpenAI?");
+    mixed_text.backspace();
+    assert(mixed_text.display_text() == "日本語入力OpenAI");
+
     const char *dictionary_path = std::getenv("KEYNAKO_TEST_AZOOKEY_DICTIONARY");
     assert(dictionary_path != nullptr);
     ImeSession bundled;

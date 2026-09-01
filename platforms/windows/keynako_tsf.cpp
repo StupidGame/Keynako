@@ -463,11 +463,22 @@ public:
                 value = static_cast<char>(
                     std::tolower(static_cast<unsigned char>(key)));
             }
-            session_.append_ascii(value);
+            const bool literal_english =
+                session_.mode() == keynako::InputMode::japanese &&
+                ((key >= 'A' && key <= 'Z' && shift) ||
+                 session_.has_literal_suffix());
+            if (literal_english) {
+                session_.append_literal_ascii(value);
+            } else {
+                session_.append_ascii(value);
+            }
         } else if (key == VK_BACK) {
             if (session_.raw_input().empty()) return S_OK;
             if (!session_.cancel_conversion()) session_.backspace();
             action = session_.raw_input().empty() ? EditAction::cancel : EditAction::update;
+        } else if (key == VK_SPACE && session_.has_literal_suffix()) {
+            session_.append_literal_ascii(' ');
+            action = EditAction::commit;
         } else if (key == VK_SPACE || key == VK_DOWN ||
                    key == VK_TAB || key == VK_NEXT) {
             if (session_.raw_input().empty()) return S_OK;
