@@ -244,7 +244,9 @@ jobs:
         run: |
           cmake -S platforms/windows -B build/windows-ime -A x64 `
             "-DKEYNAKO_DICTIONARY_SUBMISSION_URL=${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/windows-ime --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build/windows-ime -C Release --output-on-failure
 
       - name: Build the Flutter desktop app

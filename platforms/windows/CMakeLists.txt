@@ -26,7 +26,7 @@ add_library(KeynakoIME SHARED
 )
 target_include_directories(KeynakoIME PRIVATE "${KEYNAKO_CORE}")
 target_compile_definitions(KeynakoIME PRIVATE
-  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0601
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
 )
 target_link_libraries(KeynakoIME PRIVATE advapi32 dwmapi gdi32 ole32 oleaut32 shell32 user32 uuid)
 set_target_properties(KeynakoIME PROPERTIES PREFIX "" OUTPUT_NAME "KeynakoIME")

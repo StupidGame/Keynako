@@ -788,7 +788,7 @@ private:
         std::error_code helper_error;
         if (!std::filesystem::exists(helper, helper_error) || helper_error) return false;
         const std::string payload = keynako::windows::shared_candidate_payload(
-            session_.candidates()[index].text, session_.candidates()[index].reading);
+            session_.candidates()[index].text, session_.reading());
         if (payload.size() > MAXDWORD) return false;
 
         SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
