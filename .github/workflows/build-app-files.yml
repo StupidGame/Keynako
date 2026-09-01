@@ -245,14 +245,17 @@ jobs:
           cmake -S platforms/windows -B build/windows-ime -A x64 `
             "-DKEYNAKO_DICTIONARY_SUBMISSION_URL=${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}" `
             "-DKEYNAKO_APP_VERSION=1.0.0+${{ github.run_number }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/windows-ime --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build/windows-ime -C Release --output-on-failure
 
       - name: Build the Flutter desktop app
         working-directory: apps/desktop
         run: |
           flutter pub get
-          flutter build windows --release --build-number=${{ github.run_number }}
+          flutter build windows --release --build-number=${{ github.run_number }} `
+            --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Stage the Windows app, TSF service, and Zenzai
         shell: pwsh
@@ -265,6 +268,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $imeRoot | Out-Null
           Copy-Item -Force 'build/windows-ime/Release/KeynakoIME.dll' $imeRoot
           Copy-Item -Force 'build/windows-ime/Release/KeynakoProfile.ico' $imeRoot
+          Copy-Item -Force 'build/windows-ime/Release/KeynakoDictionarySubmit.exe' $imeRoot
           Copy-Item -Force 'build/zenzai/Release/keynako_zenzai.exe' $imeRoot
           Copy-Item -Force 'assets/dictionaries/shared_dictionary.tsv' (Join-Path $imeRoot 'bundled_shared_dictionary.tsv')
           New-Item -ItemType Directory -Force -Path (Join-Path $imeRoot 'azookey_dictionary') | Out-Null
@@ -340,7 +344,8 @@ jobs:
         working-directory: apps/desktop
         run: |
           flutter pub get
-          flutter build linux --release --build-number=${{ github.run_number }}
+          flutter build linux --release --build-number=${{ github.run_number }} \
+            --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Package the Linux app and IBus engine with Zenzai
         shell: bash
@@ -409,7 +414,8 @@ jobs:
         working-directory: apps/desktop
         run: |
           flutter pub get
-          flutter build macos --release --build-number=${{ github.run_number }}
+          flutter build macos --release --build-number=${{ github.run_number }} \
+            --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Package the macOS app and input method with Zenzai
         shell: bash

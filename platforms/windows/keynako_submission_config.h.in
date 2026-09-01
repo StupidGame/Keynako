@@ -1,0 +1,8 @@
+#pragma once
+
+namespace keynako::windows {
+
+inline constexpr wchar_t kDictionarySubmissionUrl[] =
+    LR"keynako(@KEYNAKO_DICTIONARY_SUBMISSION_URL@)keynako";
+
+}  // namespace keynako::windows

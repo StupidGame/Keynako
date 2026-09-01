@@ -5,9 +5,14 @@ include(CTest)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 set(KEYNAKO_DICTIONARY_SUBMISSION_URL "" CACHE STRING
-    "HTTPS endpoint used by the Windows IME improvement prompt")
+    "HTTPS endpoint used for Windows IME dictionary submissions")
+configure_file(
+  keynako_submission_config.h.in
+  "${CMAKE_CURRENT_BINARY_DIR}/keynako_submission_config.h"
+  @ONLY
+)
+
 set(KEYNAKO_APP_VERSION "1.0.0" CACHE STRING
     "Version included in Windows IME improvement submissions")
 string(REPLACE "\\" "\\\\" KEYNAKO_DICTIONARY_SUBMISSION_URL_ESCAPED
@@ -40,6 +45,15 @@ target_compile_definitions(KeynakoIME PRIVATE
 target_link_libraries(KeynakoIME PRIVATE advapi32 dwmapi gdi32 ole32 oleaut32 shell32 user32 uuid winhttp)
 set_target_properties(KeynakoIME PROPERTIES PREFIX "" OUTPUT_NAME "KeynakoIME")
 
+add_executable(KeynakoDictionarySubmit WIN32 keynako_dictionary_submit.cpp)
+target_include_directories(KeynakoDictionarySubmit PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}"
+)
+target_compile_definitions(KeynakoDictionarySubmit PRIVATE
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0601
+)
+target_link_libraries(KeynakoDictionarySubmit PRIVATE winhttp)
+
 add_custom_command(TARGET KeynakoIME POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${KEYNAKO_ROOT}/apps/desktop/windows/runner/resources/app_icon.ico"
@@ -49,15 +63,20 @@ add_custom_command(TARGET KeynakoIME POST_BUILD
 
 if(MSVC)
   target_compile_options(KeynakoIME PRIVATE /W4 /EHsc /utf-8 /permissive-)
+  target_compile_options(KeynakoDictionarySubmit PRIVATE /W4 /EHsc /utf-8 /permissive-)
 endif()
 
 if(BUILD_TESTING)
   add_executable(keynako_windows_shortcut_test keynako_shortcut_policy_test.cpp)
+  add_executable(keynako_submission_payload_test keynako_submission_payload_test.cpp)
   target_compile_features(keynako_windows_shortcut_test PRIVATE cxx_std_17)
+  target_compile_features(keynako_submission_payload_test PRIVATE cxx_std_17)
   if(MSVC)
     target_compile_options(keynako_windows_shortcut_test PRIVATE /W4 /EHsc /utf-8 /permissive-)
+    target_compile_options(keynako_submission_payload_test PRIVATE /W4 /EHsc /utf-8 /permissive-)
   endif()
   add_test(NAME keynako_windows_shortcut_test COMMAND keynako_windows_shortcut_test)
+  add_test(NAME keynako_submission_payload_test COMMAND keynako_submission_payload_test)
 
   add_executable(keynako_windows_improvement_submission_test
     keynako_improvement_submission.cpp

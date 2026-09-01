@@ -188,7 +188,9 @@ class KeynakoEngine(IBus.Engine):
         self.dictionary_path: Path | None = None
         self.dictionary_mtime_ns = -1
         self.last_dictionary_check = 0.0
+        self.last_dictionary_refresh_request = 0.0
         self._reload_shared_dictionary(force=True)
+        self._request_shared_dictionary_refresh()
         self.mode_property = IBus.Property.new(
             "InputMode",
             IBus.PropType.NORMAL,
@@ -202,6 +204,18 @@ class KeynakoEngine(IBus.Engine):
         )
         properties = IBus.PropList()
         properties.append(self.mode_property)
+        self.refresh_dictionary_property = IBus.Property.new(
+            "RefreshDictionary",
+            IBus.PropType.NORMAL,
+            IBus.Text.new_from_string("共有辞書を今すぐ更新"),
+            "",
+            IBus.Text.new_from_string("共有辞書を手動で読み込みます"),
+            True,
+            True,
+            IBus.PropState.UNCHECKED,
+            None,
+        )
+        properties.append(self.refresh_dictionary_property)
         self.register_properties(properties)
 
     def _dictionary_candidates(self) -> list[Path]:
@@ -230,6 +244,45 @@ class KeynakoEngine(IBus.Engine):
                 self.dictionary_path = path
                 self.dictionary_mtime_ns = mtime_ns
                 return
+
+    def _request_shared_dictionary_refresh(self, force: bool = False) -> bool:
+        now = time.monotonic()
+        if (
+            not force
+            and self.last_dictionary_refresh_request != 0
+            and now - self.last_dictionary_refresh_request < 5 * 60
+        ):
+            return False
+        self.last_dictionary_refresh_request = now
+        executable = Path(__file__).resolve().parent / "keynako_desktop"
+        if not executable.is_file():
+            return False
+        argument = (
+            "--refresh-shared-dictionary"
+            if force
+            else "--refresh-shared-dictionary-if-due"
+        )
+        try:
+            process = subprocess.Popen(
+                [str(executable), argument],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except OSError:
+            return False
+
+        def reload_when_finished() -> bool:
+            if process.poll() is None:
+                return GLib.SOURCE_CONTINUE
+            if process.returncode == 0:
+                self._reload_shared_dictionary(force=True)
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(500, reload_when_finished)
+        return True
 
     def _update_mode_property(self) -> None:
         japanese = self.mode == "ja"
@@ -273,6 +326,7 @@ class KeynakoEngine(IBus.Engine):
         del keycode
         if state & IBus.ModifierType.RELEASE_MASK:
             return False
+        self._request_shared_dictionary_refresh()
         control = bool(state & IBus.ModifierType.CONTROL_MASK)
         if control and keyval == IBus.KEY_space:
             self.mode = "en" if self.mode == "ja" else "ja"
@@ -363,6 +417,9 @@ class KeynakoEngine(IBus.Engine):
 
     def do_property_activate(self, prop_name: str, prop_state: int) -> None:
         del prop_state
+        if prop_name == "RefreshDictionary":
+            self._request_shared_dictionary_refresh(force=True)
+            return
         if prop_name != "InputMode":
             return
         self.mode = "en" if self.mode == "ja" else "ja"

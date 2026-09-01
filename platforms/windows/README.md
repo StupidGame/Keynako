@@ -18,6 +18,14 @@ Re-registration refreshes the profile icon cached by Windows. Its menu switches 
 alphanumeric and live-conversion modes. The candidate window shows numbered,
 paged candidates and their shared-dictionary or Zenzai source in a rounded,
 system-colored panel with keyboard guidance.
+Right-clicking a candidate sends its word and reading to the same configured
+Keynako shared-dictionary HTTPS gateway used by the app. Network work runs in a
+small out-of-process helper, so the focused application and TSF thread do not
+block on the request.
+The input-indicator menu can also refresh the shared dictionary immediately.
+While the IME is in use it requests a cache refresh at most once every five
+minutes through the desktop app's non-visual command mode, then reloads the
+newest per-user cache without blocking the focused application.
 
 When `KEYNAKO_DICTIONARY_SUBMISSION_URL` is set to an HTTPS URL at CMake
 configure time, committing a non-first dictionary candidate shows an eight-second

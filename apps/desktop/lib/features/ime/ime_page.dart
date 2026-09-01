@@ -260,7 +260,9 @@ class _Header extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   Tooltip(
-                    message: 'アプリ起動中は5分ごとに自動更新',
+                    message:
+                        '今すぐ読み込む。アプリ起動中は5分ごとに自動更新。'
+                        '現在: ${controller.sharedDictionaryStatus}',
                     child: ActionChip(
                       key: const Key('shared-dictionary-import'),
                       avatar: controller.sharedDictionarySyncing
@@ -271,8 +273,25 @@ class _Header extends StatelessWidget {
                           : const Icon(Icons.cloud_done_rounded, size: 18),
                       onPressed: controller.sharedDictionarySyncing
                           ? null
-                          : controller.importSharedDictionary,
-                      label: Text(controller.sharedDictionaryStatus),
+                          : () async {
+                              final imported = await controller
+                                  .importSharedDictionary();
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    imported
+                                        ? '共有辞書を読み込みました。'
+                                        : '共有辞書を読み込めませんでした。',
+                                  ),
+                                ),
+                              );
+                            },
+                      label: Text(
+                        controller.sharedDictionarySyncing
+                            ? '共有辞書 読込中'
+                            : '共有辞書を読込',
+                      ),
                     ),
                   ),
                   SegmentedButton<InputMode>(
@@ -520,6 +539,21 @@ class _InputCard extends StatelessWidget {
                             onDoubleTap: () {
                               controller.selectCandidate(index);
                               controller.commitSelected();
+                            },
+                            onSecondaryTap: () async {
+                              final sent = await controller.shareCandidate(
+                                index,
+                              );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    sent
+                                        ? '候補を共有ストレージへ送信しました。'
+                                        : '候補を共有ストレージへ送信できませんでした。',
+                                  ),
+                                ),
+                              );
                             },
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
