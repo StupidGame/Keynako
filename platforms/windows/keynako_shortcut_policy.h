@@ -36,6 +36,11 @@ constexpr bool is_oem_text_key(std::uint32_t key,
            key == kKeyOemPeriod || is_slash_text_key(key, scan_code);
 }
 
+constexpr bool is_candidate_selection_key(std::uint32_t key, bool shift) {
+    return !shift && key >= static_cast<std::uint32_t>('1') &&
+           key <= static_cast<std::uint32_t>('9');
+}
+
 constexpr char oem_text_fallback(std::uint32_t key, bool shift,
                                  std::uint32_t scan_code = 0) {
     if (is_slash_text_key(key, scan_code)) {

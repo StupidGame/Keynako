@@ -51,7 +51,7 @@ class _ImePageState extends State<ImePage> {
       _outputController.value = TextEditingValue(
         text: controller.committedText,
         selection: TextSelection.collapsed(
-          offset: controller.committedText.length,
+          offset: controller.committedSelectionOffset,
         ),
       );
     }
@@ -73,7 +73,7 @@ class _ImePageState extends State<ImePage> {
     }
     if (event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-      controller.commitSelected();
+      _commitSelected();
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.escape) {
@@ -81,6 +81,14 @@ class _ImePageState extends State<ImePage> {
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  void _commitSelected() {
+    final selection = _outputController.selection;
+    controller.commitSelected(
+      replaceStart: selection.isValid ? selection.start : null,
+      replaceEnd: selection.isValid ? selection.end : null,
+    );
   }
 
   @override
@@ -121,6 +129,7 @@ class _ImePageState extends State<ImePage> {
                               compositionController: _compositionController,
                               compositionFocus: _compositionFocus,
                               onKeyEvent: _handleKey,
+                              onCommit: _commitSelected,
                             ),
                           ),
                           const SizedBox(width: 18),
@@ -329,12 +338,14 @@ class _InputCard extends StatelessWidget {
     required this.compositionController,
     required this.compositionFocus,
     required this.onKeyEvent,
+    required this.onCommit,
   });
 
   final DesktopInputController controller;
   final TextEditingController compositionController;
   final FocusNode compositionFocus;
   final FocusOnKeyEventCallback onKeyEvent;
+  final VoidCallback onCommit;
 
   @override
   Widget build(BuildContext context) {
@@ -538,7 +549,7 @@ class _InputCard extends StatelessWidget {
                             onTap: () => controller.selectCandidate(index),
                             onDoubleTap: () {
                               controller.selectCandidate(index);
-                              controller.commitSelected();
+                              onCommit();
                             },
                             onSecondaryTap: () async {
                               final sent = await controller.shareCandidate(
@@ -634,9 +645,7 @@ class _InputCard extends StatelessWidget {
                   ),
                 if (compact) const Spacer(),
                 FilledButton.icon(
-                  onPressed: controller.rawInput.isEmpty
-                      ? null
-                      : controller.commitSelected,
+                  onPressed: controller.rawInput.isEmpty ? null : onCommit,
                   icon: const Icon(Icons.keyboard_return),
                   label: const Text('確定'),
                 ),

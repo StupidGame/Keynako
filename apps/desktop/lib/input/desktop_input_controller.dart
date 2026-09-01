@@ -46,6 +46,7 @@ class DesktopInputController extends ChangeNotifier {
   ZenzaiEngine? _zenzaiEngine;
   String _rawInput = '';
   String _committedText = '';
+  int _committedSelectionOffset = 0;
   List<ConversionCandidate> _candidates = const [];
   int _selectedIndex = 0;
   int _requestSequence = 0;
@@ -66,6 +67,7 @@ class DesktopInputController extends ChangeNotifier {
   ZenzaiModel get zenzaiModel => _zenzaiModel;
   String get rawInput => _rawInput;
   String get committedText => _committedText;
+  int get committedSelectionOffset => _committedSelectionOffset;
   List<ConversionCandidate> get candidates => _candidates;
   int get selectedIndex => _selectedIndex;
   bool get zenzaiWorking => _zenzaiWorking;
@@ -211,6 +213,7 @@ class DesktopInputController extends ChangeNotifier {
 
   void replaceCommittedText(String value) {
     _committedText = value;
+    _committedSelectionOffset = value.length;
     notifyListeners();
   }
 
@@ -267,7 +270,7 @@ class DesktopInputController extends ChangeNotifier {
     return true;
   }
 
-  void commitSelected() {
+  void commitSelected({int? replaceStart, int? replaceEnd}) {
     if (_rawInput.isEmpty) return;
     final candidate = _candidates.isEmpty
         ? composingText
@@ -277,8 +280,26 @@ class DesktopInputController extends ChangeNotifier {
         ? '$composingText\t$candidate'
         : 'english:${_rawInput.toLowerCase()}\t$candidate';
     _learning[learningKey] = (_learning[learningKey] ?? 0) + 1;
-    _committedText += candidate;
-    if (_mode == InputMode.english) _committedText += ' ';
+    final committedCandidate = _mode == InputMode.english
+        ? '$candidate '
+        : candidate;
+    var selectionStart = _committedText.length;
+    var selectionEnd = _committedText.length;
+    if (replaceStart != null &&
+        replaceEnd != null &&
+        replaceStart >= 0 &&
+        replaceEnd >= 0 &&
+        replaceStart <= _committedText.length &&
+        replaceEnd <= _committedText.length) {
+      selectionStart = replaceStart < replaceEnd ? replaceStart : replaceEnd;
+      selectionEnd = replaceStart < replaceEnd ? replaceEnd : replaceStart;
+    }
+    _committedText = _committedText.replaceRange(
+      selectionStart,
+      selectionEnd,
+      committedCandidate,
+    );
+    _committedSelectionOffset = selectionStart + committedCandidate.length;
     cancelComposition();
   }
 

@@ -415,6 +415,12 @@ public:
         }
         if (!handles_key(key, key_data)) return S_OK;
 
+        BYTE keyboard[256]{};
+        GetKeyboardState(keyboard);
+        const bool shift = (keyboard[VK_SHIFT] & 0x80) != 0 ||
+                           (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                           (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
         if (key == VK_KANA || key == kVirtualKeyDbeHiragana) {
             set_input_mode(keynako::InputMode::japanese, context);
             *eaten = TRUE;
@@ -426,19 +432,16 @@ public:
             return S_OK;
         }
         EditAction action = EditAction::update;
-        if (key >= '1' && key <= '9' && session_.is_converting()) {
+        if (keynako::windows::is_candidate_selection_key(
+                static_cast<std::uint32_t>(key), shift) &&
+            session_.is_converting()) {
             if (!session_.select_candidate(static_cast<std::size_t>(key - '1'))) return S_OK;
             action = EditAction::commit;
         } else if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') ||
                    keynako::windows::is_oem_text_key(
                        static_cast<std::uint32_t>(key), scan_code)) {
             reload_shared_dictionary();
-            BYTE keyboard[256]{};
             WCHAR translated[4]{};
-            GetKeyboardState(keyboard);
-            const bool shift = (keyboard[VK_SHIFT] & 0x80) != 0 ||
-                               (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
-                               (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
             char value = 0;
             if (keynako::windows::is_slash_text_key(
                     static_cast<std::uint32_t>(key), scan_code)) {
@@ -567,29 +570,49 @@ public:
             return S_OK;
         }
 
+        const auto improvement = action == EditAction::commit
+            ? improvement_for_current_selection()
+            : std::nullopt;
+        const std::wstring text = utf8_to_wide(action == EditAction::commit ? session_.selected_text() : session_.display_text());
+
+        bool inserted_at_selection = false;
         if (!composition_) {
-            TF_SELECTION selection{};
-            ULONG fetched = 0;
-            HRESULT result = context->GetSelection(edit_cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
-            if (FAILED(result) || fetched != 1) return FAILED(result) ? result : E_FAIL;
+            // Insert through the application's selection API so a non-empty
+            // selection is replaced before the composition starts.
+            ITfInsertAtSelection *insert_at_selection = nullptr;
+            HRESULT result = context->QueryInterface(IID_PPV_ARGS(&insert_at_selection));
+            if (FAILED(result)) return result;
+            ITfRange *insertion_range = nullptr;
+            result = insert_at_selection->InsertTextAtSelection(
+                edit_cookie, TF_IAS_NO_DEFAULT_COMPOSITION, text.data(),
+                static_cast<LONG>(text.size()), &insertion_range);
+            insert_at_selection->Release();
+            if (FAILED(result) || !insertion_range) {
+                if (insertion_range) insertion_range->Release();
+                return FAILED(result) ? result : E_FAIL;
+            }
             ITfContextComposition *composition_context = nullptr;
             result = context->QueryInterface(IID_PPV_ARGS(&composition_context));
             if (SUCCEEDED(result)) {
-                result = composition_context->StartComposition(edit_cookie, selection.range, this, &composition_);
+                result = composition_context->StartComposition(
+                    edit_cookie, insertion_range, this, &composition_);
                 composition_context->Release();
             }
-            selection.range->Release();
+            insertion_range->Release();
             if (FAILED(result)) return result;
+            if (!composition_) return E_FAIL;
+            inserted_at_selection = true;
         }
 
         ITfRange *range = nullptr;
         HRESULT result = composition_->GetRange(&range);
         if (FAILED(result)) return result;
-        const auto improvement = action == EditAction::commit
-            ? improvement_for_current_selection()
-            : std::nullopt;
-        const std::wstring text = utf8_to_wide(action == EditAction::commit ? session_.selected_text() : session_.display_text());
-        result = range->SetText(edit_cookie, 0, text.data(), static_cast<LONG>(text.size()));
+        // The first edit was already inserted by InsertTextAtSelection.
+        // Subsequent edits replace the active composition range.
+        if (!inserted_at_selection) {
+            result = range->SetText(edit_cookie, 0, text.data(),
+                                    static_cast<LONG>(text.size()));
+        }
         if (SUCCEEDED(result) && action == EditAction::commit) {
             range->Collapse(edit_cookie, TF_ANCHOR_END);
             ITfComposition *ending = composition_;
@@ -738,6 +761,8 @@ private:
     bool handles_key(WPARAM key, LPARAM key_data) const {
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                           (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
         const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
         if (keynako::windows::shortcut_action(static_cast<std::uint32_t>(key), scan_code,
                                               control, alt,
@@ -749,11 +774,14 @@ private:
             key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT) return true;
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         if (japanese && key >= 'A' && key <= 'Z') return true;
-        if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
+        if (japanese && key >= '0' && key <= '9' &&
+            (!session_.is_converting() || shift)) return true;
         if (japanese && keynako::windows::is_oem_text_key(
                             static_cast<std::uint32_t>(key), scan_code)) return true;
         if (session_.raw_input().empty()) return false;
-        if (session_.is_converting() && key >= '1' && key <= '9') return true;
+        if (session_.is_converting() &&
+            keynako::windows::is_candidate_selection_key(
+                static_cast<std::uint32_t>(key), shift)) return true;
         return key == VK_BACK || key == VK_SPACE || key == VK_UP ||
                key == VK_DOWN || key == VK_TAB || key == VK_PRIOR || key == VK_NEXT ||
                key == VK_RETURN || key == VK_ESCAPE;

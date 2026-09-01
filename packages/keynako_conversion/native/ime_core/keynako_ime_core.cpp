@@ -33,6 +33,7 @@ const std::unordered_map<std::string, std::string> kRoman = {
     {"la", "ぁ"}, {"li", "ぃ"}, {"lu", "ぅ"}, {"le", "ぇ"}, {"lo", "ぉ"}, {"xa", "ぁ"}, {"xi", "ぃ"}, {"xu", "ぅ"}, {"xe", "ぇ"}, {"xo", "ぉ"},
     {"lya", "ゃ"}, {"lyu", "ゅ"}, {"lyo", "ょ"}, {"xya", "ゃ"}, {"xyu", "ゅ"}, {"xyo", "ょ"}, {"ltu", "っ"}, {"xtu", "っ"},
     {"a", "あ"}, {"i", "い"}, {"u", "う"}, {"e", "え"}, {"o", "お"}, {"-", "ー"}, {",", "、"}, {".", "。"},
+    {"!", "！"}, {"?", "？"},
 };
 
 const std::unordered_map<std::string, std::vector<std::string>> kDictionary = {
@@ -74,7 +75,23 @@ void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> 
 }
 
 bool is_literal_candidate_suffix(char value) {
-    return value == '?' || value == '/';
+    return value == '!' || value == '?' || value == '/';
+}
+
+std::string display_ascii(char value, InputMode mode) {
+    if (mode == InputMode::japanese) {
+        if (value == '!') return "！";
+        if (value == '?') return "？";
+    }
+    return std::string(1, value);
+}
+
+std::string display_literal_suffix(const std::string &value, InputMode mode) {
+    std::string result;
+    for (const char character : value) {
+        result += display_ascii(character, mode);
+    }
+    return result;
 }
 
 }  // namespace
@@ -109,7 +126,7 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     rebuild_candidates();
     if (!preserve_selection) return;
 
-    const std::string expected = selected_prefix + value;
+    const std::string expected = selected_prefix + display_ascii(value, mode_);
     const auto found = std::find_if(
         candidates_.begin(), candidates_.end(),
         [&expected](const Candidate &candidate) {
@@ -140,7 +157,14 @@ void ImeSession::backspace() {
     const std::string selected_source = preserve_selection
         ? candidates_[selected_index_].source
         : std::string{};
-    if (preserve_selection && !expected.empty()) expected.pop_back();
+    if (preserve_selection && !expected.empty()) {
+        const std::string suffix = display_ascii(raw_input_.back(), mode_);
+        if (expected.size() >= suffix.size() &&
+            expected.compare(expected.size() - suffix.size(), suffix.size(),
+                             suffix) == 0) {
+            expected.resize(expected.size() - suffix.size());
+        }
+    }
     converting_ = false;
     live_conversion_suspended_ = false;
     raw_input_.pop_back();
@@ -274,9 +298,9 @@ void ImeSession::rebuild_candidates() {
         return;
     }
 
-    // A slash or question mark terminates the reading rather than becoming
-    // part of its dictionary key. Keep it on every candidate so adding
-    // punctuation cannot replace the text already shown by live conversion.
+    // Literal punctuation terminates the reading rather than becoming part of
+    // its dictionary key. Keep it on every candidate so adding punctuation
+    // cannot replace the text already shown by live conversion.
     std::string conversion_input;
     std::string literal_suffix;
     if (literal_suffix_start_ != std::string::npos &&
@@ -293,6 +317,7 @@ void ImeSession::rebuild_candidates() {
         std::reverse(literal_suffix.begin(), literal_suffix.end());
     }
     const std::string conversion_reading = roman_to_hiragana(conversion_input);
+    literal_suffix = display_literal_suffix(literal_suffix, mode_);
     reading_ = conversion_reading + literal_suffix;
     const auto append_converted = [&](std::string text, const char *source) {
         text += literal_suffix;

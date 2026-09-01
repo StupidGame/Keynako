@@ -8,7 +8,8 @@ int main() {
     using keynako::ImeSession;
     assert(ImeSession::roman_to_hiragana("nihongo") == "にほんご");
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
-    assert(ImeSession::roman_to_hiragana("nani?") == "なに?");
+    assert(ImeSession::roman_to_hiragana("nani?") == "なに？");
+    assert(ImeSession::roman_to_hiragana("nani!") == "なに！");
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},
@@ -45,9 +46,21 @@ int main() {
     assert(question_mark.begin_conversion());
     question_mark.append_ascii('?');
     assert(question_mark.raw_input() == "nani?");
-    assert(question_mark.reading() == "なに?");
-    assert(question_mark.display_text() == "何なの?");
+    assert(question_mark.reading() == "なに？");
+    assert(question_mark.display_text() == "何なの？");
     assert(question_mark.is_converting());
+    question_mark.append_ascii('!');
+    assert(question_mark.reading() == "なに？！");
+    assert(question_mark.display_text() == "何なの？！");
+    question_mark.backspace();
+    assert(question_mark.display_text() == "何なの？");
+
+    ImeSession english_punctuation;
+    english_punctuation.set_mode(keynako::InputMode::english);
+    english_punctuation.append_ascii('!');
+    english_punctuation.append_ascii('?');
+    assert(english_punctuation.reading() == "!?");
+    assert(english_punctuation.display_text() == "!?");
 
     ImeSession mixed_text;
     mixed_text.set_user_dictionary({
@@ -65,7 +78,7 @@ int main() {
     assert(mixed_text.display_text() == "日本語入力OpenAI");
     assert(mixed_text.has_literal_suffix());
     mixed_text.append_ascii('?');
-    assert(mixed_text.display_text() == "日本語入力OpenAI?");
+    assert(mixed_text.display_text() == "日本語入力OpenAI？");
     mixed_text.backspace();
     assert(mixed_text.display_text() == "日本語入力OpenAI");
 
