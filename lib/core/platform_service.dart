@@ -89,6 +89,18 @@ class PlatformService implements StateStorage {
     }
   }
 
+  Future<void> configureDictionarySubmissionEndpoint(String endpoint) async {
+    try {
+      await _channel.invokeMethod<void>('configureDictionarySubmission', {
+        'endpoint': endpoint.trim(),
+      });
+    } on MissingPluginException {
+      return;
+    } on PlatformException {
+      return;
+    }
+  }
+
   Future<void> shareText({
     required String subject,
     required String text,

@@ -33,13 +33,14 @@ SetupIconFile=..\..\apps\desktop\windows\runner\resources\app_icon.ico
 UninstallDisplayName=Keynako Japanese IME
 UninstallDisplayIcon={app}\Keynako.exe
 UninstallFilesDir={app}\Uninstall
-CloseApplications=yes
-CloseApplicationsFilter=Keynako.exe
+CloseApplications=force
+CloseApplicationsFilter=Keynako.exe,keynako_zenzai.exe
 RestartApplications=no
 
 [Files]
-Source: "{#PackageRoot}\*"; DestDir: "{app}"; Excludes: "ime\KeynakoIME.dll"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageRoot}\*"; DestDir: "{app}"; Excludes: "ime\KeynakoIME.dll,ime\zenzai\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#PackageRoot}\ime\KeynakoIME.dll"; DestDir: "{app}\ime"; DestName: "KeynakoIME-{#BuildId}.dll"; Flags: ignoreversion uninsrestartdelete
+Source: "{#PackageRoot}\ime\zenzai\*"; DestDir: "{app}\ime\zenzai"; Flags: ignoreversion onlyifdoesntexist recursesubdirs createallsubdirs
 Source: "{#PackageRoot}\ime\bundled_shared_dictionary.tsv"; DestDir: "{commonappdata}\Keynako"; DestName: "shared_dictionary.tsv"; Flags: ignoreversion onlyifdoesntexist
 
 [Dirs]
@@ -68,4 +69,21 @@ begin
   Result := IsWin64;
   if not Result then
     MsgBox('Keynako IME requires 64-bit Windows.', mbError, MB_OK);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  if Exec(ExpandConstant('{sys}\taskkill.exe'),
+          '/F /T /IM keynako_zenzai.exe', '', SW_HIDE,
+          ewWaitUntilTerminated, ResultCode) then begin
+    if ResultCode = 0 then
+      Log('Stopped the running Keynako Zenzai helper before updating.')
+    else
+      Log('No running Keynako Zenzai helper needed to be stopped.');
+  end else
+    Log('Could not launch taskkill; Restart Manager will handle in-use files.');
+  Sleep(250);
 end;

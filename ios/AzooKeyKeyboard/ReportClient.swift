@@ -15,68 +15,50 @@ struct WrongConversionReport {
 }
 
 enum ReportClient {
-    // This endpoint and both form entry IDs intentionally match the Swift azooKey app.
-    private static let suggestionEndpoint = URL(
-        string: "https://docs.google.com/forms/d/e/1FAIpQLSeTdOtFZfuFHurrDMIIzLyX-Z84Y3IKHflewNZ8dPOFgCTOtw/formResponse"
-    )!
     private static let legacyWrongConversionEndpoint = URL(
         string: "https://docs.google.com/forms/d/e/1FAIpQLSfpYQqbX8u5SgGVfXjNzCPtKAH_5Mp7PCkUiCiUceEaevb8pQ/formResponse"
     )!
 
-    static func submit(
+    static func submitSharedConversionImprovement(
+        endpoint: String,
         report: WrongConversionReport,
-        settings: [String: Any],
         appVersion: String,
         completion: @escaping @Sendable (Bool) -> Void
     ) {
-        let input: [String: Any] = [
-            "text": report.reading,
-            "segments": [["value": report.rawInput, "inputStyle": report.inputStyle]],
-        ]
-        var payload: [String: Any] = [
-            "suggested": report.suggested,
-            "selected": report.selected,
-            "selectedIndex": String(report.selectedIndex),
-            "input": input,
-            "appVersion": appVersion,
-            "osVersion": ProcessInfo.processInfo.operatingSystemVersionString,
-            "zenzaiEnabled": String(settings["enable_zenzai"] as? Bool ?? false),
-            "zenzaiEffort": effortName(settings["zenzai_effort"] as? Int ?? 1),
-            "japaneseLayout": report.japaneseLayout,
-            "textContentType": report.textContentType,
-            "returnKeyType": report.returnKeyType,
-            "date": ISO8601DateFormatter().string(from: Date()),
-        ]
-        if settings["wrong_conversion_include_context"] as? Bool == true {
-            if !report.leftContext.isEmpty {
-                payload["leftSideContext"] = String(report.leftContext.suffix(10))
-            }
-            if !report.rightContext.isEmpty {
-                payload["rightSideContext"] = String(report.rightContext.prefix(10))
-            }
-        }
-        if let nickname = settings["wrong_conversion_report_user_nickname"] as? String,
-           !nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            payload["userNickname"] = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-              let payloadString = String(data: payloadData, encoding: .utf8) else {
+        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmedEndpoint),
+              url.scheme == "https",
+              url.host != nil else {
             completion(false)
             return
         }
-        var components = URLComponents()
-        components.queryItems = [
-            URLQueryItem(name: "entry.1715004013", value: "non_first_candidate_selection_report"),
-            URLQueryItem(name: "entry.562739847", value: payloadString),
+        let payload: [String: Any] = [
+            "word": report.selected.trimmingCharacters(in: .whitespacesAndNewlines),
+            "ruby": report.reading.trimmingCharacters(in: .whitespacesAndNewlines),
+            "importance": 3,
+            "categories": [String](),
+            "note": "IME候補改善: 第\(report.selectedIndex + 1)候補を選択",
+            "source": "Keynako IME",
+            "app_version": appVersion,
         ]
-        var request = URLRequest(url: suggestionEndpoint)
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            completion(false)
+            return
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("no-cors", forHTTPHeaderField: "mode")
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-        URLSession.shared.dataTask(with: request) { _, response, error in
+        request.timeoutInterval = 30
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Keynako \(appVersion)", forHTTPHeaderField: "User-Agent")
+        request.httpBody = payloadData
+        URLSession.shared.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            completion(error == nil && (200..<400).contains(status))
+            completion(
+                error == nil &&
+                    (200..<300).contains(status) &&
+                    responseAcceptsSubmission(data)
+            )
         }.resume()
     }
 
@@ -107,11 +89,11 @@ enum ReportClient {
         }.resume()
     }
 
-    private static func effortName(_ value: Int) -> String {
-        switch value {
-        case 0: "low"
-        case 2: "high"
-        default: "medium"
-        }
+    private static func responseAcceptsSubmission(_ data: Data?) -> Bool {
+        guard let data, !data.isEmpty else { return true }
+        guard data.count <= 64 * 1024,
+              let decoded = try? JSONSerialization.jsonObject(with: data) else { return false }
+        guard let response = decoded as? [String: Any] else { return true }
+        return response["ok"] as? Bool != false
     }
 }

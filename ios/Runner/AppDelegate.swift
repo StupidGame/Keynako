@@ -51,6 +51,16 @@ import UIKit
         return
       }
       UIApplication.shared.open(url) { _ in result(nil) }
+    case "configureDictionarySubmission":
+      let arguments = call.arguments as? [String: Any]
+      let endpoint = (arguments?["endpoint"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      if let url = URL(string: endpoint), url.scheme == "https", url.host != nil {
+        defaults.set(endpoint, forKey: "keynako_dictionary_submission_url")
+      } else {
+        defaults.removeObject(forKey: "keynako_dictionary_submission_url")
+      }
+      result(nil)
     case "shareText":
       let arguments = call.arguments as? [String: Any]
       let subject = arguments?["subject"] as? String ?? "Keynako"

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 
 import '../input/azookey_hotfix_sync.dart';
+import '../input/keynako_dictionary_submission.dart';
 import '../models/app_data.dart';
 import '../models/custard.dart';
 import 'platform_service.dart';
@@ -18,6 +19,7 @@ class AppController extends ChangeNotifier {
   }) {
     final resolvedPlatform = platform ?? PlatformService();
     this.platform = resolvedPlatform;
+    _configureNativeDictionarySubmission = storage == null;
     _storage = storage ?? resolvedPlatform;
     _azooKeyHotfixSynchronizer =
         azooKeyHotfixSynchronizer ??
@@ -29,6 +31,7 @@ class AppController extends ChangeNotifier {
 
   late final StateStorage _storage;
   late final PlatformService platform;
+  late final bool _configureNativeDictionarySubmission;
   late final AzooKeyHotfixSynchronizer? _azooKeyHotfixSynchronizer;
   late final DateTime Function() _now;
   AppData data = AppData.defaults();
@@ -49,6 +52,11 @@ class AppController extends ChangeNotifier {
       loadError = error;
       data = AppData.defaults();
     } finally {
+      if (_configureNativeDictionarySubmission) {
+        await platform.configureDictionarySubmissionEndpoint(
+          keynakoDictionarySubmissionUrl,
+        );
+      }
       initialized = true;
       notifyListeners();
     }
