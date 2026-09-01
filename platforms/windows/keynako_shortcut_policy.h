@@ -9,12 +9,31 @@ namespace keynako::windows {
 constexpr std::uint32_t kKeyKanji = 0x19;
 constexpr std::uint32_t kKeyConvert = 0x1c;
 constexpr std::uint32_t kKeySpace = 0x20;
+constexpr std::uint32_t kKeyOemComma = 0xbc;
+constexpr std::uint32_t kKeyOemMinus = 0xbd;
+constexpr std::uint32_t kKeyOemPeriod = 0xbe;
+constexpr std::uint32_t kKeyOemSlash = 0xbf;
 constexpr std::uint32_t kKeyOemGrave = 0xc0;
 constexpr std::uint32_t kScanCodeJisHankakuZenkaku = 0x29;
 constexpr std::uint32_t kScanCodeJisConvert = 0x79;
 
 constexpr bool is_convert_key(std::uint32_t key, std::uint32_t scan_code) {
     return key == kKeyConvert || scan_code == kScanCodeJisConvert;
+}
+
+constexpr bool is_oem_text_key(std::uint32_t key) {
+    return key == kKeyOemMinus || key == kKeyOemComma ||
+           key == kKeyOemPeriod || key == kKeyOemSlash;
+}
+
+constexpr char oem_text_fallback(std::uint32_t key, bool shift) {
+    switch (key) {
+        case kKeyOemMinus: return shift ? '_' : '-';
+        case kKeyOemComma: return shift ? '<' : ',';
+        case kKeyOemPeriod: return shift ? '>' : '.';
+        case kKeyOemSlash: return shift ? '?' : '/';
+        default: return '\0';
+    }
 }
 
 constexpr bool is_hankaku_zenkaku_key(std::uint32_t key,

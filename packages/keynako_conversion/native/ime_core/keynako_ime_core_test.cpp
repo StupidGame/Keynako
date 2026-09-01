@@ -8,6 +8,7 @@ int main() {
     using keynako::ImeSession;
     assert(ImeSession::roman_to_hiragana("nihongo") == "にほんご");
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
+    assert(ImeSession::roman_to_hiragana("nani?") == "なに?");
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},

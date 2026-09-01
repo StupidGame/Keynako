@@ -427,15 +427,26 @@ public:
             if (!session_.select_candidate(static_cast<std::size_t>(key - '1'))) return S_OK;
             action = EditAction::commit;
         } else if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') ||
-            key == VK_OEM_MINUS || key == VK_OEM_COMMA || key == VK_OEM_PERIOD) {
+                   keynako::windows::is_oem_text_key(
+                       static_cast<std::uint32_t>(key))) {
             reload_shared_dictionary();
             BYTE keyboard[256]{};
             WCHAR translated[4]{};
             GetKeyboardState(keyboard);
-            const int count = ToUnicode(static_cast<UINT>(key), 0, keyboard, translated, 4, 0);
+            const int count = ToUnicode(static_cast<UINT>(key), scan_code,
+                                        keyboard, translated, 4, 0);
             char value = 0;
             if (count > 0 && translated[0] < 128) value = static_cast<char>(translated[0]);
-            if (!value) value = key == VK_OEM_MINUS ? '-' : key == VK_OEM_COMMA ? ',' : key == VK_OEM_PERIOD ? '.' : static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
+            if (!value && keynako::windows::is_oem_text_key(
+                              static_cast<std::uint32_t>(key))) {
+                const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                value = keynako::windows::oem_text_fallback(
+                    static_cast<std::uint32_t>(key), shift);
+            }
+            if (!value) {
+                value = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(key)));
+            }
             session_.append_ascii(value);
         } else if (key == VK_BACK) {
             if (session_.raw_input().empty()) return S_OK;
@@ -712,7 +723,8 @@ private:
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
-        if (japanese && (key == VK_OEM_MINUS || key == VK_OEM_COMMA || key == VK_OEM_PERIOD)) return true;
+        if (japanese && keynako::windows::is_oem_text_key(
+                            static_cast<std::uint32_t>(key))) return true;
         if (session_.raw_input().empty()) return false;
         if (session_.is_converting() && key >= '1' && key <= '9') return true;
         return key == VK_BACK || key == VK_SPACE || key == VK_UP ||

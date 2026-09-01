@@ -3,6 +3,8 @@
 using keynako::windows::ShortcutAction;
 using keynako::windows::is_convert_key;
 using keynako::windows::is_hankaku_zenkaku_key;
+using keynako::windows::is_oem_text_key;
+using keynako::windows::oem_text_fallback;
 using keynako::windows::shortcut_action;
 
 static_assert(shortcut_action(0x1c, 0, false, false, false) ==
@@ -29,6 +31,9 @@ static_assert(shortcut_action(0xc0, 0, false, true, false) ==
               ShortcutAction::toggle_input_mode);
 static_assert(shortcut_action(0x20, 0, true, false, false) ==
               ShortcutAction::toggle_input_mode);
+static_assert(is_oem_text_key(0xbf));
+static_assert(oem_text_fallback(0xbf, false) == '/');
+static_assert(oem_text_fallback(0xbf, true) == '?');
 
 int main() {
     // Convert mirrors Space conversion on both JIS and US logical layouts. It
@@ -54,5 +59,8 @@ int main() {
         ShortcutAction::none) return 11;
     if (shortcut_action('A', 0, true, false, false) != ShortcutAction::none) return 6;
     if (shortcut_action(0xc0, 0, true, true, false) != ShortcutAction::none) return 7;
+    if (!is_oem_text_key(0xbf)) return 12;
+    if (oem_text_fallback(0xbf, false) != '/') return 13;
+    if (oem_text_fallback(0xbf, true) != '?') return 14;
     return 0;
 }

@@ -11,6 +11,8 @@ even while the logical layout is US. A real US 101/102-key keyboard keeps bare
 Backquote available for text entry and can toggle with `Alt+Backquote` (the
 Microsoft IME shortcut) or `Ctrl+Space`. If the hook is unavailable, the normal
 TSF key sink and preserved-key routes remain active.
+Slash and `Shift+Slash` are translated through the active layout, so `/` and `?`
+work with both Japanese and US keyboards.
 
 The Windows Input Indicator and keyboard-layout picker use the Android-matching
 app icon, and a separate `あ` or `A` mode item through `GUID_LBI_INPUTMODE`.
