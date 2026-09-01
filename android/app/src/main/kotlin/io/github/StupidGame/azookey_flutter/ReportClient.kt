@@ -1,15 +1,10 @@
 package io.github.StupidGame.azookey_flutter
 
-import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
 
 data class WrongConversionReport(
     val suggested: String,
@@ -26,43 +21,44 @@ data class WrongConversionReport(
 )
 
 object ReportClient {
-    // These wrong-conversion endpoints and entry IDs match the Swift app.
-    private const val SUGGESTION_ENDPOINT =
-        "https://docs.google.com/forms/d/e/1FAIpQLSeTdOtFZfuFHurrDMIIzLyX-Z84Y3IKHflewNZ8dPOFgCTOtw/formResponse"
-    private const val REPORT_TYPE_ENTRY = "entry.1715004013"
-    private const val PAYLOAD_ENTRY = "entry.562739847"
     private const val LEGACY_WRONG_CONVERSION_ENDPOINT =
         "https://docs.google.com/forms/d/e/1FAIpQLSfpYQqbX8u5SgGVfXjNzCPtKAH_5Mp7PCkUiCiUceEaevb8pQ/formResponse"
+    private const val MAXIMUM_RESPONSE_BYTES = 64 * 1024
 
-    fun submit(
+    fun submitSharedConversionImprovement(
+        endpoint: String,
         report: WrongConversionReport,
-        settings: JSONObject,
         appVersion: String,
-        osVersion: String,
         completion: (Boolean) -> Unit,
     ) {
         Thread {
             completion(
                 try {
-                    val payload = payload(report, settings, appVersion, osVersion).toString()
-                    val body = formEncode(
-                        listOf(
-                            REPORT_TYPE_ENTRY to "non_first_candidate_selection_report",
-                            PAYLOAD_ENTRY to payload,
-                        ),
-                    )
-                    val connection = (URL(SUGGESTION_ENDPOINT).openConnection() as HttpURLConnection).apply {
+                    val url = URL(endpoint.trim())
+                    require(url.protocol == "https" && url.host.isNotBlank())
+                    val body = JSONObject(sharedConversionImprovementPayload(report, appVersion))
+                        .toString()
+                    val connection = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"
                         connectTimeout = 15_000
-                        readTimeout = 15_000
+                        readTimeout = 30_000
                         doOutput = true
-                        setRequestProperty("mode", "no-cors")
-                        setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                        instanceFollowRedirects = true
+                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        setRequestProperty("Accept", "application/json")
+                        setRequestProperty("User-Agent", "Keynako $appVersion")
                     }
-                    connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
-                    val status = connection.responseCode
-                    connection.disconnect()
-                    status in 200..399
+                    try {
+                        connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+                        val status = connection.responseCode
+                        val stream = if (status >= 400) connection.errorStream else connection.inputStream
+                        val bytes = stream?.use { it.readNBytes(MAXIMUM_RESPONSE_BYTES + 1) } ?: byteArrayOf()
+                        status in 200..299 &&
+                            bytes.size <= MAXIMUM_RESPONSE_BYTES &&
+                            responseAcceptsSubmission(String(bytes, StandardCharsets.UTF_8))
+                    } finally {
+                        connection.disconnect()
+                    }
                 } catch (_: Exception) {
                     false
                 },
@@ -109,50 +105,26 @@ object ReportClient {
         }.start()
     }
 
-    private fun payload(
+    internal fun sharedConversionImprovementPayload(
         report: WrongConversionReport,
-        settings: JSONObject,
         appVersion: String,
-        osVersion: String,
-    ): JSONObject {
-        val input = JSONObject().apply {
-            put("text", report.reading)
-            put(
-                "segments",
-                JSONArray().put(
-                    JSONObject().apply {
-                        put("value", report.rawInput)
-                        put("inputStyle", report.inputStyle)
-                    },
-                ),
-            )
-        }
-        return JSONObject().apply {
-            put("suggested", report.suggested)
-            put("selected", report.selected)
-            put("selectedIndex", report.selectedIndex.toString())
-            put("input", input)
-            if (settings.optBoolean("wrong_conversion_include_context", false)) {
-                if (report.leftContext.isNotBlank()) put("leftSideContext", report.leftContext.takeLast(10))
-                if (report.rightContext.isNotBlank()) put("rightSideContext", report.rightContext.take(10))
-            }
-            val nickname = settings.optString("wrong_conversion_report_user_nickname", "").trim()
-            if (nickname.isNotEmpty()) put("userNickname", nickname)
-            put("appVersion", appVersion)
-            put("osVersion", osVersion)
-            put("zenzaiEnabled", settings.optBoolean("enable_zenzai", false).toString())
-            put(
-                "zenzaiEffort",
-                when (settings.optInt("zenzai_effort", 1)) {
-                    0 -> "low"
-                    2 -> "high"
-                    else -> "medium"
-                },
-            )
-            put("japaneseLayout", report.japaneseLayout)
-            put("textContentType", report.textContentType)
-            put("returnKeyType", report.returnKeyType)
-            put("date", iso8601Now())
+    ): Map<String, Any> = linkedMapOf(
+        "word" to report.selected.trim(),
+        "ruby" to report.reading.trim(),
+        "importance" to 3,
+        "categories" to emptyList<String>(),
+        "note" to "IME候補改善: 第${report.selectedIndex + 1}候補を選択",
+        "source" to "Keynako IME",
+        "app_version" to appVersion,
+    )
+
+    private fun responseAcceptsSubmission(body: String): Boolean {
+        if (body.isBlank()) return true
+        return try {
+            val response = JSONObject(body)
+            !response.has("ok") || response.optBoolean("ok", true)
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -160,7 +132,4 @@ object ReportClient {
         "${URLEncoder.encode(key, StandardCharsets.UTF_8.name())}=${URLEncoder.encode(value, StandardCharsets.UTF_8.name())}"
     }
 
-    private fun iso8601Now(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }.format(Date())
 }

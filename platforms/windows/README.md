@@ -27,6 +27,13 @@ While the IME is in use it requests a cache refresh at most once every five
 minutes through the desktop app's non-visual command mode, then reloads the
 newest per-user cache without blocking the focused application.
 
+When `KEYNAKO_DICTIONARY_SUBMISSION_URL` is set to an HTTPS URL at CMake
+configure time, committing a non-first dictionary candidate shows an eight-second
+confirmation panel. Clicking it posts only the selected word, reading, candidate
+rank and build version to the shared conversion dictionary gateway. Surrounding
+text and host-application details are never included. Builds without the endpoint
+do not show the panel.
+
 The release artifact is `KeynakoSetup.exe`. It installs the Flutter settings
 app, TSF DLL, Zenzai helper and models, the AzooKey default dictionary, and a
 build-time `Dictionary/data_v1.json` snapshot below Program Files. It registers
