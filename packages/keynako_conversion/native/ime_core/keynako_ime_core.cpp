@@ -73,11 +73,49 @@ void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> 
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
 }
 
+bool is_literal_candidate_suffix(char value) {
+    return value == '?' || value == '/';
+}
+
 }  // namespace
 
 void ImeSession::set_mode(InputMode mode) { if (mode_ != mode) { mode_ = mode; clear(); } }
 void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
-void ImeSession::append_ascii(char value) { converting_ = false; live_conversion_suspended_ = false; raw_input_.push_back(value); rebuild_candidates(); }
+void ImeSession::append_ascii(char value) {
+    const bool preserve_selection = is_literal_candidate_suffix(value) &&
+                                    !candidates_.empty();
+    const bool was_converting = converting_;
+    const std::size_t previous_selected_index = selected_index_;
+    const std::string selected_prefix = preserve_selection
+        ? candidates_[selected_index_].text
+        : std::string{};
+    const std::string selected_source = preserve_selection
+        ? candidates_[selected_index_].source
+        : std::string{};
+    converting_ = false;
+    live_conversion_suspended_ = false;
+    raw_input_.push_back(value);
+    rebuild_candidates();
+    if (!preserve_selection) return;
+
+    const std::string expected = selected_prefix + value;
+    const auto found = std::find_if(
+        candidates_.begin(), candidates_.end(),
+        [&expected](const Candidate &candidate) {
+            return candidate.text == expected;
+        });
+    if (found != candidates_.end()) {
+        selected_index_ = static_cast<std::size_t>(
+            std::distance(candidates_.begin(), found));
+    } else {
+        const std::size_t insertion_index =
+            std::min(previous_selected_index, candidates_.size());
+        candidates_.insert(candidates_.begin() + insertion_index,
+                           {expected, selected_source});
+        selected_index_ = insertion_index;
+    }
+    converting_ = was_converting;
+}
 void ImeSession::backspace() { if (!raw_input_.empty()) { converting_ = false; live_conversion_suspended_ = false; raw_input_.pop_back(); rebuild_candidates(); } }
 void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; }
 bool ImeSession::begin_conversion() {
@@ -185,25 +223,50 @@ void ImeSession::rebuild_candidates() {
         append_unique(candidates_, seen, std::move(upper), "english-upper");
         return;
     }
-    reading_ = roman_to_hiragana(raw_input_);
-    for (const auto &entry : user_dictionary_) {
-        if (entry.reading == reading_) append_unique(candidates_, seen, entry.value, "shared");
+
+    // A slash or question mark terminates the reading rather than becoming
+    // part of its dictionary key. Keep it on every candidate so adding
+    // punctuation cannot replace the text already shown by live conversion.
+    std::string conversion_input = raw_input_;
+    std::string literal_suffix;
+    while (!conversion_input.empty() &&
+           is_literal_candidate_suffix(conversion_input.back())) {
+        literal_suffix.push_back(conversion_input.back());
+        conversion_input.pop_back();
     }
-    if (bundled_dictionary_) {
+    std::reverse(literal_suffix.begin(), literal_suffix.end());
+    const std::string conversion_reading = roman_to_hiragana(conversion_input);
+    reading_ = conversion_reading + literal_suffix;
+    const auto append_converted = [&](std::string text, const char *source) {
+        text += literal_suffix;
+        append_unique(candidates_, seen, std::move(text), source);
+    };
+
+    for (const auto &entry : user_dictionary_) {
+        if (entry.reading == conversion_reading) {
+            append_converted(entry.value, "shared");
+        }
+    }
+    if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;
         for (const auto &entry : user_dictionary_) {
             if (!entry.has_word_weight) continue;
             additional_entries.push_back({entry.value, entry.reading, entry.lcid,
                                           entry.rcid, entry.word_weight});
         }
-        for (auto &value : bundled_dictionary_->candidates(reading_, 48, additional_entries)) {
-            append_unique(candidates_, seen, std::move(value), "azookey");
+        for (auto &value : bundled_dictionary_->candidates(
+                 conversion_reading, 48, additional_entries)) {
+            append_converted(std::move(value), "azookey");
         }
     }
-    const auto dictionary = kDictionary.find(reading_);
-    if (dictionary != kDictionary.end()) for (const auto &value : dictionary->second) append_unique(candidates_, seen, value, "dictionary");
+    const auto dictionary = kDictionary.find(conversion_reading);
+    if (dictionary != kDictionary.end()) {
+        for (const auto &value : dictionary->second) {
+            append_converted(value, "dictionary");
+        }
+    }
     append_unique(candidates_, seen, reading_, "reading");
-    append_unique(candidates_, seen, hiragana_to_katakana(reading_), "katakana");
+    append_converted(hiragana_to_katakana(conversion_reading), "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
 }
 
