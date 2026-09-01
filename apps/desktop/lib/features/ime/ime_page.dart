@@ -521,6 +521,21 @@ class _InputCard extends StatelessWidget {
                               controller.selectCandidate(index);
                               controller.commitSelected();
                             },
+                            onSecondaryTap: () async {
+                              final sent = await controller.shareCandidate(
+                                index,
+                              );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    sent
+                                        ? '候補を共有ストレージへ送信しました。'
+                                        : '候補を共有ストレージへ送信できませんでした。',
+                                  ),
+                                ),
+                              );
+                            },
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 14,

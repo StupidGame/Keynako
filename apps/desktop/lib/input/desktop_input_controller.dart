@@ -16,12 +16,17 @@ class DesktopInputController extends ChangeNotifier {
   factory DesktopInputController({
     ZenzaiEngineFactory? zenzaiEngineFactory,
     SharedDictionaryRepository? sharedDictionaryRepository,
-  }) =>
-      DesktopInputController._(zenzaiEngineFactory, sharedDictionaryRepository);
+    KeynakoDictionarySubmitter? sharedDictionarySubmitter,
+  }) => DesktopInputController._(
+    zenzaiEngineFactory,
+    sharedDictionaryRepository,
+    sharedDictionarySubmitter ?? KeynakoDictionarySubmissionClient(),
+  );
 
   DesktopInputController._(
     this._zenzaiEngineFactory,
     this._sharedDictionaryRepository,
+    this._sharedDictionarySubmitter,
   );
 
   static const _japaneseConverter = JapaneseConverter();
@@ -29,6 +34,7 @@ class DesktopInputController extends ChangeNotifier {
 
   final ZenzaiEngineFactory? _zenzaiEngineFactory;
   final SharedDictionaryRepository? _sharedDictionaryRepository;
+  final KeynakoDictionarySubmitter _sharedDictionarySubmitter;
   final Map<String, int> _learning = {};
 
   InputMode _mode = InputMode.japanese;
@@ -48,6 +54,8 @@ class DesktopInputController extends ChangeNotifier {
   Timer? _sharedDictionaryTimer;
   bool _sharedDictionarySyncing = false;
   String _sharedDictionaryStatus = '未取得';
+  bool _candidateSharing = false;
+  String _candidateShareStatus = '';
   bool _disposed = false;
 
   InputMode get mode => _mode;
@@ -63,6 +71,8 @@ class DesktopInputController extends ChangeNotifier {
   bool get sharedDictionarySyncing => _sharedDictionarySyncing;
   String get sharedDictionaryStatus => _sharedDictionaryStatus;
   int get sharedDictionaryEntryCount => _sharedDictionary.length;
+  bool get candidateSharing => _candidateSharing;
+  String get candidateShareStatus => _candidateShareStatus;
 
   String get composingText => _mode == InputMode.japanese
       ? _japaneseConverter.romanToHiragana(_rawInput)
@@ -205,6 +215,33 @@ class DesktopInputController extends ChangeNotifier {
     _selectedIndex = index;
     _converting = true;
     notifyListeners();
+  }
+
+  Future<bool> shareCandidate(int index) async {
+    if (_candidateSharing || index < 0 || index >= _candidates.length) {
+      return false;
+    }
+    final candidate = _candidates[index];
+    _candidateSharing = true;
+    _candidateShareStatus = '共有ストレージへ送信中';
+    notifyListeners();
+    try {
+      final sent = await _sharedDictionarySubmitter.submit(
+        word: candidate.text,
+        ruby: candidate.reading,
+        importance: 3,
+        categories: const [],
+        note: 'Desktop candidate right-click',
+      );
+      _candidateShareStatus = sent ? '共有ストレージへ送信しました' : '共有ストレージへ送信できませんでした';
+      return sent;
+    } on Object {
+      _candidateShareStatus = '共有ストレージへ送信できませんでした';
+      return false;
+    } finally {
+      _candidateSharing = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   void beginOrCycleCandidate(int delta) {

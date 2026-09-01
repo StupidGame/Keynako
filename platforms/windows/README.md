@@ -18,6 +18,10 @@ Re-registration refreshes the profile icon cached by Windows. Its menu switches 
 alphanumeric and live-conversion modes. The candidate window shows numbered,
 paged candidates and their shared-dictionary or Zenzai source in a rounded,
 system-colored panel with keyboard guidance.
+Right-clicking a candidate sends its word and reading to the same configured
+Keynako shared-dictionary HTTPS gateway used by the app. Network work runs in a
+small out-of-process helper, so the focused application and TSF thread do not
+block on the request.
 
 The release artifact is `KeynakoSetup.exe`. It installs the Flutter settings
 app, TSF DLL, Zenzai helper and models, the AzooKey default dictionary, and a

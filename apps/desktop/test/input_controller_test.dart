@@ -81,6 +81,26 @@ void main() {
     expect(controller.candidates.first.text, 'Keynako共有');
     controller.dispose();
   });
+
+  test(
+    'shares the right-clicked candidate through the common gateway',
+    () async {
+      final submitter = _FakeDictionarySubmitter();
+      final controller = DesktopInputController(
+        sharedDictionarySubmitter: submitter,
+      );
+      controller.updateRawInput('nihongo');
+      final index = controller.candidates.indexWhere(
+        (candidate) => candidate.text == '日本語',
+      );
+
+      expect(await controller.shareCandidate(index), isTrue);
+      expect(submitter.word, '日本語');
+      expect(submitter.ruby, 'にほんご');
+      expect(controller.candidateShareStatus, '共有ストレージへ送信しました');
+      controller.dispose();
+    },
+  );
 }
 
 class _FakeZenzaiEngine implements ZenzaiEngine {
@@ -125,5 +145,23 @@ class _FakeSharedDictionaryRepository implements SharedDictionaryRepository {
   Future<SharedDictionarySnapshot> refresh() async {
     refreshCount += 1;
     return snapshot;
+  }
+}
+
+class _FakeDictionarySubmitter implements KeynakoDictionarySubmitter {
+  String? word;
+  String? ruby;
+
+  @override
+  Future<bool> submit({
+    required String word,
+    required String ruby,
+    required int importance,
+    required List<String> categories,
+    String? note,
+  }) async {
+    this.word = word;
+    this.ruby = ruby;
+    return true;
   }
 }

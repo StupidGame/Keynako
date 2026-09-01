@@ -23,6 +23,7 @@
 #include "keynako_resources.h"
 #include "keynako_ime_core.h"
 #include "keynako_shortcut_policy.h"
+#include "keynako_submission_payload.h"
 #include "zenzai_client.h"
 
 namespace {
@@ -479,6 +480,7 @@ private:
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
+    std::wstring shared_submission_status_;
     HHOOK keyboard_hook_ = nullptr;
     bool physical_shortcut_down_ = false;
     inline static thread_local TextService *keyboard_hook_owner_ = nullptr;
@@ -780,6 +782,82 @@ private:
         return true;
     }
 
+    bool submit_candidate_to_shared_storage(std::size_t index) {
+        if (index >= session_.candidates().size()) return false;
+        const auto helper = module_directory() / L"KeynakoDictionarySubmit.exe";
+        std::error_code helper_error;
+        if (!std::filesystem::exists(helper, helper_error) || helper_error) return false;
+        const std::string payload = keynako::windows::shared_candidate_payload(
+            session_.candidates()[index].text, session_.candidates()[index].reading);
+        if (payload.size() > MAXDWORD) return false;
+
+        SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+        HANDLE input_read = nullptr;
+        HANDLE input_write = nullptr;
+        if (!CreatePipe(&input_read, &input_write, &security, 0)) return false;
+        if (!SetHandleInformation(input_write, HANDLE_FLAG_INHERIT, 0)) {
+            CloseHandle(input_read);
+            CloseHandle(input_write);
+            return false;
+        }
+        HANDLE null_output = CreateFileW(L"NUL", GENERIC_WRITE,
+                                         FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                         &security, OPEN_EXISTING,
+                                         FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (null_output == INVALID_HANDLE_VALUE) {
+            CloseHandle(input_read);
+            CloseHandle(input_write);
+            return false;
+        }
+
+        SIZE_T attribute_bytes = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_bytes);
+        std::vector<unsigned char> attribute_buffer(attribute_bytes);
+        auto *attributes = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(
+            attribute_buffer.data());
+        const bool attributes_initialized = attribute_bytes > 0 &&
+            InitializeProcThreadAttributeList(attributes, 1, 0, &attribute_bytes);
+        bool attributes_ready = attributes_initialized;
+        HANDLE inherited_handles[] = {input_read, null_output};
+        if (attributes_ready) {
+            attributes_ready = UpdateProcThreadAttribute(
+                attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                inherited_handles, sizeof(inherited_handles), nullptr, nullptr);
+        }
+
+        STARTUPINFOEXW startup{};
+        startup.StartupInfo.cb = sizeof(startup);
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = input_read;
+        startup.StartupInfo.hStdOutput = null_output;
+        startup.StartupInfo.hStdError = null_output;
+        startup.lpAttributeList = attributes_ready ? attributes : nullptr;
+        PROCESS_INFORMATION process{};
+        std::wstring command_line = L"\"" + helper.wstring() + L"\"";
+        const auto working_directory = helper.parent_path().wstring();
+        const BOOL created = attributes_ready && CreateProcessW(
+            helper.c_str(), command_line.data(), nullptr, nullptr, TRUE,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, nullptr,
+            working_directory.c_str(), &startup.StartupInfo, &process);
+
+        if (attributes_initialized) DeleteProcThreadAttributeList(attributes);
+        CloseHandle(input_read);
+        CloseHandle(null_output);
+        if (!created) {
+            CloseHandle(input_write);
+            return false;
+        }
+
+        DWORD written = 0;
+        const BOOL sent = WriteFile(input_write, payload.data(),
+                                    static_cast<DWORD>(payload.size()),
+                                    &written, nullptr);
+        CloseHandle(input_write);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return sent && written == static_cast<DWORD>(payload.size());
+    }
+
     static LRESULT CALLBACK candidate_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         auto *service = reinterpret_cast<TextService *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
@@ -793,20 +871,31 @@ private:
             case WM_ERASEBKGND: return 1;
             case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
             case WM_LBUTTONDOWN:
-            case WM_LBUTTONDBLCLK: {
+            case WM_LBUTTONDBLCLK:
+            case WM_RBUTTONDOWN: {
                 const UINT dpi = GetDpiForWindow(window);
                 const int row_height = MulDiv(36, static_cast<int>(dpi), 96);
                 const int row = GET_Y_LPARAM(lparam) / std::max(1, row_height);
                 const std::size_t page_start = (service->session_.selected_index() / 9) * 9;
                 const std::size_t index = page_start + static_cast<std::size_t>(std::max(0, row));
-                if (index < service->session_.candidates().size() && row < 9 &&
-                    service->session_.select_candidate(index)) {
-                    service->request_active_edit(message == WM_LBUTTONDBLCLK
-                                                     ? EditAction::commit
-                                                     : EditAction::update);
+                if (index < service->session_.candidates().size() && row < 9) {
+                    if (message == WM_RBUTTONDOWN) {
+                        const bool started =
+                            service->submit_candidate_to_shared_storage(index);
+                        service->shared_submission_status_ = started
+                            ? L"共有ストレージへ送信を開始しました"
+                            : L"共有ストレージへ送信できません";
+                        InvalidateRect(window, nullptr, TRUE);
+                    } else if (service->session_.select_candidate(index)) {
+                        service->request_active_edit(message == WM_LBUTTONDBLCLK
+                                                         ? EditAction::commit
+                                                         : EditAction::update);
+                    }
                 }
                 return 0;
             }
+            case WM_RBUTTONUP:
+            case WM_CONTEXTMENU: return 0;
             default: return DefWindowProcW(window, message, wparam, lparam);
         }
     }
@@ -900,9 +989,11 @@ private:
         footer.left += MulDiv(12, static_cast<int>(dpi), 96);
         footer.right -= MulDiv(12, static_cast<int>(dpi), 96);
         const std::size_t page_count = (session_.candidates().size() + 8) / 9;
-        const std::wstring footer_text = std::to_wstring(page_start / 9 + 1) + L" / " +
-                                         std::to_wstring(page_count) +
-                                         L"   ↑↓ 選択   Space・変換 次候補   Enter 確定";
+        const std::wstring footer_text = shared_submission_status_.empty()
+            ? std::to_wstring(page_start / 9 + 1) + L" / " +
+                  std::to_wstring(page_count) +
+                  L"   ↑↓ 選択   右クリック 共有   Enter 確定"
+            : shared_submission_status_;
         DrawTextW(dc, footer_text.c_str(), -1, &footer,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         SelectObject(dc, old_font);
@@ -959,6 +1050,7 @@ private:
     }
 
     void hide_candidates() {
+        shared_submission_status_.clear();
         if (candidate_window_) {
             NotifyWinEvent(EVENT_OBJECT_IME_HIDE, candidate_window_, OBJID_CLIENT, CHILDID_SELF);
             DestroyWindow(candidate_window_);
