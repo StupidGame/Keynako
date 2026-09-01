@@ -40,5 +40,7 @@ build-time `Dictionary/data_v1.json` snapshot below Program Files. It registers
 the input service and creates an executable uninstaller that also removes the
 updated dictionary cache. The PowerShell files remain available for development
 and recovery. Each installer build gives the in-process TSF DLL a unique file
-name, so upgrades never overwrite a copy loaded by Explorer. Restart Manager is
-restricted to the Keynako settings app and never closes Explorer.
+name, so upgrades never overwrite a copy loaded by Explorer. The Zenzai helper
+keeps its stable file name; Setup closes only that Keynako process before
+replacing it and reuses existing model files. Restart Manager never closes
+Explorer.
