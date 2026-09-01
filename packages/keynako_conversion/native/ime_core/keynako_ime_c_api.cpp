@@ -37,6 +37,7 @@ void keynako_ime_append_ascii(keynako_ime_session session, int value) {
     if (auto *target = cast(session); target && value >= 0 && value <= 0x7f) target->append_ascii(static_cast<char>(value));
 }
 void keynako_ime_backspace(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace(); }
+void keynako_ime_backspace_word(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace_word(); }
 void keynako_ime_clear(keynako_ime_session session) { if (auto *value = cast(session)) value->clear(); }
 int keynako_ime_begin_conversion(keynako_ime_session session) {
     return session && cast(session)->begin_conversion() ? 1 : 0;
@@ -103,6 +104,7 @@ int keynako_ime_load_user_dictionary(keynako_ime_session session, const char *ut
 int keynako_ime_set_bundled_dictionary_path(keynako_ime_session session, const char *utf8_path) {
     return session && utf8_path && cast(session)->set_bundled_dictionary_path(utf8_path) ? 1 : 0;
 }
+const char *keynako_ime_raw_input(keynako_ime_session session) { return session ? cast(session)->raw_input().c_str() : ""; }
 const char *keynako_ime_reading(keynako_ime_session session) { return session ? cast(session)->reading().c_str() : ""; }
 const char *keynako_ime_display_text(keynako_ime_session session) { return session ? copy_result(cast(session)->display_text()) : ""; }
 const char *keynako_ime_selected_text(keynako_ime_session session) { return session ? copy_result(cast(session)->selected_text()) : ""; }

@@ -31,6 +31,7 @@ class NativeSession:
         self.library.keynako_ime_set_mode.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_append_ascii.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_backspace.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_backspace_word.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_clear.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_begin_conversion.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_begin_conversion.restype = ctypes.c_int
@@ -42,7 +43,12 @@ class NativeSession:
         self.library.keynako_ime_load_user_dictionary.restype = ctypes.c_int
         self.library.keynako_ime_set_bundled_dictionary_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_set_bundled_dictionary_path.restype = ctypes.c_int
-        for name in ("keynako_ime_reading", "keynako_ime_display_text", "keynako_ime_selected_text"):
+        for name in (
+            "keynako_ime_raw_input",
+            "keynako_ime_reading",
+            "keynako_ime_display_text",
+            "keynako_ime_selected_text",
+        ):
             function = getattr(self.library, name)
             function.argtypes = [ctypes.c_void_p]
             function.restype = ctypes.c_char_p
@@ -76,6 +82,12 @@ class NativeSession:
 
     def backspace(self) -> None:
         self.library.keynako_ime_backspace(self.handle)
+
+    def backspace_word(self) -> None:
+        self.library.keynako_ime_backspace_word(self.handle)
+
+    def raw_input(self) -> str:
+        return self.library.keynako_ime_raw_input(self.handle).decode()
 
     def clear(self) -> None:
         self.library.keynako_ime_clear(self.handle)
@@ -189,6 +201,8 @@ class KeynakoEngine(IBus.Engine):
         self.dictionary_mtime_ns = -1
         self.last_dictionary_check = 0.0
         self.last_dictionary_refresh_request = 0.0
+        self.last_backspace_press: float | None = None
+        self.backspace_released = True
         self._reload_shared_dictionary(force=True)
         self._request_shared_dictionary_refresh()
         self.mode_property = IBus.Property.new(
@@ -325,7 +339,12 @@ class KeynakoEngine(IBus.Engine):
     def do_process_key_event(self, keyval: int, keycode: int, state: int) -> bool:
         del keycode
         if state & IBus.ModifierType.RELEASE_MASK:
+            if keyval == IBus.KEY_BackSpace:
+                self.backspace_released = True
             return False
+        if keyval != IBus.KEY_BackSpace:
+            self.last_backspace_press = None
+            self.backspace_released = True
         self._request_shared_dictionary_refresh()
         control = bool(state & IBus.ModifierType.CONTROL_MASK)
         if control and keyval == IBus.KEY_space:
@@ -340,9 +359,26 @@ class KeynakoEngine(IBus.Engine):
         if keyval == IBus.KEY_BackSpace:
             if not self.raw:
                 return False
-            if not self.session.cancel_conversion():
-                self.raw = self.raw[:-1]
-                self.session.backspace()
+            if self.session.cancel_conversion():
+                self.last_backspace_press = None
+            else:
+                now = time.monotonic()
+                started_after_release = self.backspace_released
+                double_press = (
+                    started_after_release
+                    and self.last_backspace_press is not None
+                    and now - self.last_backspace_press <= 0.35
+                )
+                if double_press:
+                    self.session.backspace_word()
+                    self.last_backspace_press = None
+                else:
+                    self.session.backspace()
+                    self.last_backspace_press = (
+                        now if started_after_release and self.session.raw_input() else None
+                    )
+                self.raw = self.session.raw_input()
+                self.backspace_released = False
             self._render()
             return True
         if keyval == IBus.KEY_Escape:

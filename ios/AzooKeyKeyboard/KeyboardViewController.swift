@@ -1079,6 +1079,35 @@ final class KeyboardViewController: UIInputViewController {
         return distance == 0 ? 1 : distance
     }
 
+    private func backwardWordDeleteCount(in text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+
+        var contentEnd = text.endIndex
+        while contentEnd > text.startIndex {
+            let previous = text.index(before: contentEnd)
+            guard text[previous].isWhitespace else { break }
+            contentEnd = previous
+        }
+        if contentEnd == text.startIndex { return text.count }
+
+        var lastWord: Range<String.Index>?
+        text.enumerateSubstrings(
+            in: text.startIndex ..< contentEnd,
+            options: [.byWords, .substringNotRequired]
+        ) { _, range, _, _ in
+            lastWord = range
+        }
+        if let lastWord {
+            let start = lastWord.upperBound == contentEnd
+                ? lastWord.lowerBound
+                : lastWord.upperBound
+            return text.distance(from: start, to: text.endIndex)
+        }
+
+        let previous = text.index(before: contentEnd)
+        return text.distance(from: previous, to: text.endIndex)
+    }
+
     private func combinedBackwardSmartDeleteCount(
         in text: String,
         leadingDeleteCount: Int,
@@ -1098,14 +1127,19 @@ final class KeyboardViewController: UIInputViewController {
         deleteAction: [String: Any],
         smartDeleteAction: [String: Any]
     ) {
+        if smartDeleteAction["type"] as? String == "smart_delete_default" {
+            // Older Custards pair a single delete with smart delete. Resolve
+            // that pair as one word so one-character Japanese tokens do not
+            // make the following token disappear too.
+            smartDeleteDefault()
+            return
+        }
         let leadingCount = (deleteAction["count"] as? NSNumber)?.intValue
             ?? Int(deleteAction["value"] as? String ?? "")
             ?? 1
-        let targets = smartDeleteAction["type"] as? String == "smart_delete_default"
-            ? Self.defaultScanTargets
-            : actionTargets(smartDeleteAction)
+        let targets = actionTargets(smartDeleteAction)
         if !composing.isEmpty || !rawRoman.isEmpty {
-            if !rawRoman.isEmpty || smartDeleteAction["type"] as? String == "smart_delete_default" {
+            if !rawRoman.isEmpty {
                 smartDeleteDefault()
                 return
             }
@@ -1282,12 +1316,41 @@ final class KeyboardViewController: UIInputViewController {
 
     private func smartDeleteDefault() {
         if !composing.isEmpty || !rawRoman.isEmpty {
-            replaceDisplayed(with: "", commit: true)
-            resetComposition()
-            renderCandidates()
+            let count = backwardWordDeleteCount(in: composing)
+            let remaining = String(composing.dropLast(min(count, composing.count)))
+            if !rawRoman.isEmpty {
+                guard let remainingRaw = rawRomanPrefix(forComposition: remaining) else {
+                    replaceDisplayed(with: "", commit: true)
+                    resetComposition()
+                    renderCandidates()
+                    return
+                }
+                rawRoman = remainingRaw
+            }
+            composing = remaining
+            if composing.isEmpty {
+                replaceDisplayed(with: "", commit: true)
+                resetComposition()
+                renderCandidates()
+            } else {
+                updateComposition()
+            }
             return
         }
-        smartDelete(["direction": "backward", "targets": Self.defaultScanTargets])
+        let text = textDocumentProxy.documentContextBeforeInput ?? ""
+        let count = backwardWordDeleteCount(in: text)
+        for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+        refreshCursorBar()
+    }
+
+    private func rawRomanPrefix(forComposition expected: String) -> String? {
+        var end = rawRoman.endIndex
+        while true {
+            let prefix = String(rawRoman[..<end])
+            if romanToHiragana(prefix) == expected { return prefix }
+            if end == rawRoman.startIndex { return nil }
+            end = rawRoman.index(before: end)
+        }
     }
 
     private func smartDelete(_ action: [String: Any]) {

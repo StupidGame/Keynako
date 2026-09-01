@@ -16,6 +16,7 @@
 
 static IMKServer *gServer;
 static IMKCandidates *gCandidates;
+static constexpr auto kDoubleBackspaceInterval = std::chrono::milliseconds(350);
 
 static NSString *FromUtf8(const std::string &value) {
     return [[NSString alloc] initWithBytes:value.data()
@@ -49,6 +50,7 @@ static NSString *FromUtf8(const std::string &value) {
     std::filesystem::file_time_type _sharedDictionaryWriteTime;
     std::chrono::steady_clock::time_point _lastDictionaryCheck;
     std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
+    std::chrono::steady_clock::time_point _lastBackspacePress;
 }
 
 - (BOOL)handleEvent:(NSEvent *)event client:(id)sender {
@@ -59,6 +61,8 @@ static NSString *FromUtf8(const std::string &value) {
     const BOOL control = (modifiers & NSEventModifierFlagControl) != 0;
     const BOOL command = (modifiers & NSEventModifierFlagCommand) != 0;
     const BOOL option = (modifiers & NSEventModifierFlagOption) != 0;
+    const unsigned short key = event.keyCode;
+    if (key != 51) _lastBackspacePress = {};
 
     if (control && event.keyCode == 49) {
         _session.set_mode(_session.mode() == keynako::InputMode::japanese
@@ -69,7 +73,6 @@ static NSString *FromUtf8(const std::string &value) {
     }
     if (command || option || control) return NO;
 
-    const unsigned short key = event.keyCode;
     if (key == 102 || key == 104) {
         _session.set_mode(key == 102 ? keynako::InputMode::english : keynako::InputMode::japanese);
         [self cancelComposition:sender];
@@ -77,7 +80,25 @@ static NSString *FromUtf8(const std::string &value) {
     }
     if (key == 51) {
         if (_session.raw_input().empty()) return NO;
-        if (!_session.cancel_conversion()) _session.backspace();
+        if (_session.cancel_conversion()) {
+            _lastBackspacePress = {};
+        } else {
+            const auto now = std::chrono::steady_clock::now();
+            const BOOL autoRepeat = event.isARepeat;
+            const BOOL doublePress =
+                !autoRepeat &&
+                _lastBackspacePress.time_since_epoch().count() != 0 &&
+                now - _lastBackspacePress <= kDoubleBackspaceInterval;
+            if (doublePress) {
+                _session.backspace_word();
+                _lastBackspacePress = {};
+            } else {
+                _session.backspace();
+                _lastBackspacePress = !autoRepeat && !_session.raw_input().empty()
+                    ? now
+                    : std::chrono::steady_clock::time_point{};
+            }
+        }
         [self updateMarkedText:sender];
         return YES;
     }

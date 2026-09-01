@@ -1,5 +1,7 @@
 package io.github.StupidGame.azookey_flutter.input
 
+import java.text.BreakIterator
+import java.util.Locale
 import kotlin.math.abs
 
 internal data class SurroundingDelete(
@@ -41,6 +43,59 @@ internal fun smartDeleteCount(
     // azooKey also removes the boundary itself when the cursor is immediately
     // beside it, so a smart-delete never becomes a surprising no-op.
     return if (distance == 0) 1 else distance
+}
+
+/**
+ * Returns the UTF-16 length of the word (or trailing punctuation cluster)
+ * immediately before the cursor. Android's Japanese word iterator can split
+ * unspaced kana/kanji text, unlike the old punctuation-only smart delete.
+ */
+internal fun backwardWordDeleteCount(
+    text: String,
+    locale: Locale = Locale.JAPANESE,
+): Int {
+    if (text.isEmpty()) return 0
+
+    var contentEnd = text.length
+    while (contentEnd > 0) {
+        val codePoint = Character.codePointBefore(text, contentEnd)
+        if (!Character.isWhitespace(codePoint)) break
+        contentEnd -= Character.charCount(codePoint)
+    }
+    if (contentEnd == 0) return text.length
+
+    val iterator = BreakIterator.getWordInstance(locale).apply {
+        setText(text.substring(0, contentEnd))
+    }
+    var start = iterator.first()
+    var lastWordStart = -1
+    var lastWordEnd = -1
+    var end = iterator.next()
+    while (end != BreakIterator.DONE) {
+        if (containsWordCharacter(text, start, end)) {
+            lastWordStart = start
+            lastWordEnd = end
+        }
+        start = end
+        end = iterator.next()
+    }
+
+    if (lastWordEnd == contentEnd) return text.length - lastWordStart
+    if (lastWordEnd >= 0) return text.length - lastWordEnd
+
+    val characters = BreakIterator.getCharacterInstance(locale).apply { setText(text) }
+    val previous = characters.preceding(contentEnd).takeIf { it != BreakIterator.DONE } ?: 0
+    return text.length - previous
+}
+
+private fun containsWordCharacter(text: String, start: Int, end: Int): Boolean {
+    var index = start
+    while (index < end) {
+        val codePoint = Character.codePointAt(text, index)
+        if (Character.isLetterOrDigit(codePoint)) return true
+        index += Character.charCount(codePoint)
+    }
+    return false
 }
 
 /**

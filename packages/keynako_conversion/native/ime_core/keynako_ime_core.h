@@ -36,6 +36,7 @@ public:
     void append_ascii(char value);
     void append_literal_ascii(char value);
     void backspace();
+    void backspace_word();
     void clear();
     bool begin_conversion();
     bool cancel_conversion();

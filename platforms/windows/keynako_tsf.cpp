@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +88,7 @@ constexpr UINT kMenuSettings = 5;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
 constexpr UINT kImprovementSubmissionComplete = WM_APP + 0x4b;
 constexpr UINT_PTR kImprovementDismissTimer = 1;
+constexpr auto kDoubleBackspaceInterval = std::chrono::milliseconds(350);
 constexpr char kDictionarySubmissionUrl[] = KEYNAKO_DICTIONARY_SUBMISSION_URL;
 constexpr char kAppVersion[] = KEYNAKO_APP_VERSION;
 
@@ -399,6 +401,7 @@ public:
         refresh_shared_dictionary(false);
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        if (key != VK_BACK) last_backspace_press_ = {};
         const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
         const auto shortcut = keynako::windows::shortcut_action(
             static_cast<std::uint32_t>(key), scan_code, control, alt,
@@ -477,7 +480,28 @@ public:
             }
         } else if (key == VK_BACK) {
             if (session_.raw_input().empty()) return S_OK;
-            if (!session_.cancel_conversion()) session_.backspace();
+            if (session_.cancel_conversion()) {
+                // Returning from a candidate to its reading is not the first
+                // half of a word-delete gesture.
+                last_backspace_press_ = {};
+            } else {
+                const auto now = std::chrono::steady_clock::now();
+                const bool auto_repeat =
+                    (static_cast<std::uintptr_t>(key_data) & (1u << 30)) != 0;
+                const bool double_press =
+                    !auto_repeat &&
+                    last_backspace_press_.time_since_epoch().count() != 0 &&
+                    now - last_backspace_press_ <= kDoubleBackspaceInterval;
+                if (double_press) {
+                    session_.backspace_word();
+                    last_backspace_press_ = {};
+                } else {
+                    session_.backspace();
+                    last_backspace_press_ = !auto_repeat && !session_.raw_input().empty()
+                        ? now
+                        : std::chrono::steady_clock::time_point{};
+                }
+            }
             action = session_.raw_input().empty() ? EditAction::cancel : EditAction::update;
         } else if (key == VK_SPACE && session_.has_literal_suffix()) {
             session_.append_literal_ascii(' ');
@@ -653,6 +677,7 @@ private:
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
     std::chrono::steady_clock::time_point last_dictionary_refresh_request_{};
+    std::chrono::steady_clock::time_point last_backspace_press_{};
     std::wstring shared_submission_status_;
     HHOOK keyboard_hook_ = nullptr;
     bool physical_shortcut_down_ = false;

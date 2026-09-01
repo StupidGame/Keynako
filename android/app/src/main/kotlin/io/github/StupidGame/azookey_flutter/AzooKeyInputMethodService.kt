@@ -63,6 +63,7 @@ import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationAction
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
+import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.combinedBackwardSmartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
@@ -2578,21 +2579,21 @@ class AzooKeyInputMethodService : InputMethodService() {
         deleteAction: JSONObject,
         smartDeleteAction: JSONObject,
     ) {
+        if (smartDeleteAction.optString("type") == "smart_delete_default") {
+            // A leading single-character delete is how older Custards emulated
+            // word deletion. Treat the pair as one linguistic deletion so a
+            // one-character Japanese token does not also consume its neighbor.
+            smartDeleteDefault()
+            return
+        }
         val leadingCount = if (deleteAction.has("count")) {
             deleteAction.optInt("count", 1)
         } else {
             deleteAction.optString("value").toIntOrNull() ?: 1
         }
-        val targets = if (smartDeleteAction.optString("type") == "smart_delete_default") {
-            defaultScanTargets
-        } else {
-            actionTargets(smartDeleteAction)
-        }
+        val targets = actionTargets(smartDeleteAction)
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            if (
-                rawRoman.isNotEmpty() ||
-                smartDeleteAction.optString("type") == "smart_delete_default"
-            ) {
+            if (rawRoman.isNotEmpty()) {
                 clearComposition()
                 return
             }
@@ -2765,10 +2766,32 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun smartDeleteDefault() {
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            clearComposition()
+            val count = backwardWordDeleteCount(composing)
+            val remaining = composing.dropLast(count.coerceAtMost(composing.length))
+            if (rawRoman.isNotEmpty()) {
+                val remainingRaw = rawRomanPrefixForComposition(remaining)
+                if (remainingRaw == null) {
+                    clearComposition()
+                    return
+                }
+                rawRoman = remainingRaw
+            }
+            composing = remaining
+            if (composing.isEmpty()) clearComposition() else updateComposition()
             return
         }
-        smartDelete(JSONObject().put("direction", "backward").put("targets", JSONArray(defaultScanTargets)))
+        val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
+        val count = backwardWordDeleteCount(text)
+        if (count > 0) currentInputConnection?.deleteSurroundingText(count, 0)
+        cursorBarView?.post { cursorBarView?.refresh() }
+    }
+
+    private fun rawRomanPrefixForComposition(expected: String): String? {
+        for (end in rawRoman.length downTo 0) {
+            val prefix = rawRoman.substring(0, end)
+            if (romanToHiragana(prefix) == expected) return prefix
+        }
+        return null
     }
 
     private fun smartDelete(action: JSONObject) {

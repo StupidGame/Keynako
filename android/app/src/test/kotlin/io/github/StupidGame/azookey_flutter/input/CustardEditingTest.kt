@@ -29,6 +29,17 @@ class CustardEditingTest {
     }
 
     @Test
+    fun wordDeleteUsesWordsInsteadOfDeletingTheWholeSentence() {
+        assertEquals("world".length, backwardWordDeleteCount("hello world"))
+        assertEquals("world ".length, backwardWordDeleteCount("hello world "))
+        assertEquals(1, backwardWordDeleteCount("hello!"))
+
+        val japanese = "私は日本語を入力"
+        val count = backwardWordDeleteCount(japanese)
+        assertEquals("入力", japanese.takeLast(count))
+    }
+
+    @Test
     fun chainedDeleteAndSmartDeleteRemoveJapaneseTextAtomically() {
         assertEquals(
             3,

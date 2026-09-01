@@ -36,6 +36,22 @@ int main() {
     assert(session.raw_input() == "henka");
     assert(!session.is_converting());
 
+    ImeSession word_delete;
+    for (const char value : std::string("hello")) word_delete.append_ascii(value);
+    word_delete.backspace();
+    assert(word_delete.raw_input() == "hell");
+    word_delete.backspace_word();
+    assert(word_delete.raw_input().empty());
+
+    ImeSession literal_word_delete;
+    for (const char value : std::string("nihongo")) literal_word_delete.append_ascii(value);
+    for (const char value : std::string("OpenAI")) {
+        literal_word_delete.append_literal_ascii(value);
+    }
+    literal_word_delete.backspace_word();
+    assert(literal_word_delete.raw_input() == "nihongo");
+    assert(literal_word_delete.display_text() == "日本語");
+
     ImeSession question_mark;
     question_mark.set_user_dictionary({
         {"なに", "何", 5},

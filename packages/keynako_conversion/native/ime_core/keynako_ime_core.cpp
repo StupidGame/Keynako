@@ -191,6 +191,45 @@ void ImeSession::backspace() {
     }
     converting_ = was_converting;
 }
+
+void ImeSession::backspace_word() {
+    if (raw_input_.empty()) return;
+
+    const auto character_class = [](unsigned char value) {
+        if (std::isspace(value)) return 0;
+        if (std::isalnum(value) || value == '_') return 1;
+        return 2;
+    };
+    const std::size_t lower_bound =
+        literal_suffix_start_ != std::string::npos &&
+                literal_suffix_start_ < raw_input_.size()
+            ? literal_suffix_start_
+            : 0;
+    std::size_t start = raw_input_.size();
+    while (start > lower_bound &&
+           character_class(static_cast<unsigned char>(raw_input_[start - 1])) == 0) {
+        --start;
+    }
+    if (start > lower_bound) {
+        const int target_class = character_class(
+            static_cast<unsigned char>(raw_input_[start - 1]));
+        while (start > lower_bound &&
+               character_class(static_cast<unsigned char>(raw_input_[start - 1])) ==
+                   target_class) {
+            --start;
+        }
+    }
+    // If the suffix consisted only of separators, remove the suffix boundary
+    // too. Otherwise it continues to protect the converted Japanese prefix.
+    raw_input_.resize(start);
+    if (literal_suffix_start_ != std::string::npos &&
+        raw_input_.size() <= literal_suffix_start_) {
+        literal_suffix_start_ = std::string::npos;
+    }
+    converting_ = false;
+    live_conversion_suspended_ = false;
+    rebuild_candidates();
+}
 void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
