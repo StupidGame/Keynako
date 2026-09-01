@@ -66,17 +66,18 @@ void main() {
     controller.dispose();
   });
 
-  test('periodic shared dictionary import feeds Japanese candidates', () async {
+  test('periodically imports the shared dictionary', () async {
     final repository = _FakeSharedDictionaryRepository();
     final controller = DesktopInputController(
       sharedDictionaryRepository: repository,
+      sharedDictionaryInterval: const Duration(milliseconds: 10),
     );
 
     await controller.initializeSharedDictionary();
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 35));
     controller.updateRawInput('ki-nako');
 
-    expect(repository.refreshCount, 1);
+    expect(repository.refreshCount, greaterThanOrEqualTo(2));
     expect(controller.sharedDictionaryEntryCount, 1);
     expect(controller.candidates.first.text, 'Keynako共有');
     controller.dispose();

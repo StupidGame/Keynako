@@ -70,7 +70,8 @@ constexpr PreservedKeyDefinition kPreservedKeys[] = {
 constexpr UINT kMenuJapanese = 1;
 constexpr UINT kMenuEnglish = 2;
 constexpr UINT kMenuLiveConversion = 3;
-constexpr UINT kMenuSettings = 4;
+constexpr UINT kMenuRefreshDictionary = 4;
+constexpr UINT kMenuSettings = 5;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
 
 HINSTANCE g_instance = nullptr;
@@ -235,6 +236,62 @@ public:
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         ShellExecuteW(nullptr, L"open", executable.c_str(), nullptr, executable.parent_path().c_str(), SW_SHOWNORMAL);
     }
+    void refresh_shared_dictionary(bool force = true) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!force && last_dictionary_refresh_request_.time_since_epoch().count() != 0 &&
+            now - last_dictionary_refresh_request_ < std::chrono::minutes(5)) return;
+        if (!force) {
+            std::vector<std::filesystem::path> cache_files;
+            const auto local_app_data = environment_path(L"LOCALAPPDATA");
+            const auto program_data = environment_path(L"ProgramData");
+            if (!local_app_data.empty()) {
+                cache_files.push_back(local_app_data / L"Keynako" / L"shared_dictionary.tsv");
+            }
+            if (!program_data.empty()) {
+                cache_files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
+            }
+            std::error_code cache_error;
+            for (const auto &cache_file : cache_files) {
+                if (!std::filesystem::exists(cache_file, cache_error) || cache_error) {
+                    cache_error.clear();
+                    continue;
+                }
+                const auto modified = std::filesystem::last_write_time(cache_file, cache_error);
+                if (!cache_error && std::filesystem::file_time_type::clock::now() - modified <
+                                        std::chrono::minutes(5)) {
+                    last_dictionary_refresh_request_ = now;
+                    return;
+                }
+                break;
+            }
+        }
+        last_dictionary_refresh_request_ = now;
+
+        const auto executable = module_directory().parent_path() / L"Keynako.exe";
+        std::error_code executable_error;
+        if (!std::filesystem::exists(executable, executable_error) || executable_error) return;
+        const wchar_t *argument = force
+            ? L"--refresh-shared-dictionary"
+            : L"--refresh-shared-dictionary-if-due";
+        std::wstring command_line = L"\"" + executable.wstring() + L"\" " + argument;
+        const auto working_directory = executable.parent_path().wstring();
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        const BOOL created = CreateProcessW(
+            executable.c_str(), command_line.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, working_directory.c_str(), &startup, &process);
+        if (created) {
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+        }
+        if (force) {
+            shared_submission_status_ = created
+                ? L"共有辞書を更新中です"
+                : L"共有辞書を更新できません";
+            if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
+        }
+    }
 
     STDMETHODIMP Activate(ITfThreadMgr *thread_manager, TfClientId client_id) override {
         return ActivateEx(thread_manager, client_id, 0);
@@ -294,6 +351,7 @@ public:
     STDMETHODIMP OnKeyDown(ITfContext *context, WPARAM key, LPARAM key_data, BOOL *eaten) override {
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
+        refresh_shared_dictionary(false);
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         const auto scan_code = static_cast<std::uint32_t>((key_data >> 16) & 0xff);
@@ -480,6 +538,7 @@ private:
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
+    std::chrono::steady_clock::time_point last_dictionary_refresh_request_{};
     std::wstring shared_submission_status_;
     HHOOK keyboard_hook_ = nullptr;
     bool physical_shortcut_down_ = false;
@@ -696,8 +755,8 @@ private:
         std::vector<std::filesystem::path> files;
         const auto program_data = environment_path(L"ProgramData");
         const auto local_app_data = environment_path(L"LOCALAPPDATA");
-        if (!program_data.empty()) files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
         if (!local_app_data.empty()) files.push_back(local_app_data / L"Keynako" / L"shared_dictionary.tsv");
+        if (!program_data.empty()) files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
         files.push_back(module_directory() / L"bundled_shared_dictionary.tsv");
 
         std::error_code error;
@@ -1199,6 +1258,7 @@ STDMETHODIMP LanguageBarItem::InitMenu(ITfMenu *menu) {
     add_item(kMenuLiveConversion, owner_->live_conversion() ? TF_LBMENUF_CHECKED : 0,
              L"ライブ変換");
     menu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+    add_item(kMenuRefreshDictionary, 0, L"共有辞書を今すぐ更新");
     add_item(kMenuSettings, 0, L"Keynako 設定");
     return S_OK;
 }
@@ -1209,6 +1269,7 @@ STDMETHODIMP LanguageBarItem::OnMenuSelect(UINT id) {
         case kMenuJapanese: owner_->set_input_mode(keynako::InputMode::japanese); break;
         case kMenuEnglish: owner_->set_input_mode(keynako::InputMode::english); break;
         case kMenuLiveConversion: owner_->toggle_live_conversion(); break;
+        case kMenuRefreshDictionary: owner_->refresh_shared_dictionary(); break;
         case kMenuSettings: owner_->open_settings(); break;
         default: return E_INVALIDARG;
     }

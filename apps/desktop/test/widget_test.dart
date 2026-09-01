@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:keynako_desktop/app.dart';
 import 'package:keynako_desktop/input/desktop_input_controller.dart';
+import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
   testWidgets('converts and commits Japanese input', (tester) async {
@@ -63,6 +64,23 @@ void main() {
     expect(submitter.word, '日本語');
     expect(submitter.ruby, 'にほんご');
   });
+
+  testWidgets('manually imports the shared dictionary from the header', (
+    tester,
+  ) async {
+    final repository = _FakeSharedDictionaryRepository();
+    final controller = DesktopInputController(
+      sharedDictionaryRepository: repository,
+    );
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+
+    await tester.tap(find.byKey(const Key('shared-dictionary-import')));
+    await tester.pumpAndSettle();
+
+    expect(repository.refreshCount, 1);
+    expect(find.text('共有辞書を読込'), findsOneWidget);
+    expect(find.text('共有辞書を読み込みました。'), findsOneWidget);
+  });
 }
 
 class _FakeDictionarySubmitter implements KeynakoDictionarySubmitter {
@@ -80,5 +98,26 @@ class _FakeDictionarySubmitter implements KeynakoDictionarySubmitter {
     this.word = word;
     this.ruby = ruby;
     return true;
+  }
+}
+
+class _FakeSharedDictionaryRepository implements SharedDictionaryRepository {
+  var refreshCount = 0;
+
+  @override
+  Future<bool> isRefreshDue() async => false;
+
+  @override
+  Future<SharedDictionarySnapshot?> load() async => null;
+
+  @override
+  Future<SharedDictionarySnapshot> refresh() async {
+    refreshCount += 1;
+    return const SharedDictionarySnapshot(
+      revision: 'widget-test',
+      version: '1',
+      lastUpdate: 'today',
+      entries: [],
+    );
   }
 }

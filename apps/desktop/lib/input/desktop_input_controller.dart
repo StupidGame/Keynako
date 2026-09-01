@@ -17,16 +17,19 @@ class DesktopInputController extends ChangeNotifier {
     ZenzaiEngineFactory? zenzaiEngineFactory,
     SharedDictionaryRepository? sharedDictionaryRepository,
     KeynakoDictionarySubmitter? sharedDictionarySubmitter,
+    Duration sharedDictionaryInterval = desktopSharedDictionaryInterval,
   }) => DesktopInputController._(
     zenzaiEngineFactory,
     sharedDictionaryRepository,
     sharedDictionarySubmitter ?? KeynakoDictionarySubmissionClient(),
+    sharedDictionaryInterval,
   );
 
   DesktopInputController._(
     this._zenzaiEngineFactory,
     this._sharedDictionaryRepository,
     this._sharedDictionarySubmitter,
+    this._sharedDictionaryInterval,
   );
 
   static const _japaneseConverter = JapaneseConverter();
@@ -35,6 +38,7 @@ class DesktopInputController extends ChangeNotifier {
   final ZenzaiEngineFactory? _zenzaiEngineFactory;
   final SharedDictionaryRepository? _sharedDictionaryRepository;
   final KeynakoDictionarySubmitter _sharedDictionarySubmitter;
+  final Duration _sharedDictionaryInterval;
   final Map<String, int> _learning = {};
 
   InputMode _mode = InputMode.japanese;
@@ -104,7 +108,7 @@ class DesktopInputController extends ChangeNotifier {
     }
     _sharedDictionaryTimer?.cancel();
     _sharedDictionaryTimer = Timer.periodic(
-      desktopSharedDictionaryInterval,
+      _sharedDictionaryInterval,
       (_) => unawaited(importSharedDictionary()),
     );
     try {

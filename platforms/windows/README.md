@@ -22,6 +22,10 @@ Right-clicking a candidate sends its word and reading to the same configured
 Keynako shared-dictionary HTTPS gateway used by the app. Network work runs in a
 small out-of-process helper, so the focused application and TSF thread do not
 block on the request.
+The input-indicator menu can also refresh the shared dictionary immediately.
+While the IME is in use it requests a cache refresh at most once every five
+minutes through the desktop app's non-visual command mode, then reloads the
+newest per-user cache without blocking the focused application.
 
 The release artifact is `KeynakoSetup.exe`. It installs the Flutter settings
 app, TSF DLL, Zenzai helper and models, the AzooKey default dictionary, and a

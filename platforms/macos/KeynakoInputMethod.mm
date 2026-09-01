@@ -34,6 +34,8 @@ static NSString *FromUtf8(const std::string &value) {
 - (BOOL)addZenzai;
 - (void)configureDictionaries;
 - (void)reloadSharedDictionary:(BOOL)force;
+- (BOOL)requestSharedDictionaryRefresh:(BOOL)force;
+- (void)refreshSharedDictionary:(id)sender;
 - (void)selectJapaneseMode:(id)sender;
 - (void)selectEnglishMode:(id)sender;
 - (void)toggleLiveConversion:(id)sender;
@@ -46,11 +48,13 @@ static NSString *FromUtf8(const std::string &value) {
     std::filesystem::path _sharedDictionaryPath;
     std::filesystem::file_time_type _sharedDictionaryWriteTime;
     std::chrono::steady_clock::time_point _lastDictionaryCheck;
+    std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
 }
 
 - (BOOL)handleEvent:(NSEvent *)event client:(id)sender {
     if (event.type != NSEventTypeKeyDown) return NO;
     [self configureDictionaries];
+    [self requestSharedDictionaryRefresh:NO];
     const NSEventModifierFlags modifiers = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     const BOOL control = (modifiers & NSEventModifierFlagControl) != 0;
     const BOOL command = (modifiers & NSEventModifierFlagCommand) != 0;
@@ -151,6 +155,13 @@ static NSString *FromUtf8(const std::string &value) {
         ? NSControlStateValueOn
         : NSControlStateValueOff;
     [menu addItem:live];
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *refresh = [[NSMenuItem alloc]
+        initWithTitle:@"共有辞書を今すぐ更新"
+                action:@selector(refreshSharedDictionary:)
+         keyEquivalent:@""];
+    refresh.target = self;
+    [menu addItem:refresh];
     return menu;
 }
 
@@ -173,6 +184,11 @@ static NSString *FromUtf8(const std::string &value) {
     _session.set_live_conversion(!_session.live_conversion());
     id client = [self client];
     if (client && !_session.raw_input().empty()) [self updateMarkedText:client];
+}
+
+- (void)refreshSharedDictionary:(id)sender {
+    (void)sender;
+    [self requestSharedDictionaryRefresh:YES];
 }
 
 - (NSArray *)candidates:(id)sender {
@@ -274,6 +290,49 @@ static NSString *FromUtf8(const std::string &value) {
                                   inDirectory:@"azookey_dictionary"];
     if (root.length > 0) _session.set_bundled_dictionary_path(root.UTF8String);
     [self reloadSharedDictionary:YES];
+    [self requestSharedDictionaryRefresh:NO];
+}
+
+- (BOOL)requestSharedDictionaryRefresh:(BOOL)force {
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && _lastDictionaryRefreshRequest.time_since_epoch().count() != 0 &&
+        now - _lastDictionaryRefreshRequest < std::chrono::minutes(5)) return NO;
+    _lastDictionaryRefreshRequest = now;
+
+    NSString *userExecutable = [NSHomeDirectory() stringByAppendingPathComponent:
+        @"Applications/Keynako.app/Contents/MacOS/Keynako"];
+    NSArray<NSString *> *executables = @[
+        userExecutable,
+        @"/Applications/Keynako.app/Contents/MacOS/Keynako",
+    ];
+    NSString *executable = nil;
+    for (NSString *candidate in executables) {
+        if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+            executable = candidate;
+            break;
+        }
+    }
+    if (!executable) return NO;
+
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:executable];
+    task.arguments = @[
+        force ? @"--refresh-shared-dictionary"
+              : @"--refresh-shared-dictionary-if-due",
+    ];
+    NSFileHandle *nullHandle = [NSFileHandle fileHandleWithNullDevice];
+    task.standardInput = nullHandle;
+    task.standardOutput = nullHandle;
+    task.standardError = nullHandle;
+    __weak KeynakoInputController *weakSelf = self;
+    task.terminationHandler = ^(NSTask *completed) {
+        if (completed.terminationStatus != 0) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf reloadSharedDictionary:YES];
+        });
+    };
+    NSError *launchError = nil;
+    return [task launchAndReturnError:&launchError];
 }
 
 - (void)reloadSharedDictionary:(BOOL)force {

@@ -3,11 +3,32 @@ import 'dart:io';
 import 'package:keynako_conversion/keynako_conversion.dart';
 
 const Duration desktopSharedDictionaryInterval = Duration(minutes: 5);
+const String refreshSharedDictionaryCommand = '--refresh-shared-dictionary';
+const String refreshSharedDictionaryIfDueCommand =
+    '--refresh-shared-dictionary-if-due';
 
 abstract interface class SharedDictionaryRepository {
   Future<SharedDictionarySnapshot?> load();
   Future<bool> isRefreshDue();
   Future<SharedDictionarySnapshot> refresh();
+}
+
+Future<int?> runSharedDictionaryCommand(
+  List<String> arguments, {
+  SharedDictionaryRepository? repository,
+}) async {
+  final force = arguments.contains(refreshSharedDictionaryCommand);
+  final ifDue = arguments.contains(refreshSharedDictionaryIfDueCommand);
+  if (!force && !ifDue) return null;
+  final activeRepository = repository ?? DesktopSharedDictionaryRepository();
+  try {
+    if (force || await activeRepository.isRefreshDue()) {
+      await activeRepository.refresh();
+    }
+    return 0;
+  } on Object {
+    return 1;
+  }
 }
 
 class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
@@ -78,11 +99,11 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
     if (Platform.isWindows) {
       final programData = Platform.environment['ProgramData'];
       final localAppData = Platform.environment['LOCALAPPDATA'];
-      if (programData != null && programData.isNotEmpty) {
-        paths.add('$programData\\Keynako\\shared_dictionary.tsv');
-      }
       if (localAppData != null && localAppData.isNotEmpty) {
         paths.add('$localAppData\\Keynako\\shared_dictionary.tsv');
+      }
+      if (programData != null && programData.isNotEmpty) {
+        paths.add('$programData\\Keynako\\shared_dictionary.tsv');
       }
     } else if (Platform.isMacOS) {
       final home = Platform.environment['HOME'];
