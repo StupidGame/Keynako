@@ -252,14 +252,17 @@ public:
     bool live_conversion() const { return session_.live_conversion(); }
     void set_input_mode(keynako::InputMode mode, ITfContext *context = nullptr) {
         if (session_.mode() == mode) return;
+        if (!session_.raw_input().empty()) {
+            // Keep the visible Japanese or English text when changing modes.
+            // Canceling the TSF composition here used to erase it.
+            const bool committed = context
+                ? request_edit(context, EditAction::commit)
+                : request_active_edit(EditAction::commit);
+            if (!committed) return;
+        }
         session_.set_mode(mode);
         sync_input_compartments();
         if (language_bar_) language_bar_->notify_mode_changed();
-        if (context) {
-            request_edit(context, EditAction::cancel);
-        } else {
-            request_active_edit(EditAction::cancel);
-        }
     }
     void toggle_input_mode(ITfContext *context = nullptr) {
         set_input_mode(session_.mode() == keynako::InputMode::japanese
@@ -753,23 +756,28 @@ private:
         return GetKeyboardType(0) == 0x07;
     }
 
-    void request_edit(ITfContext *context, EditAction action) {
+    bool request_edit(ITfContext *context, EditAction action) {
+        if (!context) return false;
         auto *edit = new EditSession(this, context, action);
         HRESULT session_result = E_FAIL;
-        context->RequestEditSession(client_id_, edit, TF_ES_SYNC | TF_ES_READWRITE, &session_result);
+        const HRESULT request_result = context->RequestEditSession(
+            client_id_, edit, TF_ES_SYNC | TF_ES_READWRITE, &session_result);
         edit->Release();
+        return SUCCEEDED(request_result) && SUCCEEDED(session_result);
     }
 
-    void request_active_edit(EditAction action) {
-        if (!thread_manager_) return;
+    bool request_active_edit(EditAction action) {
+        if (!thread_manager_) return false;
         ITfDocumentMgr *document = nullptr;
-        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return;
+        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return false;
+        bool edited = false;
         ITfContext *context = nullptr;
         if (SUCCEEDED(document->GetTop(&context)) && context) {
-            request_edit(context, action);
+            edited = request_edit(context, action);
             context->Release();
         }
         document->Release();
+        return edited;
     }
 
     void initialize_language_bar() {
