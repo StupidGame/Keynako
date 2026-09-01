@@ -168,7 +168,7 @@ class _ActionEditorState extends State<_ActionEditor> {
     'input': '文字を入力',
     'directInput': '文字を直接確定',
     'delete': '削除',
-    'smartDeleteDefault': '直前の単語を削除',
+    'smartDeleteDefault': '直前の1単語を削除',
     'enter': '改行',
     'space': '空白',
     'replaceDefault': '小書き・濁点・大文字小文字を切替',

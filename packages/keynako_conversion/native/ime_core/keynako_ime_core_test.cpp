@@ -43,6 +43,20 @@ int main() {
     word_delete.backspace_word();
     assert(word_delete.raw_input().empty());
 
+    ImeSession japanese_phrase_word_delete;
+    for (const char value : std::string("watashihanihongowonyuuryoku")) {
+        japanese_phrase_word_delete.append_ascii(value);
+    }
+    japanese_phrase_word_delete.backspace();
+    assert(japanese_phrase_word_delete.raw_input() ==
+           "watashihanihongowonyuuryok");
+    japanese_phrase_word_delete.backspace_word();
+    assert(japanese_phrase_word_delete.raw_input() == "watashihanihongowo");
+    japanese_phrase_word_delete.backspace();
+    assert(japanese_phrase_word_delete.raw_input() == "watashihanihongow");
+    japanese_phrase_word_delete.backspace_word();
+    assert(japanese_phrase_word_delete.raw_input() == "watashihanihongo");
+
     ImeSession literal_word_delete;
     for (const char value : std::string("nihongo")) literal_word_delete.append_ascii(value);
     for (const char value : std::string("OpenAI")) {

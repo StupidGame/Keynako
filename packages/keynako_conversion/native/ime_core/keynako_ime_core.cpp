@@ -94,6 +94,97 @@ std::string display_literal_suffix(const std::string &value, InputMode mode) {
     return result;
 }
 
+int word_character_class(unsigned char value) {
+    if (std::isspace(value)) return 0;
+    if (std::isalnum(value) || value == '_') return 1;
+    return 2;
+}
+
+std::size_t ascii_word_delete_start(const std::string &input,
+                                    std::size_t lower_bound) {
+    std::size_t start = input.size();
+    while (start > lower_bound &&
+           word_character_class(static_cast<unsigned char>(input[start - 1])) == 0) {
+        --start;
+    }
+    if (start > lower_bound) {
+        const int target_class = word_character_class(
+            static_cast<unsigned char>(input[start - 1]));
+        while (start > lower_bound &&
+               word_character_class(static_cast<unsigned char>(input[start - 1])) ==
+                   target_class) {
+            --start;
+        }
+    }
+    return start;
+}
+
+std::size_t japanese_roman_word_delete_start(const std::string &input) {
+    std::size_t content_end = input.size();
+    while (content_end > 0 &&
+           word_character_class(static_cast<unsigned char>(input[content_end - 1])) == 0) {
+        --content_end;
+    }
+    if (content_end == 0) return 0;
+    const std::string content = input.substr(0, content_end);
+    const std::size_t start = ascii_word_delete_start(content, 0);
+    if (start >= content.size() ||
+        word_character_class(static_cast<unsigned char>(content.back())) != 1) {
+        return start;
+    }
+
+    std::string segment = content.substr(start);
+    std::transform(segment.begin(), segment.end(), segment.begin(),
+                   [](unsigned char value) {
+                       return static_cast<char>(std::tolower(value));
+                   });
+    static const std::unordered_set<std::string> indivisible_words = {
+        "konnichiha", "konbanha", "arigatou", "ohayou",
+    };
+    if (indivisible_words.count(segment) != 0) return start;
+
+    static const std::vector<std::string> auxiliaries = {
+        "masendeshita", "mashou", "mashita", "masen", "masu",
+        "deshita", "deshou", "desu", "datta", "darou", "nai", "tai",
+    };
+    static const std::vector<std::string> particles = {
+        "kara", "made", "yori", "node", "noni", "deha", "niha", "toha",
+        "tte", "wo", "ga", "ha", "mo", "no", "ni", "he", "de", "to", "ya",
+    };
+    for (const auto &suffix : auxiliaries) {
+        if (segment.size() > suffix.size() &&
+            segment.compare(segment.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return content_end - suffix.size();
+        }
+    }
+    for (const auto &suffix : particles) {
+        if (segment.size() > suffix.size() &&
+            segment.compare(segment.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return content_end - suffix.size();
+        }
+    }
+    for (const auto &particle : particles) {
+        const std::size_t index = segment.rfind(particle);
+        if (index != std::string::npos && index >= 2 &&
+            segment.size() - index - particle.size() >= 2) {
+            return start + index + particle.size();
+        }
+    }
+    return start;
+}
+
+std::size_t word_delete_start(const std::string &input, InputMode mode,
+                              std::size_t literal_suffix_start) {
+    const bool has_literal_suffix =
+        literal_suffix_start != std::string::npos &&
+        literal_suffix_start < input.size();
+    if (mode == InputMode::japanese && !has_literal_suffix) {
+        return japanese_roman_word_delete_start(input);
+    }
+    return ascii_word_delete_start(
+        input, has_literal_suffix ? literal_suffix_start : 0);
+}
+
 }  // namespace
 
 void ImeSession::set_mode(InputMode mode) { if (mode_ != mode) { mode_ = mode; clear(); } }
@@ -119,6 +210,7 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
         : std::string{};
     converting_ = false;
     live_conversion_suspended_ = false;
+    pending_word_delete_start_ = std::string::npos;
     if (extend_literal_suffix && literal_suffix_start_ == std::string::npos) {
         literal_suffix_start_ = raw_input_.size();
     }
@@ -145,7 +237,12 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     converting_ = was_converting;
 }
 void ImeSession::backspace() {
-    if (raw_input_.empty()) return;
+    if (raw_input_.empty()) {
+        pending_word_delete_start_ = std::string::npos;
+        return;
+    }
+    pending_word_delete_start_ =
+        word_delete_start(raw_input_, mode_, literal_suffix_start_);
     const bool preserve_selection = !candidates_.empty() &&
         (has_literal_suffix() ||
          is_literal_candidate_suffix(raw_input_.back()));
@@ -193,32 +290,18 @@ void ImeSession::backspace() {
 }
 
 void ImeSession::backspace_word() {
-    if (raw_input_.empty()) return;
-
-    const auto character_class = [](unsigned char value) {
-        if (std::isspace(value)) return 0;
-        if (std::isalnum(value) || value == '_') return 1;
-        return 2;
-    };
-    const std::size_t lower_bound =
-        literal_suffix_start_ != std::string::npos &&
-                literal_suffix_start_ < raw_input_.size()
-            ? literal_suffix_start_
-            : 0;
-    std::size_t start = raw_input_.size();
-    while (start > lower_bound &&
-           character_class(static_cast<unsigned char>(raw_input_[start - 1])) == 0) {
-        --start;
+    if (raw_input_.empty()) {
+        pending_word_delete_start_ = std::string::npos;
+        return;
     }
-    if (start > lower_bound) {
-        const int target_class = character_class(
-            static_cast<unsigned char>(raw_input_[start - 1]));
-        while (start > lower_bound &&
-               character_class(static_cast<unsigned char>(raw_input_[start - 1])) ==
-                   target_class) {
-            --start;
-        }
-    }
+    const std::size_t recalculated =
+        word_delete_start(raw_input_, mode_, literal_suffix_start_);
+    const std::size_t start =
+        pending_word_delete_start_ != std::string::npos &&
+                pending_word_delete_start_ <= raw_input_.size()
+            ? pending_word_delete_start_
+            : recalculated;
+    pending_word_delete_start_ = std::string::npos;
     // If the suffix consisted only of separators, remove the suffix boundary
     // too. Otherwise it continues to protect the converted Japanese prefix.
     raw_input_.resize(start);
@@ -230,7 +313,7 @@ void ImeSession::backspace_word() {
     live_conversion_suspended_ = false;
     rebuild_candidates();
 }
-void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; }
+void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
     converting_ = true;

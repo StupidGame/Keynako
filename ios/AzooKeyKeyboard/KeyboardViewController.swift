@@ -23,6 +23,7 @@ final class KeyboardViewController: UIInputViewController {
     private var activeCustomTab: String?
     private var cursorBarVisible = false
     private weak var cursorBarView: CursorBarView?
+    private var pendingQuickWordDelete: PendingQuickWordDelete?
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
     private var backgroundImageSignature: String?
@@ -295,7 +296,9 @@ final class KeyboardViewController: UIInputViewController {
                 row.addArrangedSubview(makeButton(label) { [weak self] in self?.input(label) })
             }
             if index == 2 {
-                row.addArrangedSubview(makeButton("⌫", special: true, action: delete))
+                row.addArrangedSubview(
+                    makeButton("⌫", special: true, quickWordDelete: true, action: delete)
+                )
             }
             keyboardStack.addArrangedSubview(row)
         }
@@ -333,7 +336,9 @@ final class KeyboardViewController: UIInputViewController {
         bottom.addArrangedSubview(makeButton("あいう", special: true) { [weak self] in self?.setMode("japanese") })
         bottom.addArrangedSubview(makeButton("ABC", special: true) { [weak self] in self?.setMode("english") })
         bottom.addArrangedSubview(makeButton("space", action: space))
-        bottom.addArrangedSubview(makeButton("⌫", special: true, action: delete))
+        bottom.addArrangedSubview(
+            makeButton("⌫", special: true, quickWordDelete: true, action: delete)
+        )
         bottom.addArrangedSubview(makeButton("return", special: true, action: enter))
         keyboardStack.addArrangedSubview(bottom)
     }
@@ -882,6 +887,75 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// The first press remains immediate. A second quick press completes the
+    /// one word that was under the cursor before that first character moved.
+    private func quickDelete() {
+        let now = CACurrentMediaTime()
+        if let pending = pendingQuickWordDelete, now <= pending.deadline {
+            let applied: Bool
+            if pending.composition {
+                if composing == pending.expectedComposing,
+                   rawRoman == pending.expectedRawRoman {
+                    composing = pending.targetComposing
+                    rawRoman = pending.targetRawRoman
+                    if composing.isEmpty, rawRoman.isEmpty {
+                        replaceDisplayed(with: "", commit: true)
+                        resetComposition()
+                        renderCandidates()
+                    } else {
+                        updateComposition()
+                    }
+                    applied = true
+                } else {
+                    applied = false
+                }
+            } else if (textDocumentProxy.documentContextBeforeInput ?? "") == pending.expectedContext {
+                for _ in 0 ..< pending.remainingContextCount {
+                    textDocumentProxy.deleteBackward()
+                }
+                refreshCursorBar()
+                applied = true
+            } else {
+                applied = false
+            }
+            pendingQuickWordDelete = nil
+            if applied { return }
+        } else {
+            pendingQuickWordDelete = nil
+        }
+
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            let originalComposing = composing
+            let count = backwardWordDeleteCount(in: originalComposing)
+            guard count > 0 else { return }
+            let targetComposing = String(originalComposing.dropLast(min(count, originalComposing.count)))
+            let targetRawRoman = rawRoman.isEmpty
+                ? ""
+                : (rawRomanPrefix(forComposition: targetComposing) ?? "")
+            delete()
+            pendingQuickWordDelete = PendingQuickWordDelete(
+                deadline: now + 0.35,
+                composition: true,
+                expectedComposing: composing,
+                expectedRawRoman: rawRoman,
+                targetComposing: targetComposing,
+                targetRawRoman: targetRawRoman
+            )
+            return
+        }
+
+        let originalContext = textDocumentProxy.documentContextBeforeInput ?? ""
+        guard !originalContext.isEmpty else { return }
+        let count = backwardWordDeleteCount(in: originalContext)
+        delete()
+        pendingQuickWordDelete = PendingQuickWordDelete(
+            deadline: now + 0.35,
+            composition: false,
+            expectedContext: String(originalContext.dropLast()),
+            remainingContextCount: max(0, count - 1)
+        )
+    }
+
     private func deleteForward() {
         guard composing.isEmpty, rawRoman.isEmpty,
               !(textDocumentProxy.documentContextAfterInput ?? "").isEmpty else { return }
@@ -951,7 +1025,10 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         switch action {
-        case "delete": value == "×" ? smartDeleteDefault() : delete()
+        case "delete":
+            if value == "×" { smartDeleteDefault() }
+            else if value == "__delete_repeat__" { delete() }
+            else { quickDelete() }
         case "space":
             switch value {
             case "←": textDocumentProxy.adjustTextPosition(byCharacterOffset: -1); refreshCursorBar()
@@ -1099,13 +1176,100 @@ final class KeyboardViewController: UIInputViewController {
         }
         if let lastWord {
             let start = lastWord.upperBound == contentEnd
-                ? lastWord.lowerBound
+                ? refinedJapaneseWordStart(
+                    in: text,
+                    start: lastWord.lowerBound,
+                    end: lastWord.upperBound
+                )
                 : lastWord.upperBound
             return text.distance(from: start, to: text.endIndex)
         }
 
         let previous = text.index(before: contentEnd)
         return text.distance(from: previous, to: text.endIndex)
+    }
+
+    private enum JapaneseCharacterClass {
+        case hiragana, katakana, han, latin, digit, other
+    }
+
+    private static let japaneseParticles = [
+        "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
+        "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
+    ]
+
+    private static let japaneseAuxiliaries = [
+        "ませんでした", "ましょう", "ました", "ません", "ます",
+        "でした", "でしょう", "です", "だった", "だろう", "ない", "たい",
+    ]
+
+    private static let indivisibleKanaWords: Set<String> = [
+        "こんにちは", "こんばんは", "ありがとう", "おはよう",
+    ]
+
+    /// Refines one platform word without ever extending its deletion range.
+    private func refinedJapaneseWordStart(
+        in text: String,
+        start: String.Index,
+        end: String.Index
+    ) -> String.Index {
+        guard start < end else { return start }
+        let finalClass = japaneseCharacterClass(text[text.index(before: end)])
+        var runStart = end
+        var cursor = end
+        while cursor > start {
+            let previous = text.index(before: cursor)
+            guard japaneseCharacterClass(text[previous]) == finalClass else { break }
+            runStart = previous
+            cursor = previous
+        }
+        return refineKanaGrammarBoundary(in: text, start: runStart, end: end)
+    }
+
+    private func refineKanaGrammarBoundary(
+        in text: String,
+        start: String.Index,
+        end: String.Index
+    ) -> String.Index {
+        guard start < end else { return start }
+        let segment = String(text[start ..< end])
+        guard !Self.indivisibleKanaWords.contains(segment),
+              segment.allSatisfy({ japaneseCharacterClass($0) == .hiragana }) else {
+            return start
+        }
+
+        if let suffix = Self.japaneseAuxiliaries.first(where: {
+            segment.count > $0.count && segment.hasSuffix($0)
+        }) ?? Self.japaneseParticles.first(where: {
+            segment.count > $0.count && segment.hasSuffix($0)
+        }) {
+            return text.index(end, offsetBy: -suffix.count)
+        }
+
+        for particle in Self.japaneseParticles {
+            guard let range = text.range(
+                of: particle,
+                options: .backwards,
+                range: start ..< end
+            ), text.distance(from: start, to: range.lowerBound) >= 2,
+              text.distance(from: range.upperBound, to: end) >= 2 else { continue }
+            // Particle priority is intentional: を must win over a later に
+            // that begins a word such as にゅうりょく.
+            return range.upperBound
+        }
+        return start
+    }
+
+    private func japaneseCharacterClass(_ character: Character) -> JapaneseCharacterClass {
+        guard let value = character.unicodeScalars.first?.value else { return .other }
+        switch value {
+        case 0x3040 ... 0x309F: return .hiragana
+        case 0x30A0 ... 0x30FF, 0xFF66 ... 0xFF9D: return .katakana
+        case 0x3400 ... 0x4DBF, 0x4E00 ... 0x9FFF, 0xF900 ... 0xFAFF: return .han
+        case 0x30 ... 0x39: return .digit
+        case 0x41 ... 0x5A, 0x61 ... 0x7A: return .latin
+        default: return .other
+        }
     }
 
     private func combinedBackwardSmartDeleteCount(
@@ -1865,12 +2029,20 @@ final class KeyboardViewController: UIInputViewController {
         return row
     }
 
-    private func makeButton(_ title: String, special: Bool = false, action: @escaping () -> Void) -> UIButton {
+    private func makeButton(
+        _ title: String,
+        special: Bool = false,
+        quickWordDelete: Bool = false,
+        action: @escaping () -> Void
+    ) -> UIButton {
         if title == "⌫" {
-            let deleteButton = RepeatDeleteButton(action: { [weak self] in
-                action()
-                self?.feedback()
-            })
+            let deleteButton = RepeatDeleteButton(
+                tap: { [weak self] in
+                    if quickWordDelete { self?.quickDelete() } else { action() }
+                    self?.feedback()
+                },
+                repeatAction: { [weak self] in action(); self?.feedback() }
+            )
             deleteButton.setTitle(title, for: .normal)
             style(deleteButton, special: special)
             return deleteButton
@@ -2083,6 +2255,17 @@ private final class ClosureButton: UIButton {
     @objc private func longPressed(_ recognizer: UILongPressGestureRecognizer) {
         if recognizer.state == .began { longPressAction?() }
     }
+}
+
+private struct PendingQuickWordDelete {
+    let deadline: CFTimeInterval
+    let composition: Bool
+    var expectedComposing = ""
+    var expectedRawRoman = ""
+    var targetComposing = ""
+    var targetRawRoman = ""
+    var expectedContext = ""
+    var remainingContextCount = 0
 }
 
 private struct FlickDefinition {
@@ -2312,13 +2495,15 @@ private final class CursorBarView: UIView {
 }
 
 private final class RepeatDeleteButton: UIButton {
-    private let press: () -> Void
+    private let tap: () -> Void
+    private let repeatAction: () -> Void
     private var longPressWorkItem: DispatchWorkItem?
     private var repeatTimer: Timer?
     private var didLongPress = false
 
-    init(action: @escaping () -> Void) {
-        self.press = action
+    init(tap: @escaping () -> Void, repeatAction: @escaping () -> Void) {
+        self.tap = tap
+        self.repeatAction = repeatAction
         super.init(frame: .zero)
     }
 
@@ -2330,8 +2515,10 @@ private final class RepeatDeleteButton: UIButton {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.didLongPress = true
-            self.press()
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.press() }
+            self.repeatAction()
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
+                self?.repeatAction()
+            }
             self.repeatTimer?.fire()
         }
         longPressWorkItem = work
@@ -2343,7 +2530,7 @@ private final class RepeatDeleteButton: UIButton {
         repeatTimer?.invalidate()
         repeatTimer = nil
         super.touchesEnded(touches, with: event)
-        if !didLongPress { press() }
+        if !didLongPress { tap() }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -2433,10 +2620,9 @@ private final class FlickButton: UIButton {
             guard let self else { return }
             self.didLongPress = true
             if self.definition.action == "delete" {
-                self.callback(self.definition.values[0])
+                self.callback("__delete_repeat__")
                 self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
-                    guard let self else { return }
-                    self.callback(self.definition.values[0])
+                    self?.callback("__delete_repeat__")
                 }
                 self.repeatTimer?.fire()
             } else {

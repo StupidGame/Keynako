@@ -46,9 +46,10 @@ internal fun smartDeleteCount(
 }
 
 /**
- * Returns the UTF-16 length of the word (or trailing punctuation cluster)
- * immediately before the cursor. Android's Japanese word iterator can split
- * unspaced kana/kanji text, unlike the old punctuation-only smart delete.
+ * Returns the UTF-16 length of exactly one word (or one trailing punctuation
+ * cluster) immediately before the cursor. The platform iterator handles most
+ * Japanese text; [refinedJapaneseWordStart] supplies the boundaries that are
+ * commonly missing from an all-kana phrase.
  */
 internal fun backwardWordDeleteCount(
     text: String,
@@ -80,12 +81,98 @@ internal fun backwardWordDeleteCount(
         end = iterator.next()
     }
 
-    if (lastWordEnd == contentEnd) return text.length - lastWordStart
+    if (lastWordEnd == contentEnd) {
+        return text.length - refinedJapaneseWordStart(text, lastWordStart, lastWordEnd)
+    }
     if (lastWordEnd >= 0) return text.length - lastWordEnd
 
     val characters = BreakIterator.getCharacterInstance(locale).apply { setText(text) }
     val previous = characters.preceding(contentEnd).takeIf { it != BreakIterator.DONE } ?: 0
     return text.length - previous
+}
+
+private enum class JapaneseCharacterClass {
+    HIRAGANA,
+    KATAKANA,
+    HAN,
+    LATIN,
+    DIGIT,
+    OTHER,
+}
+
+private val japaneseParticles = listOf(
+    "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
+    "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
+)
+
+private val japaneseAuxiliaries = listOf(
+    "ませんでした", "ましょう", "ました", "ません", "ます",
+    "でした", "でしょう", "です", "だった", "だろう", "ない", "たい",
+)
+
+private val indivisibleKanaWords = setOf(
+    "こんにちは", "こんばんは", "ありがとう", "おはよう",
+)
+
+/** Refines one platform word without ever extending its deletion range. */
+private fun refinedJapaneseWordStart(text: String, start: Int, end: Int): Int {
+    if (start >= end) return start
+
+    val finalClass = japaneseCharacterClass(Character.codePointBefore(text, end))
+    var runStart = end
+    var cursor = end
+    while (cursor > start) {
+        val codePoint = Character.codePointBefore(text, cursor)
+        if (japaneseCharacterClass(codePoint) != finalClass) break
+        cursor -= Character.charCount(codePoint)
+        runStart = cursor
+    }
+
+    // A script change is a stable boundary even when a platform iterator has
+    // returned a mixed Japanese/Latin token as one word.
+    if (runStart > start) return refineKanaGrammarBoundary(text, runStart, end)
+    return refineKanaGrammarBoundary(text, start, end)
+}
+
+private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
+    if (start >= end) return start
+    val segment = text.substring(start, end)
+    if (
+        segment in indivisibleKanaWords ||
+        segment.codePoints().anyMatch { japaneseCharacterClass(it) != JapaneseCharacterClass.HIRAGANA }
+    ) {
+        return start
+    }
+
+    japaneseAuxiliaries.firstOrNull { segment.length > it.length && segment.endsWith(it) }
+        ?.let { return end - it.length }
+    japaneseParticles.firstOrNull { segment.length > it.length && segment.endsWith(it) }
+        ?.let { return end - it.length }
+
+    for (particle in japaneseParticles) {
+        val index = segment.lastIndexOf(particle)
+        val boundary = index + particle.length
+        // Require a lexical-looking span on both sides. Particle priority is
+        // intentional: an unambiguous を must win over a later に that begins
+        // a word such as にゅうりょく.
+        if (index >= 2 && segment.length - boundary >= 2) {
+            return start + boundary
+        }
+    }
+    return start
+}
+
+private fun japaneseCharacterClass(codePoint: Int): JapaneseCharacterClass = when {
+    codePoint in 0x3040..0x309F -> JapaneseCharacterClass.HIRAGANA
+    codePoint in 0x30A0..0x30FF || codePoint in 0xFF66..0xFF9D ->
+        JapaneseCharacterClass.KATAKANA
+    codePoint in 0x3400..0x4DBF ||
+        codePoint in 0x4E00..0x9FFF ||
+        codePoint in 0xF900..0xFAFF -> JapaneseCharacterClass.HAN
+    Character.isDigit(codePoint) -> JapaneseCharacterClass.DIGIT
+    codePoint in 'A'.code..'Z'.code || codePoint in 'a'.code..'z'.code ->
+        JapaneseCharacterClass.LATIN
+    else -> JapaneseCharacterClass.OTHER
 }
 
 private fun containsWordCharacter(text: String, start: Int, end: Int): Boolean {

@@ -73,6 +73,7 @@ private:
     std::string raw_input_;
     std::string reading_;
     std::size_t literal_suffix_start_ = std::string::npos;
+    std::size_t pending_word_delete_start_ = std::string::npos;
     std::vector<Candidate> candidates_;
     std::vector<DictionaryEntry> user_dictionary_;
     std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;

@@ -40,6 +40,24 @@ class CustardEditingTest {
     }
 
     @Test
+    fun wordDeleteSplitsAnUnspacedKanaPhraseOneWordAtATime() {
+        val phrase = "わたしはにほんごをにゅうりょく"
+        val firstCount = backwardWordDeleteCount(phrase)
+        assertEquals("にゅうりょく", phrase.takeLast(firstCount))
+
+        val withoutInput = phrase.dropLast(firstCount)
+        val secondCount = backwardWordDeleteCount(withoutInput)
+        assertEquals("を", withoutInput.takeLast(secondCount))
+        assertEquals("こんにちは".length, backwardWordDeleteCount("こんにちは"))
+    }
+
+    @Test
+    fun wordDeleteUsesTheLastScriptRunAndAuxiliary() {
+        assertEquals("ます".length, backwardWordDeleteCount("入力します"))
+        assertEquals("OpenAI".length, backwardWordDeleteCount("日本語OpenAI"))
+    }
+
+    @Test
     fun chainedDeleteAndSmartDeleteRemoveJapaneseTextAtomically() {
         assertEquals(
             3,
