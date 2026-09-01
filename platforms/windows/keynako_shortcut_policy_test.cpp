@@ -4,6 +4,7 @@ using keynako::windows::ShortcutAction;
 using keynako::windows::is_convert_key;
 using keynako::windows::is_hankaku_zenkaku_key;
 using keynako::windows::is_oem_text_key;
+using keynako::windows::is_slash_text_key;
 using keynako::windows::oem_text_fallback;
 using keynako::windows::shortcut_action;
 
@@ -34,6 +35,11 @@ static_assert(shortcut_action(0x20, 0, true, false, false) ==
 static_assert(is_oem_text_key(0xbf));
 static_assert(oem_text_fallback(0xbf, false) == '/');
 static_assert(oem_text_fallback(0xbf, true) == '?');
+static_assert(is_slash_text_key(0xff, 0x35));
+static_assert(is_oem_text_key(0xff, 0x35));
+static_assert(oem_text_fallback(0xff, false, 0x35) == '/');
+static_assert(oem_text_fallback(0xff, true, 0x35) == '?');
+static_assert(!is_slash_text_key(0x6f, 0x35));
 
 int main() {
     // Convert mirrors Space conversion on both JIS and US logical layouts. It
@@ -62,5 +68,9 @@ int main() {
     if (!is_oem_text_key(0xbf)) return 12;
     if (oem_text_fallback(0xbf, false) != '/') return 13;
     if (oem_text_fallback(0xbf, true) != '?') return 14;
+    if (!is_oem_text_key(0xff, 0x35)) return 15;
+    if (oem_text_fallback(0xff, false, 0x35) != '/') return 16;
+    if (oem_text_fallback(0xff, true, 0x35) != '?') return 17;
+    if (is_slash_text_key(0x6f, 0x35)) return 18;
     return 0;
 }

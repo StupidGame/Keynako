@@ -428,20 +428,33 @@ public:
             action = EditAction::commit;
         } else if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') ||
                    keynako::windows::is_oem_text_key(
-                       static_cast<std::uint32_t>(key))) {
+                       static_cast<std::uint32_t>(key), scan_code)) {
             reload_shared_dictionary();
             BYTE keyboard[256]{};
             WCHAR translated[4]{};
             GetKeyboardState(keyboard);
-            const int count = ToUnicode(static_cast<UINT>(key), scan_code,
-                                        keyboard, translated, 4, 0);
+            const bool shift = (keyboard[VK_SHIFT] & 0x80) != 0 ||
+                               (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                               (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
             char value = 0;
-            if (count > 0 && translated[0] < 128) value = static_cast<char>(translated[0]);
-            if (!value && keynako::windows::is_oem_text_key(
-                              static_cast<std::uint32_t>(key))) {
-                const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (keynako::windows::is_slash_text_key(
+                    static_cast<std::uint32_t>(key), scan_code)) {
+                // The virtual key reported for /? varies between active JIS,
+                // US, and remapped layouts. The physical key and Shift state
+                // are stable, so do not depend on ToUnicode for this key.
                 value = keynako::windows::oem_text_fallback(
-                    static_cast<std::uint32_t>(key), shift);
+                    static_cast<std::uint32_t>(key), shift, scan_code);
+            } else {
+                const int count = ToUnicode(static_cast<UINT>(key), scan_code,
+                                            keyboard, translated, 4, 0);
+                if (count > 0 && translated[0] < 128) {
+                    value = static_cast<char>(translated[0]);
+                }
+            }
+            if (!value && keynako::windows::is_oem_text_key(
+                              static_cast<std::uint32_t>(key), scan_code)) {
+                value = keynako::windows::oem_text_fallback(
+                    static_cast<std::uint32_t>(key), shift, scan_code);
             }
             if (!value) {
                 value = static_cast<char>(
@@ -724,7 +737,7 @@ private:
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
         if (japanese && keynako::windows::is_oem_text_key(
-                            static_cast<std::uint32_t>(key))) return true;
+                            static_cast<std::uint32_t>(key), scan_code)) return true;
         if (session_.raw_input().empty()) return false;
         if (session_.is_converting() && key >= '1' && key <= '9') return true;
         return key == VK_BACK || key == VK_SPACE || key == VK_UP ||
