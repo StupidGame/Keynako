@@ -9,7 +9,7 @@ String _actionLabel(KeyActionData action) {
         'delete': '削除',
         'smartDeleteDefault': '単語削除',
         'smart_delete_default': '単語削除',
-        'smart_delete': '指定位置まで削除',
+        'smart_delete': 'スマート削除（後方は単語削除）',
         'enter': '改行',
         'space': '空白',
         'replaceDefault': '文字種切替',

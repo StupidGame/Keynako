@@ -9,6 +9,15 @@ internal data class SurroundingDelete(
     val afterCursor: Int = 0,
 )
 
+/** Only a discrete, single backward delete can participate in a double tap. */
+internal fun shouldUseQuickWordDelete(
+    allowQuickWordDelete: Boolean,
+    deletion: SurroundingDelete,
+): Boolean =
+    allowQuickWordDelete &&
+        deletion.beforeCursor == 1 &&
+        deletion.afterCursor == 0
+
 /**
  * Custard's delete count is signed: positive values delete backward and
  * negative values delete forward.
@@ -183,24 +192,6 @@ private fun containsWordCharacter(text: String, start: Int, end: Int): Boolean {
         index += Character.charCount(codePoint)
     }
     return false
-}
-
-/**
- * Resolves Custard's common `delete` + backward smart-delete sequence in one
- * pass. Keeping the pair atomic avoids reading stale surrounding text between
- * the two editor operations, which is especially visible with Japanese IMEs.
- */
-internal fun combinedBackwardSmartDeleteCount(
-    text: String,
-    leadingDeleteCount: Int,
-    targets: List<String>,
-): Int {
-    if (text.isEmpty()) return 0
-    val leading = leadingDeleteCount.coerceAtLeast(0).coerceAtMost(text.length)
-    val remaining = text.dropLast(leading)
-    if (remaining.isEmpty()) return leading
-    return (leading + smartDeleteCount(remaining, targets, backward = true))
-        .coerceAtMost(text.length)
 }
 
 internal data class CustardDeleteContinuationAction(

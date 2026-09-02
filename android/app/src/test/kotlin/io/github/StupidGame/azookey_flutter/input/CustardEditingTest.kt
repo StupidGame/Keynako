@@ -1,6 +1,8 @@
 package io.github.StupidGame.azookey_flutter.input
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CustardEditingTest {
@@ -9,6 +11,14 @@ class CustardEditingTest {
         assertEquals(SurroundingDelete(beforeCursor = 2), surroundingDeleteFor(2))
         assertEquals(SurroundingDelete(afterCursor = 1), surroundingDeleteFor(-1))
         assertEquals(SurroundingDelete(), surroundingDeleteFor(0))
+    }
+
+    @Test
+    fun onlyDiscreteSingleDeleteCanStartImeDoubleTapWordDeletion() {
+        assertTrue(shouldUseQuickWordDelete(true, surroundingDeleteFor(1)))
+        assertFalse(shouldUseQuickWordDelete(false, surroundingDeleteFor(1)))
+        assertFalse(shouldUseQuickWordDelete(true, surroundingDeleteFor(2)))
+        assertFalse(shouldUseQuickWordDelete(true, surroundingDeleteFor(-1)))
     }
 
     @Test
@@ -55,18 +65,6 @@ class CustardEditingTest {
     fun wordDeleteUsesTheLastScriptRunAndAuxiliary() {
         assertEquals("ます".length, backwardWordDeleteCount("入力します"))
         assertEquals("OpenAI".length, backwardWordDeleteCount("日本語OpenAI"))
-    }
-
-    @Test
-    fun chainedDeleteAndSmartDeleteRemoveJapaneseTextAtomically() {
-        assertEquals(
-            3,
-            combinedBackwardSmartDeleteCount("前。次の文", 1, listOf("。")),
-        )
-        assertEquals(
-            5,
-            combinedBackwardSmartDeleteCount("日本語入力", 1, listOf("。", "、")),
-        )
     }
 
     @Test

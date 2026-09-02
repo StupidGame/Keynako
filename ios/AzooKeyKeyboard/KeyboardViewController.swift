@@ -365,7 +365,9 @@ final class KeyboardViewController: UIInputViewController {
         }
         let bottom = makeRow()
         bottom.addArrangedSubview(makeButton("あいう", special: true) { [weak self] in self?.setMode("japanese") })
-        bottom.addArrangedSubview(makeButton("⌫", special: true, action: delete))
+        bottom.addArrangedSubview(
+            makeButton("⌫", special: true, quickWordDelete: true, action: delete)
+        )
         bottom.addArrangedSubview(makeButton("space", action: space))
         bottom.addArrangedSubview(makeButton("return", special: true, action: enter))
         keyboardStack.addArrangedSubview(bottom)
@@ -457,8 +459,8 @@ final class KeyboardViewController: UIInputViewController {
             makeCenterLongPressRollback: { [weak self] start, repeated in
                 self?.makeCustardInputRollback(startActions: start, repeatActions: repeated)
             }
-        ) { [weak self] actions in
-            self?.dispatch(actions)
+        ) { [weak self] actions, allowQuickWordDelete in
+            self?.dispatch(actions, allowQuickWordDelete: allowQuickWordDelete)
             self?.feedback()
         }
         let color = design["color"] as? String ?? "normal"
@@ -642,8 +644,8 @@ final class KeyboardViewController: UIInputViewController {
             key: key,
             directionTitles: directionTitles,
             sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
-        ) { [weak self] action in
-            self?.dispatch(action)
+        ) { [weak self] action, allowQuickWordDelete in
+            self?.dispatch(action, allowQuickWordDelete: allowQuickWordDelete)
             self?.feedback()
         }
         style(button, special: false)
@@ -1066,7 +1068,10 @@ final class KeyboardViewController: UIInputViewController {
         updateComposition()
     }
 
-    private func dispatch(_ action: [String: Any]?) {
+    private func dispatch(
+        _ action: [String: Any]?,
+        allowQuickWordDelete: Bool = false
+    ) {
         guard let action else { return }
         let type = action["type"] as? String ?? "input"
         let value = action["value"] as? String ?? ""
@@ -1078,7 +1083,9 @@ final class KeyboardViewController: UIInputViewController {
         case "delete":
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
             let boundedCount = min(100, max(-100, count))
-            if boundedCount > 0 {
+            if allowQuickWordDelete, boundedCount == 1 {
+                quickDelete()
+            } else if boundedCount > 0 {
                 for _ in 0 ..< boundedCount { delete() }
             } else if boundedCount < 0 {
                 for _ in 0 ..< -boundedCount { deleteForward() }
@@ -1123,7 +1130,10 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    private func dispatch(_ actions: [[String: Any]]) {
+    private func dispatch(
+        _ actions: [[String: Any]],
+        allowQuickWordDelete: Bool = false
+    ) {
         var index = 0
         while index < actions.count {
             if index + 1 < actions.count,
@@ -1135,7 +1145,10 @@ final class KeyboardViewController: UIInputViewController {
                 )
                 index += 2
             } else {
-                dispatch(actions[index])
+                dispatch(
+                    actions[index],
+                    allowQuickWordDelete: allowQuickWordDelete
+                )
                 index += 1
             }
         }
@@ -1155,16 +1168,6 @@ final class KeyboardViewController: UIInputViewController {
         case "smart_delete": return action["direction"] as? String == "backward"
         default: return false
         }
-    }
-
-    private func backwardSmartDeleteCount(in text: String, targets: [String]) -> Int {
-        guard !text.isEmpty else { return 0 }
-        let boundaries = targets.compactMap { target -> String.Index? in
-            text.range(of: target, options: .backwards)?.upperBound
-        }
-        let boundary = boundaries.max() ?? text.startIndex
-        let distance = text.distance(from: boundary, to: text.endIndex)
-        return distance == 0 ? 1 : distance
     }
 
     private func backwardWordDeleteCount(in text: String) -> Int {
@@ -1283,71 +1286,14 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    private func combinedBackwardSmartDeleteCount(
-        in text: String,
-        leadingDeleteCount: Int,
-        targets: [String]
-    ) -> Int {
-        guard !text.isEmpty else { return 0 }
-        let leading = min(max(0, leadingDeleteCount), text.count)
-        let remaining = String(text.dropLast(leading))
-        guard !remaining.isEmpty else { return leading }
-        return min(
-            text.count,
-            leading + backwardSmartDeleteCount(in: remaining, targets: targets)
-        )
-    }
-
     private func dispatchCombinedBackwardSmartDelete(
-        deleteAction: [String: Any],
-        smartDeleteAction: [String: Any]
+        deleteAction _: [String: Any],
+        smartDeleteAction _: [String: Any]
     ) {
-        if isDefaultWordDeleteAction(smartDeleteAction) {
-            // Older Custards pair a single delete with smart delete. Resolve
-            // that pair as one word so one-character Japanese tokens do not
-            // make the following token disappear too.
-            smartDeleteDefault()
-            return
-        }
-        let leadingCount = (deleteAction["count"] as? NSNumber)?.intValue
-            ?? Int(deleteAction["value"] as? String ?? "")
-            ?? 1
-        let targets = actionTargets(smartDeleteAction)
-        if !composing.isEmpty || !rawRoman.isEmpty {
-            if !rawRoman.isEmpty {
-                smartDeleteDefault()
-                return
-            }
-            let count = combinedBackwardSmartDeleteCount(
-                in: composing,
-                leadingDeleteCount: leadingCount,
-                targets: targets
-            )
-            composing.removeLast(min(count, composing.count))
-            if composing.isEmpty {
-                replaceDisplayed(with: "", commit: true)
-                resetComposition()
-                renderCandidates()
-            } else {
-                updateComposition()
-            }
-            return
-        }
-        let text = textDocumentProxy.documentContextBeforeInput ?? ""
-        let count = combinedBackwardSmartDeleteCount(
-            in: text,
-            leadingDeleteCount: leadingCount,
-            targets: targets
-        )
-        for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
-        refreshCursorBar()
-    }
-
-    private func isDefaultWordDeleteAction(_ action: [String: Any]) -> Bool {
-        switch action["type"] as? String {
-        case "smart_delete_default", "smartDeleteDefault": return true
-        default: return false
-        }
+        // Ogura-style layouts express one word deletion as `delete` followed
+        // by backward smart-delete. Resolve the pair atomically before the
+        // leading delete can consume a one-character Japanese word.
+        smartDeleteDefault()
     }
 
     private func activeCustard() -> [String: Any]? {
@@ -1540,54 +1486,29 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDelete(_ action: [String: Any]) {
-        let targets = actionTargets(action)
         let backward = action["direction"] as? String == "backward"
-        if !composing.isEmpty || !rawRoman.isEmpty {
-            if backward, rawRoman.isEmpty {
-                let boundaries = targets.compactMap { target -> String.Index? in
-                    composing.range(of: target, options: .backwards)?.upperBound
-                }
-                let boundary = boundaries.max() ?? composing.startIndex
-                let distance = composing.distance(from: boundary, to: composing.endIndex)
-                let count = distance == 0 && !composing.isEmpty ? 1 : distance
-                if count > 0 { composing.removeLast(min(count, composing.count)) }
-                if composing.isEmpty {
-                    replaceDisplayed(with: "", commit: true)
-                    resetComposition()
-                    renderCandidates()
-                } else {
-                    updateComposition()
-                }
-            } else if backward {
-                smartDeleteDefault()
-            }
+        if backward {
+            // Custard smart-delete is the layout-level word-delete gesture.
+            // Share the same linguistic boundary detector as double delete.
+            smartDeleteDefault()
             return
         }
-        if backward {
-            let text = textDocumentProxy.documentContextBeforeInput ?? ""
-            let boundaries = targets.compactMap { target -> String.Index? in
-                text.range(of: target, options: .backwards)?.upperBound
-            }
-            let boundary = boundaries.max() ?? text.startIndex
-            let count = text.distance(from: boundary, to: text.endIndex)
-            if count == 0, !text.isEmpty {
-                textDocumentProxy.deleteBackward()
-            } else {
-                for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
-            }
-            refreshCursorBar()
-        } else {
-            let text = textDocumentProxy.documentContextAfterInput ?? ""
-            let distances = targets.compactMap { target -> Int? in
-                guard let range = text.range(of: target) else { return nil }
-                return text.distance(from: text.startIndex, to: range.lowerBound)
-            }
-            let distance = distances.min() ?? text.count
-            let count = distance == 0 && !text.isEmpty ? 1 : distance
-            textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
-            for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
-            refreshCursorBar()
+        let targets = actionTargets(action)
+        if !composing.isEmpty || !rawRoman.isEmpty {
+            // The local composition cursor is at its trailing edge, so a
+            // forward smart-delete has nothing to remove until it is committed.
+            return
         }
+        let text = textDocumentProxy.documentContextAfterInput ?? ""
+        let distances = targets.compactMap { target -> Int? in
+            guard let range = text.range(of: target) else { return nil }
+            return text.distance(from: text.startIndex, to: range.lowerBound)
+        }
+        let distance = distances.min() ?? text.count
+        let count = distance == 0 && !text.isEmpty ? 1 : distance
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
+        for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
+        refreshCursorBar()
     }
 
     private func smartMoveCursor(_ action: [String: Any]) {
@@ -2785,7 +2706,7 @@ private class DirectionalKeyButton: UIButton {
 private final class CustomFlickButton: DirectionalKeyButton {
     private let key: [String: Any]
     private let sensitivity: CGFloat
-    private let callback: ([String: Any]?) -> Void
+    private let callback: ([String: Any]?, Bool) -> Void
     private var start = CGPoint.zero
     private var longPressWorkItem: DispatchWorkItem?
     private var repeatTimer: Timer?
@@ -2796,7 +2717,7 @@ private final class CustomFlickButton: DirectionalKeyButton {
         key: [String: Any],
         directionTitles: [String: String],
         sensitivity: CGFloat,
-        callback: @escaping ([String: Any]?) -> Void
+        callback: @escaping ([String: Any]?, Bool) -> Void
     ) {
         self.key = key
         self.sensitivity = sensitivity
@@ -2820,10 +2741,10 @@ private final class CustomFlickButton: DirectionalKeyButton {
             let repeated = key["longPressRepeat"] as? [String: Any]
             guard action != nil || repeated != nil else { return }
             didLongPress = true
-            callback(action)
+            callback(action, false)
             if let repeated {
                 repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
-                    self?.callback(repeated)
+                    self?.callback(repeated, false)
                 }
                 repeatTimer?.fire()
             }
@@ -2851,7 +2772,10 @@ private final class CustomFlickButton: DirectionalKeyButton {
         } else {
             direction = dy < 0 ? "up" : "down"
         }
-        callback(key[direction] as? [String: Any] ?? key["tap"] as? [String: Any])
+        callback(
+            key[direction] as? [String: Any] ?? key["tap"] as? [String: Any],
+            true
+        )
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -2989,7 +2913,7 @@ private final class CustardButton: DirectionalKeyButton {
     private let variationsEnabled: Bool
     private let sensitivity: CGFloat
     private let makeCenterLongPressRollback: ([[String: Any]], [[String: Any]]) -> (() -> Void)?
-    private let callback: ([[String: Any]]) -> Void
+    private let callback: ([[String: Any]], Bool) -> Void
     private var start = CGPoint.zero
     private var current = CGPoint.zero
     private var longPressWorkItem: DispatchWorkItem?
@@ -3010,7 +2934,7 @@ private final class CustardButton: DirectionalKeyButton {
         variationsEnabled: Bool,
         sensitivity: CGFloat,
         makeCenterLongPressRollback: @escaping ([[String: Any]], [[String: Any]]) -> (() -> Void)?,
-        callback: @escaping ([[String: Any]]) -> Void
+        callback: @escaping ([[String: Any]], Bool) -> Void
     ) {
         self.key = key
         self.keyStyle = keyStyle
@@ -3061,10 +2985,10 @@ private final class CustardButton: DirectionalKeyButton {
             self.didLongPress = true
             self.variationDidLongPress = self.longPressDirection != nil
             self.repeatedLongPress = !selectedRepeat.isEmpty
-            self.callback(selectedStart)
+            self.callback(selectedStart, false)
             if !selectedRepeat.isEmpty {
                 self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
-                    self?.callback(selectedRepeat)
+                    self?.callback(selectedRepeat, false)
                 }
             }
         }
@@ -3116,9 +3040,9 @@ private final class CustardButton: DirectionalKeyButton {
                         self.variationDidLongPress = true
                         self.didLongPress = true
                         self.repeatedLongPress = !repeatActions.isEmpty
-                        self.callback(startActions)
+                        self.callback(startActions, false)
                         if !repeatActions.isEmpty {
-                            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.callback(repeatActions) }
+                            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in self?.callback(repeatActions, false) }
                         }
                     }
                     longPressWorkItem = work
@@ -3155,7 +3079,10 @@ private final class CustardButton: DirectionalKeyButton {
                     let index = Int((end.x / max(1, bounds.width)) * CGFloat(variations.count))
                     let selected = variations[min(max(0, index), variations.count - 1)]
                     let variationKey = selected["key"] as? [String: Any]
-                    callback(variationKey?["press_actions"] as? [[String: Any]] ?? [])
+                    callback(
+                        variationKey?["press_actions"] as? [[String: Any]] ?? [],
+                        true
+                    )
                 }
             }
             return
@@ -3174,9 +3101,9 @@ private final class CustardButton: DirectionalKeyButton {
         let actions = selected["press_actions"] as? [[String: Any]] ?? []
         if continueDeleteVariationOnRelease,
            let startIndex = backwardWordDeleteContinuationStartIndex(actions) {
-            callback(Array(actions.dropFirst(startIndex)))
+            callback(Array(actions.dropFirst(startIndex)), true)
         } else {
-            callback(actions)
+            callback(actions, true)
         }
     }
 
