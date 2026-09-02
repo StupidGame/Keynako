@@ -92,6 +92,24 @@ int main() {
     assert(english_punctuation.reading() == "!?");
     assert(english_punctuation.display_text() == "!?");
 
+    ImeSession mode_switch;
+    for (const char value : std::string("nihongo")) mode_switch.append_ascii(value);
+    assert(mode_switch.begin_conversion());
+    mode_switch.set_mode(keynako::InputMode::english);
+    assert(mode_switch.raw_input() == "nihongo");
+    assert(mode_switch.reading() == "nihongo");
+    assert(mode_switch.is_converting());
+    mode_switch.set_mode(keynako::InputMode::japanese);
+    assert(mode_switch.raw_input() == "nihongo");
+    assert(mode_switch.reading() == "にほんご");
+    assert(mode_switch.is_converting());
+    assert(mode_switch.display_text() == "日本語");
+    assert(std::any_of(
+        mode_switch.candidates().begin(), mode_switch.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.text == "日本語";
+        }));
+
     ImeSession mixed_text;
     mixed_text.set_user_dictionary({
         {"にほんご", "日本語", 5},

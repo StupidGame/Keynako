@@ -69,14 +69,14 @@ static NSString *FromUtf8(const std::string &value) {
         _session.set_mode(_session.mode() == keynako::InputMode::japanese
                               ? keynako::InputMode::english
                               : keynako::InputMode::japanese);
-        [self cancelComposition:sender];
+        if (!_session.raw_input().empty()) [self updateMarkedText:sender];
         return YES;
     }
     if (command || option || control) return NO;
 
     if (key == 102 || key == 104) {
         _session.set_mode(key == 102 ? keynako::InputMode::english : keynako::InputMode::japanese);
-        [self cancelComposition:sender];
+        if (!_session.raw_input().empty()) [self updateMarkedText:sender];
         return YES;
     }
     if (key == 51) {
@@ -194,14 +194,14 @@ static NSString *FromUtf8(const std::string &value) {
     (void)sender;
     _session.set_mode(keynako::InputMode::japanese);
     id client = [self client];
-    if (client && !_session.raw_input().empty()) [self cancelComposition:client];
+    if (client && !_session.raw_input().empty()) [self updateMarkedText:client];
 }
 
 - (void)selectEnglishMode:(id)sender {
     (void)sender;
     _session.set_mode(keynako::InputMode::english);
     id client = [self client];
-    if (client && !_session.raw_input().empty()) [self cancelComposition:client];
+    if (client && !_session.raw_input().empty()) [self updateMarkedText:client];
 }
 
 - (void)toggleLiveConversion:(id)sender {

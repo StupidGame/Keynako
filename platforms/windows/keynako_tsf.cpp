@@ -254,17 +254,14 @@ public:
     bool live_conversion() const { return session_.live_conversion(); }
     void set_input_mode(keynako::InputMode mode, ITfContext *context = nullptr) {
         if (session_.mode() == mode) return;
-        if (!session_.raw_input().empty()) {
-            // Keep the visible Japanese or English text when changing modes.
-            // Canceling the TSF composition here used to erase it.
-            const bool committed = context
-                ? request_edit(context, EditAction::commit)
-                : request_active_edit(EditAction::commit);
-            if (!committed) return;
-        }
+        const bool has_composition = !session_.raw_input().empty();
         session_.set_mode(mode);
         sync_input_compartments();
         if (language_bar_) language_bar_->notify_mode_changed();
+        if (has_composition) {
+            if (context) request_edit(context, EditAction::update);
+            else request_active_edit(EditAction::update);
+        }
     }
     void toggle_input_mode(ITfContext *context = nullptr) {
         set_input_mode(session_.mode() == keynako::InputMode::japanese
@@ -828,8 +825,17 @@ private:
         if (!context) return false;
         auto *edit = new EditSession(this, context, action);
         HRESULT session_result = E_FAIL;
-        const HRESULT request_result = context->RequestEditSession(
+        HRESULT request_result = context->RequestEditSession(
             client_id_, edit, TF_ES_SYNC | TF_ES_READWRITE, &session_result);
+        if (request_result == TF_E_LOCKED || session_result == TF_E_SYNCHRONOUS) {
+            // Some text stores cannot grant a synchronous write lock even for
+            // a key event. Queue the same edit instead of consuming Backspace
+            // or another handled key without updating the application.
+            session_result = E_FAIL;
+            request_result = context->RequestEditSession(
+                client_id_, edit, TF_ES_ASYNC | TF_ES_READWRITE,
+                &session_result);
+        }
         edit->Release();
         return SUCCEEDED(request_result) && SUCCEEDED(session_result);
     }

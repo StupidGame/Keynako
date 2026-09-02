@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.net.Uri
+import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -68,6 +69,7 @@ import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
+import io.github.StupidGame.azookey_flutter.input.deleteEditorText
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
 import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
@@ -2423,10 +2425,20 @@ class AzooKeyInputMethodService : InputMethodService() {
                 } else updateComposition()
             }
             else -> {
-                currentInputConnection?.deleteSurroundingText(1, 0)
+                deleteFromEditor(1, 0)
                 cursorBarView?.post { cursorBarView?.refresh() }
             }
         }
+    }
+
+    private fun deleteFromEditor(beforeCursor: Int, afterCursor: Int): Boolean {
+        val rawInputTarget = currentInputEditorInfo?.inputType == InputType.TYPE_NULL
+        return deleteEditorText(
+            currentInputConnection,
+            beforeCursor,
+            afterCursor,
+            preferKeyEvents = rawInputTarget,
+        )
     }
 
     /**
@@ -2458,10 +2470,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     .orEmpty()
                 if (current == pending.expectedContext) {
                     if (pending.remainingContextCount > 0) {
-                        currentInputConnection?.deleteSurroundingText(
-                            pending.remainingContextCount,
-                            0,
-                        )
+                        deleteFromEditor(pending.remainingContextCount, 0)
                     }
                     cursorBarView?.post { cursorBarView?.refresh() }
                     true
@@ -2503,7 +2512,13 @@ class AzooKeyInputMethodService : InputMethodService() {
             ?.getTextBeforeCursor(2000, 0)
             ?.toString()
             .orEmpty()
-        if (originalContext.isEmpty()) return
+        if (originalContext.isEmpty()) {
+            // Some editors intentionally withhold surrounding text. A normal
+            // Backspace must still be sent even though word detection is not
+            // available for that target.
+            delete()
+            return
+        }
         val count = backwardWordDeleteCount(originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(
@@ -2519,7 +2534,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         // azooKey's behavior: a forward delete has nothing to remove until the
         // composition is committed or cleared.
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) return
-        currentInputConnection?.deleteSurroundingText(0, 1)
+        deleteFromEditor(0, 1)
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
@@ -2892,7 +2907,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
         val count = backwardWordDeleteCount(text)
-        if (count > 0) currentInputConnection?.deleteSurroundingText(count, 0)
+        if (count > 0) deleteFromEditor(count, 0)
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
@@ -2920,7 +2935,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             return
         }
         val text = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
-        currentInputConnection?.deleteSurroundingText(
+        deleteFromEditor(
             0,
             smartDeleteCount(text, targets, backward = false),
         )

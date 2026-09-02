@@ -25,6 +25,9 @@ int main() {
     keynako_ime_insert_zenzai(session, "日本語です");
     assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
     keynako_ime_set_mode(session, 1);
+    assert(std::strcmp(keynako_ime_raw_input(session), "nihongo") == 0);
+    assert(std::strcmp(keynako_ime_selected_text(session), "nihongo") == 0);
+    keynako_ime_clear(session);
     keynako_ime_append_ascii(session, 'k');
     assert(std::strcmp(keynako_ime_selected_text(session), "k") == 0);
     keynako_ime_destroy(session);

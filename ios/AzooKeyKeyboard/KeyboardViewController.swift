@@ -958,7 +958,13 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         let originalContext = textDocumentProxy.documentContextBeforeInput ?? ""
-        guard !originalContext.isEmpty else { return }
+        guard !originalContext.isEmpty else {
+            // Some host applications do not expose document context to a
+            // keyboard extension. Keep ordinary Backspace working there even
+            // though a word boundary cannot be calculated.
+            delete()
+            return
+        }
         let count = backwardWordDeleteCount(in: originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(

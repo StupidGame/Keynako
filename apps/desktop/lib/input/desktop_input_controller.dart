@@ -185,15 +185,18 @@ class DesktopInputController extends ChangeNotifier {
 
   void setMode(InputMode mode) {
     if (_mode == mode) return;
+    final wasConverting = _converting;
     _mode = mode;
-    _rawInput = '';
-    _candidates = const [];
     _selectedIndex = 0;
-    _converting = false;
+    _rebuildBaseCandidates();
+    _converting = wasConverting && _candidates.isNotEmpty;
     _requestSequence += 1;
     _zenzaiDebounce?.cancel();
     _zenzaiWorking = false;
     notifyListeners();
+    if (_mode == InputMode.japanese && _rawInput.isNotEmpty) {
+      _scheduleZenzai();
+    }
   }
 
   void updateRawInput(String value) {

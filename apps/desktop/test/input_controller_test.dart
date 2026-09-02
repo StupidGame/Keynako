@@ -36,6 +36,31 @@ void main() {
     controller.dispose();
   });
 
+  test('keeps composition and candidates when switching input mode', () {
+    final controller = DesktopInputController();
+    controller.updateRawInput('nihongo');
+    controller.beginOrCycleCandidate(1);
+
+    controller.setMode(InputMode.english);
+
+    expect(controller.rawInput, 'nihongo');
+    expect(controller.composingText, 'nihongo');
+    expect(controller.candidates, isNotEmpty);
+    expect(controller.converting, isTrue);
+
+    controller.setMode(InputMode.japanese);
+
+    expect(controller.rawInput, 'nihongo');
+    expect(controller.composingText, 'にほんご');
+    expect(controller.displayedComposition, '日本語');
+    expect(
+      controller.candidates.any((candidate) => candidate.text == '日本語'),
+      isTrue,
+    );
+    expect(controller.converting, isTrue);
+    controller.dispose();
+  });
+
   test('replaces the selected committed text and keeps the new caret', () {
     final controller = DesktopInputController();
     controller.replaceCommittedText('前の文章後');

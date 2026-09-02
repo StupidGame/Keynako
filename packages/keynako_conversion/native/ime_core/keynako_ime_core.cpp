@@ -187,7 +187,15 @@ std::size_t word_delete_start(const std::string &input, InputMode mode,
 
 }  // namespace
 
-void ImeSession::set_mode(InputMode mode) { if (mode_ != mode) { mode_ = mode; clear(); } }
+void ImeSession::set_mode(InputMode mode) {
+    if (mode_ == mode) return;
+    const bool was_converting = converting_;
+    mode_ = mode;
+    pending_word_delete_start_ = std::string::npos;
+    live_conversion_suspended_ = false;
+    rebuild_candidates();
+    converting_ = was_converting && !candidates_.empty();
+}
 void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
 void ImeSession::append_ascii(char value) {
     append_ascii_internal(value, is_literal_candidate_suffix(value), false);

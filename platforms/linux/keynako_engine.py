@@ -365,7 +365,7 @@ class KeynakoEngine(IBus.Engine):
         if control and keyval == IBus.KEY_space:
             self.mode = "en" if self.mode == "ja" else "ja"
             self.session.set_mode(self.mode == "en")
-            self.raw = ""
+            self.raw = self.session.raw_input()
             self._update_mode_property()
             self._render()
             return True
@@ -467,7 +467,7 @@ class KeynakoEngine(IBus.Engine):
             return
         self.mode = "en" if self.mode == "ja" else "ja"
         self.session.set_mode(self.mode == "en")
-        self.raw = ""
+        self.raw = self.session.raw_input()
         self._update_mode_property()
         self._render()
 
