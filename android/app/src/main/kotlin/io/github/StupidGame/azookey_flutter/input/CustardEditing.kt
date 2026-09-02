@@ -218,6 +218,7 @@ internal fun backwardSmartDeleteContinuationStartIndex(
 ): Int? {
     fun CustardDeleteContinuationAction.isBackwardSmartDelete(): Boolean =
         type == "smart_delete_default" ||
+            type == "smartDeleteDefault" ||
             (type == "smart_delete" && direction == "backward")
 
     if (

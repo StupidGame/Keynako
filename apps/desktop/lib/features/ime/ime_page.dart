@@ -91,6 +91,19 @@ class _ImePageState extends State<ImePage> {
     );
   }
 
+  void _updateRawInput(String value) {
+    if (value.isNotEmpty && value.trim().isEmpty) {
+      final selection = _outputController.selection;
+      controller.commitDirectText(
+        value,
+        replaceStart: selection.isValid ? selection.start : null,
+        replaceEnd: selection.isValid ? selection.end : null,
+      );
+      return;
+    }
+    controller.updateRawInput(value);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -130,6 +143,7 @@ class _ImePageState extends State<ImePage> {
                               compositionFocus: _compositionFocus,
                               onKeyEvent: _handleKey,
                               onCommit: _commitSelected,
+                              onRawInputChanged: _updateRawInput,
                             ),
                           ),
                           const SizedBox(width: 18),
@@ -339,6 +353,7 @@ class _InputCard extends StatelessWidget {
     required this.compositionFocus,
     required this.onKeyEvent,
     required this.onCommit,
+    required this.onRawInputChanged,
   });
 
   final DesktopInputController controller;
@@ -346,6 +361,7 @@ class _InputCard extends StatelessWidget {
   final FocusNode compositionFocus;
   final FocusOnKeyEventCallback onKeyEvent;
   final VoidCallback onCommit;
+  final ValueChanged<String> onRawInputChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +437,7 @@ class _InputCard extends StatelessWidget {
                 key: const Key('composition-field'),
                 controller: compositionController,
                 focusNode: compositionFocus,
-                onChanged: controller.updateRawInput,
+                onChanged: onRawInputChanged,
                 autofocus: true,
                 decoration: InputDecoration(
                   labelText: controller.mode == InputMode.japanese

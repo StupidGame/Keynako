@@ -51,6 +51,7 @@ static NSString *FromUtf8(const std::string &value) {
     std::chrono::steady_clock::time_point _lastDictionaryCheck;
     std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
     std::chrono::steady_clock::time_point _lastBackspacePress;
+    BOOL _hasCompositionReplacementRange;
 }
 
 - (BOOL)handleEvent:(NSEvent *)event client:(id)sender {
@@ -133,10 +134,13 @@ static NSString *FromUtf8(const std::string &value) {
         return YES;
     }
 
-    NSString *characters = event.charactersIgnoringModifiers.lowercaseString;
+    // Preserve Shift-produced punctuation such as ? and !.
+    NSString *characters = event.characters.lowercaseString;
     if (characters.length != 1) return NO;
     const unichar scalar = [characters characterAtIndex:0];
-    const BOOL accepted = (scalar >= 'a' && scalar <= 'z') || scalar == '-' || scalar == ',' || scalar == '.';
+    const BOOL accepted = (scalar >= 'a' && scalar <= 'z') || scalar == '-' ||
+                          scalar == ',' || scalar == '.' || scalar == '/' ||
+                          scalar == '?' || scalar == '!';
     if (!accepted) return NO;
     if (_session.mode() == keynako::InputMode::english) return NO;
     [self reloadSharedDictionary:NO];
@@ -253,12 +257,20 @@ static NSString *FromUtf8(const std::string &value) {
     if (_session.raw_input().empty()) {
         [sender setMarkedText:@"" selectionRange:NSMakeRange(0, 0)
              replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+        _hasCompositionReplacementRange = NO;
         [gCandidates hide];
         return;
     }
     NSString *text = FromUtf8(_session.display_text());
+    NSRange replacementRange = NSMakeRange(NSNotFound, NSNotFound);
+    if (!_hasCompositionReplacementRange) {
+        if ([sender respondsToSelector:@selector(selectedRange)]) {
+            replacementRange = [sender selectedRange];
+        }
+        _hasCompositionReplacementRange = YES;
+    }
     [sender setMarkedText:text selectionRange:NSMakeRange(text.length, 0)
-         replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+         replacementRange:replacementRange];
     if (_session.is_converting()) {
         [gCandidates updateCandidates];
         [gCandidates show:kIMKLocateCandidatesBelowHint];
@@ -271,6 +283,7 @@ static NSString *FromUtf8(const std::string &value) {
     NSString *text = FromUtf8(_session.selected_text());
     [sender insertText:text replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
     _session.clear();
+    _hasCompositionReplacementRange = NO;
     [gCandidates hide];
 }
 
@@ -278,6 +291,7 @@ static NSString *FromUtf8(const std::string &value) {
     [sender setMarkedText:@"" selectionRange:NSMakeRange(0, 0)
          replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
     _session.clear();
+    _hasCompositionReplacementRange = NO;
     [gCandidates hide];
 }
 

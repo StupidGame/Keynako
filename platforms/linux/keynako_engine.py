@@ -329,6 +329,21 @@ class KeynakoEngine(IBus.Engine):
         self.session.clear()
         self._render()
 
+    def _replace_selection_before_input(self) -> None:
+        """Delete the host selection once, before starting a new preedit."""
+        if self.raw:
+            return
+        try:
+            _, cursor_pos, anchor_pos = self.get_surrounding_text()
+            cursor = int(cursor_pos)
+            anchor = int(anchor_pos)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if cursor == anchor:
+            return
+        start = min(cursor, anchor)
+        self.delete_surrounding_text(start - cursor, abs(anchor - cursor))
+
     def _commit(self) -> None:
         if not self.raw:
             return
@@ -403,15 +418,6 @@ class KeynakoEngine(IBus.Engine):
         )
         if keyval in conversion_keys:
             if not self.raw:
-                if keyval in (
-                    getattr(IBus, "KEY_Henkan", -1),
-                    getattr(IBus, "KEY_Henkan_Mode", -1),
-                ):
-                    self.mode = "en" if self.mode == "ja" else "ja"
-                    self.session.set_mode(self.mode == "en")
-                    self._update_mode_property()
-                    self._render()
-                    return True
                 return False
             self._reload_shared_dictionary()
             if not self.session.is_converting():
@@ -434,11 +440,12 @@ class KeynakoEngine(IBus.Engine):
             self._render()
             return True
         scalar = IBus.keyval_to_unicode(keyval)
-        if scalar and chr(scalar).lower() in "abcdefghijklmnopqrstuvwxyz-,.":
+        if scalar and chr(scalar).lower() in "abcdefghijklmnopqrstuvwxyz-,.!?/":
             if self.mode == "en":
                 return False
             value = chr(scalar)
             self._reload_shared_dictionary()
+            self._replace_selection_before_input()
             self.raw += value
             self.session.append(value)
             self._render()

@@ -446,7 +446,11 @@ public:
             reload_shared_dictionary();
             WCHAR translated[4]{};
             char value = 0;
-            if (keynako::windows::is_slash_text_key(
+            if (key == '1' && shift) {
+                // Shift+1 is ! on the supported JIS and US layouts. Resolve
+                // it before candidate-number handling and ToUnicode.
+                value = '!';
+            } else if (keynako::windows::is_slash_text_key(
                     static_cast<std::uint32_t>(key), scan_code)) {
                 // The virtual key reported for /? varies between active JIS,
                 // US, and remapped layouts. The physical key and Shift state

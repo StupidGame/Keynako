@@ -86,9 +86,24 @@ class CustardEditingTest {
             ),
         )
         assertEquals(
+            0,
+            backwardSmartDeleteContinuationStartIndex(
+                listOf(CustardDeleteContinuationAction(type = "smartDeleteDefault")),
+            ),
+        )
+        assertEquals(
             1,
             backwardSmartDeleteContinuationStartIndex(
                 listOf(CustardDeleteContinuationAction(type = "delete"), smartDelete),
+            ),
+        )
+        assertEquals(
+            1,
+            backwardSmartDeleteContinuationStartIndex(
+                listOf(
+                    CustardDeleteContinuationAction(type = "delete"),
+                    CustardDeleteContinuationAction(type = "smartDeleteDefault"),
+                ),
             ),
         )
         assertEquals(

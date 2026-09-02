@@ -217,6 +217,12 @@ class DesktopInputController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void commitDirectText(String value, {int? replaceStart, int? replaceEnd}) {
+    if (value.isEmpty) return;
+    _replaceCommittedRange(value, replaceStart, replaceEnd);
+    cancelComposition();
+  }
+
   void selectCandidate(int index) {
     if (index < 0 || index >= _candidates.length) return;
     _selectedIndex = index;
@@ -283,6 +289,15 @@ class DesktopInputController extends ChangeNotifier {
     final committedCandidate = _mode == InputMode.english
         ? '$candidate '
         : candidate;
+    _replaceCommittedRange(committedCandidate, replaceStart, replaceEnd);
+    cancelComposition();
+  }
+
+  void _replaceCommittedRange(
+    String value,
+    int? replaceStart,
+    int? replaceEnd,
+  ) {
     var selectionStart = _committedText.length;
     var selectionEnd = _committedText.length;
     if (replaceStart != null &&
@@ -297,10 +312,9 @@ class DesktopInputController extends ChangeNotifier {
     _committedText = _committedText.replaceRange(
       selectionStart,
       selectionEnd,
-      committedCandidate,
+      value,
     );
-    _committedSelectionOffset = selectionStart + committedCandidate.length;
-    cancelComposition();
+    _committedSelectionOffset = selectionStart + value.length;
   }
 
   void cancelComposition() {

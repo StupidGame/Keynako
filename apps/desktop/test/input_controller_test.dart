@@ -51,6 +51,17 @@ void main() {
     controller.dispose();
   });
 
+  test('direct whitespace input does not create conversion candidates', () {
+    final controller = DesktopInputController();
+
+    controller.commitDirectText('　');
+
+    expect(controller.committedText, '　');
+    expect(controller.rawInput, isEmpty);
+    expect(controller.candidates, isEmpty);
+    controller.dispose();
+  });
+
   test('previews the selected candidate during live conversion', () {
     final controller = DesktopInputController();
     controller.updateRawInput('nihongo');

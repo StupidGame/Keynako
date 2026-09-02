@@ -770,10 +770,16 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func input(_ value: String) {
-        if mode == "english" {
-            inputEnglishText(value)
+        if !value.isEmpty,
+           value.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
+            directCommit(value)
             return
         }
+        if mode == "english" {
+            inputEnglishText(punctuationForInputMode(value, mode: mode))
+            return
+        }
+        let value = punctuationForInputMode(value, mode: mode)
         if layout == "qwerty" {
             rawRoman += value.lowercased()
             composing = romanToHiragana(rawRoman)
@@ -819,6 +825,9 @@ final class KeyboardViewController: UIInputViewController {
             textDocumentProxy.setMarkedText(value, selectedRange: NSRange(location: value.utf16.count, length: 0))
             if commit { textDocumentProxy.unmarkText() }
         } else {
+            // insertText replaces a host selection. Doing this before the
+            // legacy delete-and-reinsert path prevents deleting past it.
+            textDocumentProxy.insertText("")
             for _ in lastDisplayed { textDocumentProxy.deleteBackward() }
             textDocumentProxy.insertText(value)
         }
@@ -863,7 +872,9 @@ final class KeyboardViewController: UIInputViewController {
 
     private func directCommit(_ value: String) {
         commitComposition()
-        textDocumentProxy.insertText(value)
+        textDocumentProxy.insertText(punctuationForInputMode(value, mode: mode))
+        candidates = []
+        renderCandidates()
         refreshCursorBar()
     }
 
@@ -966,10 +977,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func space() {
         if composing.isEmpty, rawRoman.isEmpty {
-            textDocumentProxy.insertText(" ")
+            directCommit(" ")
         } else if mode == "english" {
             commitComposition()
-            textDocumentProxy.insertText(" ")
+            directCommit(" ")
         } else {
             commitComposition()
         }
@@ -977,7 +988,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func spaceWithoutConversion() {
         commitComposition(useCandidate: false)
-        textDocumentProxy.insertText(" ")
+        directCommit(" ")
         refreshCursorBar()
     }
 
@@ -1140,7 +1151,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func isBackwardSmartDelete(_ action: [String: Any]) -> Bool {
         switch action["type"] as? String {
-        case "smart_delete_default": return true
+        case "smart_delete_default", "smartDeleteDefault": return true
         case "smart_delete": return action["direction"] as? String == "backward"
         default: return false
         }
@@ -1291,7 +1302,7 @@ final class KeyboardViewController: UIInputViewController {
         deleteAction: [String: Any],
         smartDeleteAction: [String: Any]
     ) {
-        if smartDeleteAction["type"] as? String == "smart_delete_default" {
+        if isDefaultWordDeleteAction(smartDeleteAction) {
             // Older Custards pair a single delete with smart delete. Resolve
             // that pair as one word so one-character Japanese tokens do not
             // make the following token disappear too.
@@ -1330,6 +1341,13 @@ final class KeyboardViewController: UIInputViewController {
         )
         for _ in 0 ..< count { textDocumentProxy.deleteBackward() }
         refreshCursorBar()
+    }
+
+    private func isDefaultWordDeleteAction(_ action: [String: Any]) -> Bool {
+        switch action["type"] as? String {
+        case "smart_delete_default", "smartDeleteDefault": return true
+        default: return false
+        }
     }
 
     private func activeCustard() -> [String: Any]? {
@@ -1372,6 +1390,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func custardInput(_ value: String) {
         guard !value.isEmpty else { return }
+        if value.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
+            directCommit(value)
+            return
+        }
         let custard = activeCustard()
         let language = custard?["language"] as? String ?? "undefined"
         let inputStyle = custard?["input_style"] as? String ?? "direct"
@@ -2151,7 +2173,9 @@ final class KeyboardViewController: UIInputViewController {
         "very", "want", "was", "way", "we", "well", "were", "what", "when", "where", "which", "who",
         "why", "will", "with", "work", "would", "yes", "you", "your",
     ]
-    private static let defaultScanTargets = ["、", "。", "！", "？", ".", ",", "．", "，", "\n"]
+    private static let defaultScanTargets = [
+        " ", "　", "\t", "、", "。", "！", "？", ".", ",", "．", "，", "\n",
+    ]
     private static func isReportableInput(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
         case 0x3041 ... 0x3096, 0x30 ... 0x39, 0x41 ... 0x5a, 0x61 ... 0x7a: true
@@ -2192,6 +2216,19 @@ final class KeyboardViewController: UIInputViewController {
         "ヘ": "ベ", "ベ": "ペ", "ペ": "ヘ",
         "ホ": "ボ", "ボ": "ポ", "ポ": "ホ",
     ]
+}
+
+private func punctuationForInputMode(_ value: String, mode: String) -> String {
+    switch mode {
+    case "japanese":
+        return value.replacingOccurrences(of: "?", with: "？")
+            .replacingOccurrences(of: "!", with: "！")
+    case "english":
+        return value.replacingOccurrences(of: "？", with: "?")
+            .replacingOccurrences(of: "！", with: "!")
+    default:
+        return value
+    }
 }
 
 private struct DefaultSymbolKey {
@@ -3178,7 +3215,7 @@ private final class CustardButton: DirectionalKeyButton {
     private func isBackwardSmartDelete(_ action: [String: Any]?) -> Bool {
         guard let action else { return false }
         switch action["type"] as? String {
-        case "smart_delete_default": return true
+        case "smart_delete_default", "smartDeleteDefault": return true
         case "smart_delete": return action["direction"] as? String == "backward"
         default: return false
         }

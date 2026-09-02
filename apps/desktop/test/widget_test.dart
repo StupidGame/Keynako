@@ -76,6 +76,20 @@ void main() {
     );
   });
 
+  testWidgets('commits whitespace without showing conversion candidates', (
+    tester,
+  ) async {
+    final controller = DesktopInputController();
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+
+    await tester.enterText(find.byKey(const Key('composition-field')), '　');
+    await tester.pump();
+
+    expect(controller.committedText, '　');
+    expect(controller.rawInput, isEmpty);
+    expect(controller.candidates, isEmpty);
+  });
+
   testWidgets('sends a candidate with a secondary click', (tester) async {
     final submitter = _FakeDictionarySubmitter();
     final controller = DesktopInputController(

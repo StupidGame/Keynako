@@ -73,6 +73,8 @@ import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
 import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
+import io.github.StupidGame.azookey_flutter.input.punctuationForInputMode
+import io.github.StupidGame.azookey_flutter.input.replaceCurrentSelection
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
@@ -1979,21 +1981,34 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun inputText(value: String?) {
         if (value.isNullOrEmpty()) return
+        val input = punctuationForInputMode(value, mode)
+        if (input.isBlank()) {
+            directCommit(input)
+            return
+        }
         if (mode == "english") {
-            inputEnglishText(value)
+            inputEnglishText(input)
             return
         }
-        if (shouldDirectCommitJapaneseInput(value)) {
-            directCommit(value)
+        if (shouldDirectCommitJapaneseInput(input)) {
+            directCommit(input)
             return
         }
-        if (layout == "qwerty") rawRoman += value.lowercase() else composing += value
+        prepareSelectionForInput()
+        if (layout == "qwerty") rawRoman += input.lowercase() else composing += input
         updateComposition()
+    }
+
+    private fun prepareSelectionForInput() {
+        if (composing.isEmpty() && rawRoman.isEmpty()) {
+            replaceCurrentSelection(currentInputConnection)
+        }
     }
 
     private fun inputEnglishText(value: String) {
         val resolved = if (shift || capsLock) value.uppercase(Locale.ROOT) else value
         if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+            prepareSelectionForInput()
             composing += resolved
             updateComposition()
         } else {
@@ -2359,8 +2374,11 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun directCommit(value: String) {
+        prepareSelectionForInput()
         commitComposition()
-        currentInputConnection?.commitText(value, 1)
+        currentInputConnection?.commitText(punctuationForInputMode(value, mode), 1)
+        candidates.clear()
+        selectedCandidate = 0
         renderCandidates()
         cursorBarView?.post { cursorBarView?.refresh() }
     }
@@ -2497,10 +2515,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun space() {
         if (composing.isEmpty() && rawRoman.isEmpty()) {
-            currentInputConnection?.commitText(" ", 1)
+            directCommit(" ")
         } else if (mode == "english") {
             commitComposition()
-            currentInputConnection?.commitText(" ", 1)
+            directCommit(" ")
         } else if (settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
             selectedCandidate = (selectedCandidate + 1) % candidates.size
             currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
@@ -2512,7 +2530,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun spaceWithoutConversion() {
         commitComposition(useCandidate = false)
-        currentInputConnection?.commitText(" ", 1)
+        directCommit(" ")
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
@@ -2657,18 +2675,21 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun isBackwardSmartDelete(action: JSONObject?): Boolean {
         val value = action ?: return false
-        return value.optString("type") == "smart_delete_default" ||
+        return isDefaultWordDeleteAction(value) ||
             (
                 value.optString("type") == "smart_delete" &&
                     value.optString("direction", "forward") == "backward"
             )
     }
 
+    private fun isDefaultWordDeleteAction(action: JSONObject): Boolean =
+        action.optString("type") in setOf("smart_delete_default", "smartDeleteDefault")
+
     private fun dispatchCombinedBackwardSmartDelete(
         deleteAction: JSONObject,
         smartDeleteAction: JSONObject,
     ) {
-        if (smartDeleteAction.optString("type") == "smart_delete_default") {
+        if (isDefaultWordDeleteAction(smartDeleteAction)) {
             // A leading single-character delete is how older Custards emulated
             // word deletion. Treat the pair as one linguistic deletion so a
             // one-character Japanese token does not also consume its neighbor.
@@ -2779,6 +2800,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun custardInput(value: String) {
         if (value.isEmpty()) return
+        if (value.isBlank()) {
+            directCommit(value)
+            return
+        }
         val custard = activeCustard()
         val language = custard?.optString("language", "undefined") ?: "undefined"
         val inputStyle = custard?.optString("input_style", "direct") ?: "direct"
@@ -2800,6 +2825,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             directCommit(value)
             return
         }
+        prepareSelectionForInput()
         mode = "japanese"
         if (inputStyle == "roman2kana") {
             layout = "qwerty"
