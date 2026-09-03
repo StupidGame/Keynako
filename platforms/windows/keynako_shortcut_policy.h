@@ -7,8 +7,15 @@ namespace keynako::windows {
 // Virtual-key values are part of the stable Win32 ABI. Keeping the policy
 // independent from windows.h makes the JIS/US routing easy to unit test.
 constexpr std::uint32_t kKeyKanji = 0x19;
+constexpr std::uint32_t kKeyKana = 0x15;
+constexpr std::uint32_t kKeyImeOn = 0x16;
+constexpr std::uint32_t kKeyImeOff = 0x1a;
 constexpr std::uint32_t kKeyConvert = 0x1c;
 constexpr std::uint32_t kKeySpace = 0x20;
+constexpr std::uint32_t kKeyDbeAlphanumeric = 0xf0;
+constexpr std::uint32_t kKeyDbeHiragana = 0xf2;
+constexpr std::uint32_t kKeyDbeSbcsChar = 0xf3;
+constexpr std::uint32_t kKeyDbeDbcsChar = 0xf4;
 constexpr std::uint32_t kKeyOemComma = 0xbc;
 constexpr std::uint32_t kKeyOemMinus = 0xbd;
 constexpr std::uint32_t kKeyOemPeriod = 0xbe;
@@ -21,6 +28,28 @@ constexpr std::uint32_t kScanCodeJisConvert = 0x79;
 
 constexpr bool is_convert_key(std::uint32_t key, std::uint32_t scan_code) {
     return key == kKeyConvert || scan_code == kScanCodeJisConvert;
+}
+
+enum class DirectInputMode {
+    none,
+    japanese,
+    english,
+};
+
+constexpr DirectInputMode direct_input_mode_for_key(std::uint32_t key) {
+    switch (key) {
+        case kKeyKana:
+        case kKeyImeOn:
+        case kKeyDbeHiragana:
+        case kKeyDbeDbcsChar:
+            return DirectInputMode::japanese;
+        case kKeyImeOff:
+        case kKeyDbeAlphanumeric:
+        case kKeyDbeSbcsChar:
+            return DirectInputMode::english;
+        default:
+            return DirectInputMode::none;
+    }
 }
 
 constexpr bool is_slash_text_key(std::uint32_t key,

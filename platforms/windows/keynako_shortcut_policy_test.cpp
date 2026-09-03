@@ -1,6 +1,8 @@
 #include "keynako_shortcut_policy.h"
 
 using keynako::windows::ShortcutAction;
+using keynako::windows::DirectInputMode;
+using keynako::windows::direct_input_mode_for_key;
 using keynako::windows::is_convert_key;
 using keynako::windows::is_hankaku_zenkaku_key;
 using keynako::windows::is_oem_text_key;
@@ -40,6 +42,14 @@ static_assert(is_oem_text_key(0xff, 0x35));
 static_assert(oem_text_fallback(0xff, false, 0x35) == '/');
 static_assert(oem_text_fallback(0xff, true, 0x35) == '?');
 static_assert(!is_slash_text_key(0x6f, 0x35));
+static_assert(direct_input_mode_for_key(0x15) == DirectInputMode::japanese);
+static_assert(direct_input_mode_for_key(0x16) == DirectInputMode::japanese);
+static_assert(direct_input_mode_for_key(0xf2) == DirectInputMode::japanese);
+static_assert(direct_input_mode_for_key(0xf4) == DirectInputMode::japanese);
+static_assert(direct_input_mode_for_key(0x1a) == DirectInputMode::english);
+static_assert(direct_input_mode_for_key(0xf0) == DirectInputMode::english);
+static_assert(direct_input_mode_for_key(0xf3) == DirectInputMode::english);
+static_assert(direct_input_mode_for_key(0x19) == DirectInputMode::none);
 
 int main() {
     // Convert mirrors Space conversion on both JIS and US logical layouts. It
@@ -72,5 +82,9 @@ int main() {
     if (oem_text_fallback(0xff, false, 0x35) != '/') return 16;
     if (oem_text_fallback(0xff, true, 0x35) != '?') return 17;
     if (is_slash_text_key(0x6f, 0x35)) return 18;
+    if (direct_input_mode_for_key(0xf3) != DirectInputMode::english) return 19;
+    if (direct_input_mode_for_key(0xf4) != DirectInputMode::japanese) return 20;
+    if (direct_input_mode_for_key(0x16) != DirectInputMode::japanese) return 21;
+    if (direct_input_mode_for_key(0x1a) != DirectInputMode::english) return 22;
     return 0;
 }

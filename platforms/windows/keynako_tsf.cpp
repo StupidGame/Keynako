@@ -55,9 +55,6 @@ constexpr GUID kPreservedAltGrave = {0xafe3ff6d, 0xeb6a, 0x4021, {0xbb, 0x2a, 0x
 // GUID_LBI_INPUTMODE is not declared by every supported Windows SDK, even
 // though Windows 8 and later require this value for the taskbar mode button.
 constexpr GUID kLangBarInputMode = {0x2c77a81e, 0x41cc, 0x4178, {0xa3, 0xa7, 0x5f, 0x8a, 0x98, 0x75, 0x68, 0xe6}};
-// The Japanese DBE virtual-key constants are likewise absent from some SDKs.
-constexpr WPARAM kVirtualKeyDbeAlphanumeric = 0xf0;
-constexpr WPARAM kVirtualKeyDbeHiragana = 0xf2;
 // Keep the standard connection-point HRESULT values local because newer
 // trimmed Windows SDK headers no longer expose the CONNECT_E_* aliases.
 constexpr HRESULT kConnectNoConnection = static_cast<HRESULT>(0x80040200UL);
@@ -415,13 +412,13 @@ public:
         }
         if (!handles_key(key, key_data)) return S_OK;
 
-        if (key == VK_KANA || key == kVirtualKeyDbeHiragana) {
-            set_input_mode(keynako::InputMode::japanese, context);
-            *eaten = TRUE;
-            return S_OK;
-        }
-        if (key == kVirtualKeyDbeAlphanumeric) {
-            set_input_mode(keynako::InputMode::english, context);
+        const auto direct_mode = keynako::windows::direct_input_mode_for_key(
+            static_cast<std::uint32_t>(key));
+        if (direct_mode != keynako::windows::DirectInputMode::none) {
+            set_input_mode(direct_mode == keynako::windows::DirectInputMode::japanese
+                               ? keynako::InputMode::japanese
+                               : keynako::InputMode::english,
+                           context);
             *eaten = TRUE;
             return S_OK;
         }
@@ -745,8 +742,10 @@ private:
                                               uses_japanese_keyboard()) !=
             keynako::windows::ShortcutAction::none) return true;
         if (control || alt) return false;
-        if (key == VK_KANJI || key == VK_KANA || key == kVirtualKeyDbeHiragana ||
-            key == kVirtualKeyDbeAlphanumeric || key == VK_NONCONVERT) return true;
+        if (key == VK_KANJI || key == VK_NONCONVERT ||
+            keynako::windows::direct_input_mode_for_key(
+                static_cast<std::uint32_t>(key)) !=
+                keynako::windows::DirectInputMode::none) return true;
         const bool japanese = session_.mode() == keynako::InputMode::japanese;
         if (japanese && key >= 'A' && key <= 'Z') return true;
         if (japanese && key >= '0' && key <= '9' && !session_.is_converting()) return true;
