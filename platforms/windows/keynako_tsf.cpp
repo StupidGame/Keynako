@@ -412,6 +412,12 @@ public:
         }
         if (!handles_key(key, key_data)) return S_OK;
 
+        BYTE keyboard[256]{};
+        GetKeyboardState(keyboard);
+        const bool shift = (keyboard[VK_SHIFT] & 0x80) != 0 ||
+                           (GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                           (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
         const auto direct_mode = keynako::windows::direct_input_mode_for_key(
             static_cast<std::uint32_t>(key));
         if (direct_mode != keynako::windows::DirectInputMode::none) {
