@@ -5,8 +5,8 @@ It owns composition, Japanese/English input mode, live conversion, candidate
 selection, the shared Keynako dictionary and optional Zenzai conversion.
 `Space` starts/cycles conversion. The Japanese Convert key mirrors that behavior
 only while a composition exists; it is never used as an input-mode toggle.
-Hankaku/Zenkaku toggles Japanese/English mode and commits the current composition
-before switching so already-entered text is not erased. A thread-local `WH_KEYBOARD` hook
+Hankaku/Zenkaku toggles Japanese/English mode while preserving the current composition
+and rebuilding its candidates for the selected mode. A thread-local `WH_KEYBOARD` hook
 accepts its physical JIS scan code on a Windows keyboard reported as Japanese,
 even while the logical layout is US. A real US 101/102-key keyboard keeps bare
 Backquote available for text entry and can toggle with `Alt+Backquote` (the

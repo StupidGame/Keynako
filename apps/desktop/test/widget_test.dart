@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:keynako_desktop/app.dart';
@@ -40,6 +41,53 @@ void main() {
     await tester.pump();
 
     expect(find.text('hello'), findsOneWidget);
+  });
+
+  testWidgets('committing input replaces the selected output text', (
+    tester,
+  ) async {
+    final controller = DesktopInputController();
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+    controller.replaceCommittedText('前の文章後');
+    await tester.pump();
+
+    final editor = tester.widget<TextField>(
+      find.byKey(const Key('committed-editor')),
+    );
+    editor.controller!.selection = const TextSelection(
+      baseOffset: 1,
+      extentOffset: 4,
+    );
+    await tester.enterText(
+      find.byKey(const Key('composition-field')),
+      'nihongo',
+    );
+    controller.selectCandidate(
+      controller.candidates.indexWhere((candidate) => candidate.text == '日本語'),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(controller.committedText, '前日本語後');
+    expect(
+      editor.controller!.selection,
+      const TextSelection.collapsed(offset: 4),
+    );
+  });
+
+  testWidgets('commits whitespace without showing conversion candidates', (
+    tester,
+  ) async {
+    final controller = DesktopInputController();
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+
+    await tester.enterText(find.byKey(const Key('composition-field')), '　');
+    await tester.pump();
+
+    expect(controller.committedText, '　');
+    expect(controller.rawInput, isEmpty);
+    expect(controller.candidates, isEmpty);
   });
 
   testWidgets('sends a candidate with a secondary click', (tester) async {

@@ -39,6 +39,16 @@ internal fun englishPredictionCandidates(
     return values.take(limit)
 }
 
+/**
+ * Applies an English case-only character form without completing the current
+ * composition. Other character forms keep their normal commit semantics.
+ */
+internal fun englishCaseComposition(input: String, form: String?): String? = when (form) {
+    "uppercase" -> input.uppercase(Locale.ROOT)
+    "lowercase" -> input.lowercase(Locale.ROOT)
+    else -> null
+}
+
 private fun matchEnglishCandidateCase(candidate: String, input: String): String = when {
     input.all(Char::isUpperCase) -> candidate.uppercase(Locale.ROOT)
     input.firstOrNull()?.isUpperCase() == true -> candidate.replaceFirstChar(Char::uppercase)

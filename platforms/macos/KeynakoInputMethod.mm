@@ -16,6 +16,7 @@
 
 static IMKServer *gServer;
 static IMKCandidates *gCandidates;
+static constexpr auto kDoubleBackspaceInterval = std::chrono::milliseconds(350);
 
 static NSString *FromUtf8(const std::string &value) {
     return [[NSString alloc] initWithBytes:value.data()
@@ -49,6 +50,8 @@ static NSString *FromUtf8(const std::string &value) {
     std::filesystem::file_time_type _sharedDictionaryWriteTime;
     std::chrono::steady_clock::time_point _lastDictionaryCheck;
     std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
+    std::chrono::steady_clock::time_point _lastBackspacePress;
+    BOOL _hasCompositionReplacementRange;
 }
 
 - (BOOL)handleEvent:(NSEvent *)event client:(id)sender {
@@ -59,25 +62,44 @@ static NSString *FromUtf8(const std::string &value) {
     const BOOL control = (modifiers & NSEventModifierFlagControl) != 0;
     const BOOL command = (modifiers & NSEventModifierFlagCommand) != 0;
     const BOOL option = (modifiers & NSEventModifierFlagOption) != 0;
+    const unsigned short key = event.keyCode;
+    if (key != 51) _lastBackspacePress = {};
 
     if (control && event.keyCode == 49) {
         _session.set_mode(_session.mode() == keynako::InputMode::japanese
                               ? keynako::InputMode::english
                               : keynako::InputMode::japanese);
-        [self cancelComposition:sender];
+        if (!_session.raw_input().empty()) [self updateMarkedText:sender];
         return YES;
     }
     if (command || option || control) return NO;
 
-    const unsigned short key = event.keyCode;
     if (key == 102 || key == 104) {
         _session.set_mode(key == 102 ? keynako::InputMode::english : keynako::InputMode::japanese);
-        [self cancelComposition:sender];
+        if (!_session.raw_input().empty()) [self updateMarkedText:sender];
         return YES;
     }
     if (key == 51) {
         if (_session.raw_input().empty()) return NO;
-        if (!_session.cancel_conversion()) _session.backspace();
+        if (_session.cancel_conversion()) {
+            _lastBackspacePress = {};
+        } else {
+            const auto now = std::chrono::steady_clock::now();
+            const BOOL autoRepeat = event.isARepeat;
+            const BOOL doublePress =
+                !autoRepeat &&
+                _lastBackspacePress.time_since_epoch().count() != 0 &&
+                now - _lastBackspacePress <= kDoubleBackspaceInterval;
+            if (doublePress) {
+                _session.backspace_word();
+                _lastBackspacePress = {};
+            } else {
+                _session.backspace();
+                _lastBackspacePress = !autoRepeat && !_session.raw_input().empty()
+                    ? now
+                    : std::chrono::steady_clock::time_point{};
+            }
+        }
         [self updateMarkedText:sender];
         return YES;
     }
@@ -112,10 +134,13 @@ static NSString *FromUtf8(const std::string &value) {
         return YES;
     }
 
-    NSString *characters = event.charactersIgnoringModifiers.lowercaseString;
+    // Preserve Shift-produced punctuation such as ? and !.
+    NSString *characters = event.characters.lowercaseString;
     if (characters.length != 1) return NO;
     const unichar scalar = [characters characterAtIndex:0];
-    const BOOL accepted = (scalar >= 'a' && scalar <= 'z') || scalar == '-' || scalar == ',' || scalar == '.';
+    const BOOL accepted = (scalar >= 'a' && scalar <= 'z') || scalar == '-' ||
+                          scalar == ',' || scalar == '.' || scalar == '/' ||
+                          scalar == '?' || scalar == '!';
     if (!accepted) return NO;
     if (_session.mode() == keynako::InputMode::english) return NO;
     [self reloadSharedDictionary:NO];
@@ -169,14 +194,14 @@ static NSString *FromUtf8(const std::string &value) {
     (void)sender;
     _session.set_mode(keynako::InputMode::japanese);
     id client = [self client];
-    if (client && !_session.raw_input().empty()) [self cancelComposition:client];
+    if (client && !_session.raw_input().empty()) [self updateMarkedText:client];
 }
 
 - (void)selectEnglishMode:(id)sender {
     (void)sender;
     _session.set_mode(keynako::InputMode::english);
     id client = [self client];
-    if (client && !_session.raw_input().empty()) [self cancelComposition:client];
+    if (client && !_session.raw_input().empty()) [self updateMarkedText:client];
 }
 
 - (void)toggleLiveConversion:(id)sender {
@@ -232,12 +257,20 @@ static NSString *FromUtf8(const std::string &value) {
     if (_session.raw_input().empty()) {
         [sender setMarkedText:@"" selectionRange:NSMakeRange(0, 0)
              replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+        _hasCompositionReplacementRange = NO;
         [gCandidates hide];
         return;
     }
     NSString *text = FromUtf8(_session.display_text());
+    NSRange replacementRange = NSMakeRange(NSNotFound, NSNotFound);
+    if (!_hasCompositionReplacementRange) {
+        if ([sender respondsToSelector:@selector(selectedRange)]) {
+            replacementRange = [sender selectedRange];
+        }
+        _hasCompositionReplacementRange = YES;
+    }
     [sender setMarkedText:text selectionRange:NSMakeRange(text.length, 0)
-         replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+         replacementRange:replacementRange];
     if (_session.is_converting()) {
         [gCandidates updateCandidates];
         [gCandidates show:kIMKLocateCandidatesBelowHint];
@@ -250,6 +283,7 @@ static NSString *FromUtf8(const std::string &value) {
     NSString *text = FromUtf8(_session.selected_text());
     [sender insertText:text replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
     _session.clear();
+    _hasCompositionReplacementRange = NO;
     [gCandidates hide];
 }
 
@@ -257,6 +291,7 @@ static NSString *FromUtf8(const std::string &value) {
     [sender setMarkedText:@"" selectionRange:NSMakeRange(0, 0)
          replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
     _session.clear();
+    _hasCompositionReplacementRange = NO;
     [gCandidates hide];
 }
 

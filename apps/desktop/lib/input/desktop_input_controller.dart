@@ -46,6 +46,7 @@ class DesktopInputController extends ChangeNotifier {
   ZenzaiEngine? _zenzaiEngine;
   String _rawInput = '';
   String _committedText = '';
+  int _committedSelectionOffset = 0;
   List<ConversionCandidate> _candidates = const [];
   int _selectedIndex = 0;
   int _requestSequence = 0;
@@ -66,6 +67,7 @@ class DesktopInputController extends ChangeNotifier {
   ZenzaiModel get zenzaiModel => _zenzaiModel;
   String get rawInput => _rawInput;
   String get committedText => _committedText;
+  int get committedSelectionOffset => _committedSelectionOffset;
   List<ConversionCandidate> get candidates => _candidates;
   int get selectedIndex => _selectedIndex;
   bool get zenzaiWorking => _zenzaiWorking;
@@ -183,15 +185,18 @@ class DesktopInputController extends ChangeNotifier {
 
   void setMode(InputMode mode) {
     if (_mode == mode) return;
+    final wasConverting = _converting;
     _mode = mode;
-    _rawInput = '';
-    _candidates = const [];
     _selectedIndex = 0;
-    _converting = false;
+    _rebuildBaseCandidates();
+    _converting = wasConverting && _candidates.isNotEmpty;
     _requestSequence += 1;
     _zenzaiDebounce?.cancel();
     _zenzaiWorking = false;
     notifyListeners();
+    if (_mode == InputMode.japanese && _rawInput.isNotEmpty) {
+      _scheduleZenzai();
+    }
   }
 
   void updateRawInput(String value) {
@@ -211,7 +216,14 @@ class DesktopInputController extends ChangeNotifier {
 
   void replaceCommittedText(String value) {
     _committedText = value;
+    _committedSelectionOffset = value.length;
     notifyListeners();
+  }
+
+  void commitDirectText(String value, {int? replaceStart, int? replaceEnd}) {
+    if (value.isEmpty) return;
+    _replaceCommittedRange(value, replaceStart, replaceEnd);
+    cancelComposition();
   }
 
   void selectCandidate(int index) {
@@ -267,7 +279,7 @@ class DesktopInputController extends ChangeNotifier {
     return true;
   }
 
-  void commitSelected() {
+  void commitSelected({int? replaceStart, int? replaceEnd}) {
     if (_rawInput.isEmpty) return;
     final candidate = _candidates.isEmpty
         ? composingText
@@ -277,9 +289,35 @@ class DesktopInputController extends ChangeNotifier {
         ? '$composingText\t$candidate'
         : 'english:${_rawInput.toLowerCase()}\t$candidate';
     _learning[learningKey] = (_learning[learningKey] ?? 0) + 1;
-    _committedText += candidate;
-    if (_mode == InputMode.english) _committedText += ' ';
+    final committedCandidate = _mode == InputMode.english
+        ? '$candidate '
+        : candidate;
+    _replaceCommittedRange(committedCandidate, replaceStart, replaceEnd);
     cancelComposition();
+  }
+
+  void _replaceCommittedRange(
+    String value,
+    int? replaceStart,
+    int? replaceEnd,
+  ) {
+    var selectionStart = _committedText.length;
+    var selectionEnd = _committedText.length;
+    if (replaceStart != null &&
+        replaceEnd != null &&
+        replaceStart >= 0 &&
+        replaceEnd >= 0 &&
+        replaceStart <= _committedText.length &&
+        replaceEnd <= _committedText.length) {
+      selectionStart = replaceStart < replaceEnd ? replaceStart : replaceEnd;
+      selectionEnd = replaceStart < replaceEnd ? replaceEnd : replaceStart;
+    }
+    _committedText = _committedText.replaceRange(
+      selectionStart,
+      selectionEnd,
+      value,
+    );
+    _committedSelectionOffset = selectionStart + value.length;
   }
 
   void cancelComposition() {

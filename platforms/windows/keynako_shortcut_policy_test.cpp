@@ -4,6 +4,7 @@ using keynako::windows::ShortcutAction;
 using keynako::windows::DirectInputMode;
 using keynako::windows::direct_input_mode_for_key;
 using keynako::windows::is_convert_key;
+using keynako::windows::is_candidate_selection_key;
 using keynako::windows::is_hankaku_zenkaku_key;
 using keynako::windows::is_oem_text_key;
 using keynako::windows::is_slash_text_key;
@@ -50,6 +51,7 @@ static_assert(direct_input_mode_for_key(0x1a) == DirectInputMode::english);
 static_assert(direct_input_mode_for_key(0xf0) == DirectInputMode::english);
 static_assert(direct_input_mode_for_key(0xf3) == DirectInputMode::english);
 static_assert(direct_input_mode_for_key(0x19) == DirectInputMode::none);
+
 
 int main() {
     // Convert mirrors Space conversion on both JIS and US logical layouts. It
