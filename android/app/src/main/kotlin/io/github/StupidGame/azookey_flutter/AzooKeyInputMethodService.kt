@@ -49,6 +49,7 @@ import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
+import io.github.StupidGame.azookey_flutter.conversion.englishCaseComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
@@ -2981,12 +2982,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         val source = displayReading()
         if (source.isEmpty()) return
         val form = forms?.optString(0).orEmpty()
+        if (mode == "english") {
+            englishCaseComposition(source, form)?.let { converted ->
+                // Case changes are editing operations, not a request to accept
+                // the current prediction. Keep marked text and candidates live.
+                composing = converted
+                rawRoman = ""
+                updateComposition()
+                return
+            }
+        }
         val converted = when (form) {
             "hiragana" -> katakanaToHiragana(source)
             "katakana" -> hiraganaToKatakana(source)
             "halfwidth_katakana" -> katakanaToHalfWidth(hiraganaToKatakana(source))
-            "uppercase" -> source.uppercase(Locale.ROOT)
-            "lowercase" -> source.lowercase(Locale.ROOT)
             else -> source
         }
         currentInputConnection?.commitText(converted, 1)

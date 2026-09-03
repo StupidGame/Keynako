@@ -175,7 +175,7 @@ class _ActionEditorState extends State<_ActionEditor> {
     'moveCursor': 'カーソル移動',
     'switchLayout': '言語・配列を変更',
     'complete': '変換を確定',
-    'completeCharacterForm': '文字種を変換して確定',
+    'completeCharacterForm': '文字種を変換（英字は変換を継続）',
     'paste': 'ペースト',
     'toggleCursorBar': 'カーソルバーを開閉',
     'toggleTabBar': 'タブバーを開閉',

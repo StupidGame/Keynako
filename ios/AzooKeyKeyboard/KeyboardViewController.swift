@@ -1557,13 +1557,27 @@ final class KeyboardViewController: UIInputViewController {
 
     private func completeCharacterForm(_ forms: [String]?) {
         guard !composing.isEmpty else { return }
+        if mode == "english" {
+            let caseConverted: String?
+            switch forms?.first {
+            case "uppercase": caseConverted = composing.uppercased()
+            case "lowercase": caseConverted = composing.lowercased()
+            default: caseConverted = nil
+            }
+            if let caseConverted {
+                // Changing case must not accept the current prediction. Leave
+                // the replacement marked and rebuild the matching candidates.
+                composing = caseConverted
+                rawRoman = ""
+                updateComposition()
+                return
+            }
+        }
         let converted: String
         switch forms?.first {
         case "hiragana": converted = katakanaToHiragana(composing)
         case "katakana": converted = hiraganaToKatakana(composing)
         case "halfwidth_katakana": converted = hiraganaToKatakana(composing).applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? composing
-        case "uppercase": converted = composing.uppercased()
-        case "lowercase": converted = composing.lowercased()
         default: converted = composing
         }
         replaceDisplayed(with: converted, commit: true)
