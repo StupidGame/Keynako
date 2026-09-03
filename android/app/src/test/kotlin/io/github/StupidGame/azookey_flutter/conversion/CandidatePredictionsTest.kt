@@ -1,6 +1,7 @@
 package io.github.StupidGame.azookey_flutter.conversion
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CandidatePredictionsTest {
@@ -42,6 +43,19 @@ class CandidatePredictionsTest {
             listOf("HEL", "HELLO", "HELP"),
             englishPredictionCandidates("HEL"),
         )
+    }
+
+    @Test
+    fun englishCaseFormsKeepTextAvailableForContinuedConversion() {
+        assertEquals("HEL", englishCaseComposition("Hel", "uppercase"))
+        assertEquals("hello", englishCaseComposition("Hello", "lowercase"))
+        assertEquals(
+            listOf("HEL", "HELLO", "HELP"),
+            englishPredictionCandidates(
+                checkNotNull(englishCaseComposition("hel", "uppercase")),
+            ),
+        )
+        assertNull(englishCaseComposition("かな", "katakana"))
     }
 
     @Test

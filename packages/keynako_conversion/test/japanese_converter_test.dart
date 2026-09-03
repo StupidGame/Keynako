@@ -14,6 +14,10 @@ void main() {
     test('handles a final n', () {
       expect(converter.romanToHiragana('hon'), 'ほん');
     });
+
+    test('uses full-width punctuation for Japanese input', () {
+      expect(converter.romanToHiragana('nani!?'), 'なに！？');
+    });
   });
 
   test('prioritizes matching user dictionary entries', () {

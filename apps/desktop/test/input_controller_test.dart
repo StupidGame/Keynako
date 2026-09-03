@@ -36,6 +36,57 @@ void main() {
     controller.dispose();
   });
 
+  test('keeps composition and candidates when switching input mode', () {
+    final controller = DesktopInputController();
+    controller.updateRawInput('nihongo');
+    controller.beginOrCycleCandidate(1);
+
+    controller.setMode(InputMode.english);
+
+    expect(controller.rawInput, 'nihongo');
+    expect(controller.composingText, 'nihongo');
+    expect(controller.candidates, isNotEmpty);
+    expect(controller.converting, isTrue);
+
+    controller.setMode(InputMode.japanese);
+
+    expect(controller.rawInput, 'nihongo');
+    expect(controller.composingText, 'にほんご');
+    expect(controller.displayedComposition, '日本語');
+    expect(
+      controller.candidates.any((candidate) => candidate.text == '日本語'),
+      isTrue,
+    );
+    expect(controller.converting, isTrue);
+    controller.dispose();
+  });
+
+  test('replaces the selected committed text and keeps the new caret', () {
+    final controller = DesktopInputController();
+    controller.replaceCommittedText('前の文章後');
+    controller.updateRawInput('nihongo');
+    controller.selectCandidate(
+      controller.candidates.indexWhere((candidate) => candidate.text == '日本語'),
+    );
+
+    controller.commitSelected(replaceStart: 1, replaceEnd: 4);
+
+    expect(controller.committedText, '前日本語後');
+    expect(controller.committedSelectionOffset, 4);
+    controller.dispose();
+  });
+
+  test('direct whitespace input does not create conversion candidates', () {
+    final controller = DesktopInputController();
+
+    controller.commitDirectText('　');
+
+    expect(controller.committedText, '　');
+    expect(controller.rawInput, isEmpty);
+    expect(controller.candidates, isEmpty);
+    controller.dispose();
+  });
+
   test('previews the selected candidate during live conversion', () {
     final controller = DesktopInputController();
     controller.updateRawInput('nihongo');
@@ -45,6 +96,17 @@ void main() {
 
     controller.setLiveConversionEnabled(false);
     expect(controller.displayedComposition, 'にほんご');
+    controller.dispose();
+  });
+
+  test('uses full-width punctuation only in Japanese mode', () {
+    final controller = DesktopInputController();
+    controller.updateRawInput('!?');
+    expect(controller.composingText, '！？');
+
+    controller.setMode(InputMode.english);
+    controller.updateRawInput('!?');
+    expect(controller.composingText, '!?');
     controller.dispose();
   });
 

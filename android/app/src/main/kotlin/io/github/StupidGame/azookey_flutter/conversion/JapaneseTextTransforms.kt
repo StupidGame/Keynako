@@ -132,7 +132,9 @@ internal fun pinJapaneseKanaCandidates(
     }.toList()
 }
 
-internal val defaultScanTargets = listOf("、", "。", "！", "？", ".", ",", "．", "，", "\n")
+internal val defaultScanTargets = listOf(
+    " ", "　", "\t", "、", "。", "！", "？", ".", ",", "．", "，", "\n",
+)
 
 private val halfWidthKanaMap: Map<Char, String> = run {
     val full = "。「」、・ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヰヱヲン゙゚"

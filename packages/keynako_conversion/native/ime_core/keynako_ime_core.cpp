@@ -33,6 +33,7 @@ const std::unordered_map<std::string, std::string> kRoman = {
     {"la", "ぁ"}, {"li", "ぃ"}, {"lu", "ぅ"}, {"le", "ぇ"}, {"lo", "ぉ"}, {"xa", "ぁ"}, {"xi", "ぃ"}, {"xu", "ぅ"}, {"xe", "ぇ"}, {"xo", "ぉ"},
     {"lya", "ゃ"}, {"lyu", "ゅ"}, {"lyo", "ょ"}, {"xya", "ゃ"}, {"xyu", "ゅ"}, {"xyo", "ょ"}, {"ltu", "っ"}, {"xtu", "っ"},
     {"a", "あ"}, {"i", "い"}, {"u", "う"}, {"e", "え"}, {"o", "お"}, {"-", "ー"}, {",", "、"}, {".", "。"},
+    {"!", "！"}, {"?", "？"},
 };
 
 const std::unordered_map<std::string, std::vector<std::string>> kDictionary = {
@@ -74,12 +75,127 @@ void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> 
 }
 
 bool is_literal_candidate_suffix(char value) {
-    return value == '?' || value == '/';
+    return value == '!' || value == '?' || value == '/';
+}
+
+std::string display_ascii(char value, InputMode mode) {
+    if (mode == InputMode::japanese) {
+        if (value == '!') return "！";
+        if (value == '?') return "？";
+    }
+    return std::string(1, value);
+}
+
+std::string display_literal_suffix(const std::string &value, InputMode mode) {
+    std::string result;
+    for (const char character : value) {
+        result += display_ascii(character, mode);
+    }
+    return result;
+}
+
+int word_character_class(unsigned char value) {
+    if (std::isspace(value)) return 0;
+    if (std::isalnum(value) || value == '_') return 1;
+    return 2;
+}
+
+std::size_t ascii_word_delete_start(const std::string &input,
+                                    std::size_t lower_bound) {
+    std::size_t start = input.size();
+    while (start > lower_bound &&
+           word_character_class(static_cast<unsigned char>(input[start - 1])) == 0) {
+        --start;
+    }
+    if (start > lower_bound) {
+        const int target_class = word_character_class(
+            static_cast<unsigned char>(input[start - 1]));
+        while (start > lower_bound &&
+               word_character_class(static_cast<unsigned char>(input[start - 1])) ==
+                   target_class) {
+            --start;
+        }
+    }
+    return start;
+}
+
+std::size_t japanese_roman_word_delete_start(const std::string &input) {
+    std::size_t content_end = input.size();
+    while (content_end > 0 &&
+           word_character_class(static_cast<unsigned char>(input[content_end - 1])) == 0) {
+        --content_end;
+    }
+    if (content_end == 0) return 0;
+    const std::string content = input.substr(0, content_end);
+    const std::size_t start = ascii_word_delete_start(content, 0);
+    if (start >= content.size() ||
+        word_character_class(static_cast<unsigned char>(content.back())) != 1) {
+        return start;
+    }
+
+    std::string segment = content.substr(start);
+    std::transform(segment.begin(), segment.end(), segment.begin(),
+                   [](unsigned char value) {
+                       return static_cast<char>(std::tolower(value));
+                   });
+    static const std::unordered_set<std::string> indivisible_words = {
+        "konnichiha", "konbanha", "arigatou", "ohayou",
+    };
+    if (indivisible_words.count(segment) != 0) return start;
+
+    static const std::vector<std::string> auxiliaries = {
+        "masendeshita", "mashou", "mashita", "masen", "masu",
+        "deshita", "deshou", "desu", "datta", "darou", "nai", "tai",
+    };
+    static const std::vector<std::string> particles = {
+        "kara", "made", "yori", "node", "noni", "deha", "niha", "toha",
+        "tte", "wo", "ga", "ha", "mo", "no", "ni", "he", "de", "to", "ya",
+    };
+    for (const auto &suffix : auxiliaries) {
+        if (segment.size() > suffix.size() &&
+            segment.compare(segment.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return content_end - suffix.size();
+        }
+    }
+    for (const auto &suffix : particles) {
+        if (segment.size() > suffix.size() &&
+            segment.compare(segment.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return content_end - suffix.size();
+        }
+    }
+    for (const auto &particle : particles) {
+        const std::size_t index = segment.rfind(particle);
+        if (index != std::string::npos && index >= 2 &&
+            segment.size() - index - particle.size() >= 2) {
+            return start + index + particle.size();
+        }
+    }
+    return start;
+}
+
+std::size_t word_delete_start(const std::string &input, InputMode mode,
+                              std::size_t literal_suffix_start) {
+    const bool has_literal_suffix =
+        literal_suffix_start != std::string::npos &&
+        literal_suffix_start < input.size();
+    if (mode == InputMode::japanese && !has_literal_suffix) {
+        return japanese_roman_word_delete_start(input);
+    }
+    return ascii_word_delete_start(
+        input, has_literal_suffix ? literal_suffix_start : 0);
 }
 
 }  // namespace
 
-void ImeSession::set_mode(InputMode mode) { if (mode_ != mode) { mode_ = mode; clear(); } }
+void ImeSession::set_mode(InputMode mode) {
+    if (mode_ == mode) return;
+    const bool was_converting = converting_;
+    mode_ = mode;
+    pending_word_delete_start_ = std::string::npos;
+    live_conversion_suspended_ = false;
+    rebuild_candidates();
+    converting_ = was_converting && !candidates_.empty();
+}
 void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
 void ImeSession::append_ascii(char value) {
     append_ascii_internal(value, is_literal_candidate_suffix(value), false);
@@ -102,6 +218,7 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
         : std::string{};
     converting_ = false;
     live_conversion_suspended_ = false;
+    pending_word_delete_start_ = std::string::npos;
     if (extend_literal_suffix && literal_suffix_start_ == std::string::npos) {
         literal_suffix_start_ = raw_input_.size();
     }
@@ -109,7 +226,7 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     rebuild_candidates();
     if (!preserve_selection) return;
 
-    const std::string expected = selected_prefix + value;
+    const std::string expected = selected_prefix + display_ascii(value, mode_);
     const auto found = std::find_if(
         candidates_.begin(), candidates_.end(),
         [&expected](const Candidate &candidate) {
@@ -128,7 +245,12 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     converting_ = was_converting;
 }
 void ImeSession::backspace() {
-    if (raw_input_.empty()) return;
+    if (raw_input_.empty()) {
+        pending_word_delete_start_ = std::string::npos;
+        return;
+    }
+    pending_word_delete_start_ =
+        word_delete_start(raw_input_, mode_, literal_suffix_start_);
     const bool preserve_selection = !candidates_.empty() &&
         (has_literal_suffix() ||
          is_literal_candidate_suffix(raw_input_.back()));
@@ -140,7 +262,14 @@ void ImeSession::backspace() {
     const std::string selected_source = preserve_selection
         ? candidates_[selected_index_].source
         : std::string{};
-    if (preserve_selection && !expected.empty()) expected.pop_back();
+    if (preserve_selection && !expected.empty()) {
+        const std::string suffix = display_ascii(raw_input_.back(), mode_);
+        if (expected.size() >= suffix.size() &&
+            expected.compare(expected.size() - suffix.size(), suffix.size(),
+                             suffix) == 0) {
+            expected.resize(expected.size() - suffix.size());
+        }
+    }
     converting_ = false;
     live_conversion_suspended_ = false;
     raw_input_.pop_back();
@@ -167,7 +296,32 @@ void ImeSession::backspace() {
     }
     converting_ = was_converting;
 }
-void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; }
+
+void ImeSession::backspace_word() {
+    if (raw_input_.empty()) {
+        pending_word_delete_start_ = std::string::npos;
+        return;
+    }
+    const std::size_t recalculated =
+        word_delete_start(raw_input_, mode_, literal_suffix_start_);
+    const std::size_t start =
+        pending_word_delete_start_ != std::string::npos &&
+                pending_word_delete_start_ <= raw_input_.size()
+            ? pending_word_delete_start_
+            : recalculated;
+    pending_word_delete_start_ = std::string::npos;
+    // If the suffix consisted only of separators, remove the suffix boundary
+    // too. Otherwise it continues to protect the converted Japanese prefix.
+    raw_input_.resize(start);
+    if (literal_suffix_start_ != std::string::npos &&
+        raw_input_.size() <= literal_suffix_start_) {
+        literal_suffix_start_ = std::string::npos;
+    }
+    converting_ = false;
+    live_conversion_suspended_ = false;
+    rebuild_candidates();
+}
+void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
     converting_ = true;
@@ -274,9 +428,9 @@ void ImeSession::rebuild_candidates() {
         return;
     }
 
-    // A slash or question mark terminates the reading rather than becoming
-    // part of its dictionary key. Keep it on every candidate so adding
-    // punctuation cannot replace the text already shown by live conversion.
+    // Literal punctuation terminates the reading rather than becoming part of
+    // its dictionary key. Keep it on every candidate so adding punctuation
+    // cannot replace the text already shown by live conversion.
     std::string conversion_input;
     std::string literal_suffix;
     if (literal_suffix_start_ != std::string::npos &&
@@ -293,6 +447,7 @@ void ImeSession::rebuild_candidates() {
         std::reverse(literal_suffix.begin(), literal_suffix.end());
     }
     const std::string conversion_reading = roman_to_hiragana(conversion_input);
+    literal_suffix = display_literal_suffix(literal_suffix, mode_);
     reading_ = conversion_reading + literal_suffix;
     const auto append_converted = [&](std::string text, const char *source) {
         text += literal_suffix;

@@ -1,11 +1,22 @@
 package io.github.StupidGame.azookey_flutter.input
 
+import java.text.BreakIterator
+import java.util.Locale
 import kotlin.math.abs
 
 internal data class SurroundingDelete(
     val beforeCursor: Int = 0,
     val afterCursor: Int = 0,
 )
+
+/** Only a discrete, single backward delete can participate in a double tap. */
+internal fun shouldUseQuickWordDelete(
+    allowQuickWordDelete: Boolean,
+    deletion: SurroundingDelete,
+): Boolean =
+    allowQuickWordDelete &&
+        deletion.beforeCursor == 1 &&
+        deletion.afterCursor == 0
 
 /**
  * Custard's delete count is signed: positive values delete backward and
@@ -44,21 +55,143 @@ internal fun smartDeleteCount(
 }
 
 /**
- * Resolves Custard's common `delete` + backward smart-delete sequence in one
- * pass. Keeping the pair atomic avoids reading stale surrounding text between
- * the two editor operations, which is especially visible with Japanese IMEs.
+ * Returns the UTF-16 length of exactly one word (or one trailing punctuation
+ * cluster) immediately before the cursor. The platform iterator handles most
+ * Japanese text; [refinedJapaneseWordStart] supplies the boundaries that are
+ * commonly missing from an all-kana phrase.
  */
-internal fun combinedBackwardSmartDeleteCount(
+internal fun backwardWordDeleteCount(
     text: String,
-    leadingDeleteCount: Int,
-    targets: List<String>,
+    locale: Locale = Locale.JAPANESE,
 ): Int {
     if (text.isEmpty()) return 0
-    val leading = leadingDeleteCount.coerceAtLeast(0).coerceAtMost(text.length)
-    val remaining = text.dropLast(leading)
-    if (remaining.isEmpty()) return leading
-    return (leading + smartDeleteCount(remaining, targets, backward = true))
-        .coerceAtMost(text.length)
+
+    var contentEnd = text.length
+    while (contentEnd > 0) {
+        val codePoint = Character.codePointBefore(text, contentEnd)
+        if (!Character.isWhitespace(codePoint)) break
+        contentEnd -= Character.charCount(codePoint)
+    }
+    if (contentEnd == 0) return text.length
+
+    val iterator = BreakIterator.getWordInstance(locale).apply {
+        setText(text.substring(0, contentEnd))
+    }
+    var start = iterator.first()
+    var lastWordStart = -1
+    var lastWordEnd = -1
+    var end = iterator.next()
+    while (end != BreakIterator.DONE) {
+        if (containsWordCharacter(text, start, end)) {
+            lastWordStart = start
+            lastWordEnd = end
+        }
+        start = end
+        end = iterator.next()
+    }
+
+    if (lastWordEnd == contentEnd) {
+        return text.length - refinedJapaneseWordStart(text, lastWordStart, lastWordEnd)
+    }
+    if (lastWordEnd >= 0) return text.length - lastWordEnd
+
+    val characters = BreakIterator.getCharacterInstance(locale).apply { setText(text) }
+    val previous = characters.preceding(contentEnd).takeIf { it != BreakIterator.DONE } ?: 0
+    return text.length - previous
+}
+
+private enum class JapaneseCharacterClass {
+    HIRAGANA,
+    KATAKANA,
+    HAN,
+    LATIN,
+    DIGIT,
+    OTHER,
+}
+
+private val japaneseParticles = listOf(
+    "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
+    "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
+)
+
+private val japaneseAuxiliaries = listOf(
+    "ませんでした", "ましょう", "ました", "ません", "ます",
+    "でした", "でしょう", "です", "だった", "だろう", "ない", "たい",
+)
+
+private val indivisibleKanaWords = setOf(
+    "こんにちは", "こんばんは", "ありがとう", "おはよう",
+)
+
+/** Refines one platform word without ever extending its deletion range. */
+private fun refinedJapaneseWordStart(text: String, start: Int, end: Int): Int {
+    if (start >= end) return start
+
+    val finalClass = japaneseCharacterClass(Character.codePointBefore(text, end))
+    var runStart = end
+    var cursor = end
+    while (cursor > start) {
+        val codePoint = Character.codePointBefore(text, cursor)
+        if (japaneseCharacterClass(codePoint) != finalClass) break
+        cursor -= Character.charCount(codePoint)
+        runStart = cursor
+    }
+
+    // A script change is a stable boundary even when a platform iterator has
+    // returned a mixed Japanese/Latin token as one word.
+    if (runStart > start) return refineKanaGrammarBoundary(text, runStart, end)
+    return refineKanaGrammarBoundary(text, start, end)
+}
+
+private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
+    if (start >= end) return start
+    val segment = text.substring(start, end)
+    if (
+        segment in indivisibleKanaWords ||
+        segment.codePoints().anyMatch { japaneseCharacterClass(it) != JapaneseCharacterClass.HIRAGANA }
+    ) {
+        return start
+    }
+
+    japaneseAuxiliaries.firstOrNull { segment.length > it.length && segment.endsWith(it) }
+        ?.let { return end - it.length }
+    japaneseParticles.firstOrNull { segment.length > it.length && segment.endsWith(it) }
+        ?.let { return end - it.length }
+
+    for (particle in japaneseParticles) {
+        val index = segment.lastIndexOf(particle)
+        val boundary = index + particle.length
+        // Require a lexical-looking span on both sides. Particle priority is
+        // intentional: an unambiguous を must win over a later に that begins
+        // a word such as にゅうりょく.
+        if (index >= 2 && segment.length - boundary >= 2) {
+            return start + boundary
+        }
+    }
+    return start
+}
+
+private fun japaneseCharacterClass(codePoint: Int): JapaneseCharacterClass = when {
+    codePoint in 0x3040..0x309F -> JapaneseCharacterClass.HIRAGANA
+    codePoint in 0x30A0..0x30FF || codePoint in 0xFF66..0xFF9D ->
+        JapaneseCharacterClass.KATAKANA
+    codePoint in 0x3400..0x4DBF ||
+        codePoint in 0x4E00..0x9FFF ||
+        codePoint in 0xF900..0xFAFF -> JapaneseCharacterClass.HAN
+    Character.isDigit(codePoint) -> JapaneseCharacterClass.DIGIT
+    codePoint in 'A'.code..'Z'.code || codePoint in 'a'.code..'z'.code ->
+        JapaneseCharacterClass.LATIN
+    else -> JapaneseCharacterClass.OTHER
+}
+
+private fun containsWordCharacter(text: String, start: Int, end: Int): Boolean {
+    var index = start
+    while (index < end) {
+        val codePoint = Character.codePointAt(text, index)
+        if (Character.isLetterOrDigit(codePoint)) return true
+        index += Character.charCount(codePoint)
+    }
+    return false
 }
 
 internal data class CustardDeleteContinuationAction(
@@ -76,6 +209,7 @@ internal fun backwardSmartDeleteContinuationStartIndex(
 ): Int? {
     fun CustardDeleteContinuationAction.isBackwardSmartDelete(): Boolean =
         type == "smart_delete_default" ||
+            type == "smartDeleteDefault" ||
             (type == "smart_delete" && direction == "backward")
 
     if (

@@ -31,6 +31,7 @@ class NativeSession:
         self.library.keynako_ime_set_mode.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_append_ascii.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_backspace.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_backspace_word.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_clear.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_begin_conversion.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_begin_conversion.restype = ctypes.c_int
@@ -42,7 +43,12 @@ class NativeSession:
         self.library.keynako_ime_load_user_dictionary.restype = ctypes.c_int
         self.library.keynako_ime_set_bundled_dictionary_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_set_bundled_dictionary_path.restype = ctypes.c_int
-        for name in ("keynako_ime_reading", "keynako_ime_display_text", "keynako_ime_selected_text"):
+        for name in (
+            "keynako_ime_raw_input",
+            "keynako_ime_reading",
+            "keynako_ime_display_text",
+            "keynako_ime_selected_text",
+        ):
             function = getattr(self.library, name)
             function.argtypes = [ctypes.c_void_p]
             function.restype = ctypes.c_char_p
@@ -76,6 +82,12 @@ class NativeSession:
 
     def backspace(self) -> None:
         self.library.keynako_ime_backspace(self.handle)
+
+    def backspace_word(self) -> None:
+        self.library.keynako_ime_backspace_word(self.handle)
+
+    def raw_input(self) -> str:
+        return self.library.keynako_ime_raw_input(self.handle).decode()
 
     def clear(self) -> None:
         self.library.keynako_ime_clear(self.handle)
@@ -189,6 +201,8 @@ class KeynakoEngine(IBus.Engine):
         self.dictionary_mtime_ns = -1
         self.last_dictionary_check = 0.0
         self.last_dictionary_refresh_request = 0.0
+        self.last_backspace_press: float | None = None
+        self.backspace_released = True
         self._reload_shared_dictionary(force=True)
         self._request_shared_dictionary_refresh()
         self.mode_property = IBus.Property.new(
@@ -315,6 +329,21 @@ class KeynakoEngine(IBus.Engine):
         self.session.clear()
         self._render()
 
+    def _replace_selection_before_input(self) -> None:
+        """Delete the host selection once, before starting a new preedit."""
+        if self.raw:
+            return
+        try:
+            _, cursor_pos, anchor_pos = self.get_surrounding_text()
+            cursor = int(cursor_pos)
+            anchor = int(anchor_pos)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if cursor == anchor:
+            return
+        start = min(cursor, anchor)
+        self.delete_surrounding_text(start - cursor, abs(anchor - cursor))
+
     def _commit(self) -> None:
         if not self.raw:
             return
@@ -325,13 +354,18 @@ class KeynakoEngine(IBus.Engine):
     def do_process_key_event(self, keyval: int, keycode: int, state: int) -> bool:
         del keycode
         if state & IBus.ModifierType.RELEASE_MASK:
+            if keyval == IBus.KEY_BackSpace:
+                self.backspace_released = True
             return False
+        if keyval != IBus.KEY_BackSpace:
+            self.last_backspace_press = None
+            self.backspace_released = True
         self._request_shared_dictionary_refresh()
         control = bool(state & IBus.ModifierType.CONTROL_MASK)
         if control and keyval == IBus.KEY_space:
             self.mode = "en" if self.mode == "ja" else "ja"
             self.session.set_mode(self.mode == "en")
-            self.raw = ""
+            self.raw = self.session.raw_input()
             self._update_mode_property()
             self._render()
             return True
@@ -340,9 +374,26 @@ class KeynakoEngine(IBus.Engine):
         if keyval == IBus.KEY_BackSpace:
             if not self.raw:
                 return False
-            if not self.session.cancel_conversion():
-                self.raw = self.raw[:-1]
-                self.session.backspace()
+            if self.session.cancel_conversion():
+                self.last_backspace_press = None
+            else:
+                now = time.monotonic()
+                started_after_release = self.backspace_released
+                double_press = (
+                    started_after_release
+                    and self.last_backspace_press is not None
+                    and now - self.last_backspace_press <= 0.35
+                )
+                if double_press:
+                    self.session.backspace_word()
+                    self.last_backspace_press = None
+                else:
+                    self.session.backspace()
+                    self.last_backspace_press = (
+                        now if started_after_release and self.session.raw_input() else None
+                    )
+                self.raw = self.session.raw_input()
+                self.backspace_released = False
             self._render()
             return True
         if keyval == IBus.KEY_Escape:
@@ -367,15 +418,6 @@ class KeynakoEngine(IBus.Engine):
         )
         if keyval in conversion_keys:
             if not self.raw:
-                if keyval in (
-                    getattr(IBus, "KEY_Henkan", -1),
-                    getattr(IBus, "KEY_Henkan_Mode", -1),
-                ):
-                    self.mode = "en" if self.mode == "ja" else "ja"
-                    self.session.set_mode(self.mode == "en")
-                    self._update_mode_property()
-                    self._render()
-                    return True
                 return False
             self._reload_shared_dictionary()
             if not self.session.is_converting():
@@ -398,11 +440,12 @@ class KeynakoEngine(IBus.Engine):
             self._render()
             return True
         scalar = IBus.keyval_to_unicode(keyval)
-        if scalar and chr(scalar).lower() in "abcdefghijklmnopqrstuvwxyz-,.":
+        if scalar and chr(scalar).lower() in "abcdefghijklmnopqrstuvwxyz-,.!?/":
             if self.mode == "en":
                 return False
             value = chr(scalar)
             self._reload_shared_dictionary()
+            self._replace_selection_before_input()
             self.raw += value
             self.session.append(value)
             self._render()
@@ -424,7 +467,7 @@ class KeynakoEngine(IBus.Engine):
             return
         self.mode = "en" if self.mode == "ja" else "ja"
         self.session.set_mode(self.mode == "en")
-        self.raw = ""
+        self.raw = self.session.raw_input()
         self._update_mode_property()
         self._render()
 

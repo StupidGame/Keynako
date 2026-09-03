@@ -173,6 +173,8 @@ class JapaneseConverter {
     '-': 'ー',
     ',': '、',
     '.': '。',
+    '!': '！',
+    '?': '？',
   };
 
   static const Map<String, List<String>> _dictionary = {

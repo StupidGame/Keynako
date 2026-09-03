@@ -20,7 +20,9 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.net.Uri
+import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -47,6 +49,7 @@ import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
+import io.github.StupidGame.azookey_flutter.conversion.englishCaseComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
@@ -63,16 +66,20 @@ import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationAction
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
+import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
-import io.github.StupidGame.azookey_flutter.input.combinedBackwardSmartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
+import io.github.StupidGame.azookey_flutter.input.deleteEditorText
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
 import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
+import io.github.StupidGame.azookey_flutter.input.punctuationForInputMode
+import io.github.StupidGame.azookey_flutter.input.replaceCurrentSelection
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
+import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -113,6 +120,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var flickGuide: FlickGuide? = null
     private var cursorBarVisible = false
     private var cursorBarView: CursorBarView? = null
+    private var pendingQuickWordDelete: PendingQuickWordDelete? = null
     private val azooKeyDictionary by lazy {
         AzooKeyDictionary(
             DictionaryAssetSource { path ->
@@ -539,7 +547,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 row.addView(createKey(label, false, scale) { inputText(label) }, weightParams())
             }
             if (rowIndex == 2) {
-                row.addView(createKey("⌫", true, scale) { delete() }, weightParams(1.4f))
+                row.addView(createKey("⌫", true, scale) { quickDelete() }, weightParams(1.4f))
             }
             keyboardContainer.addView(row)
         }
@@ -573,7 +581,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         bottom.addView(createKey("あいう", true, scale) { setMode("japanese") }, weightParams(1.6f))
         bottom.addView(createKey("ABC", true, scale) { setMode("english") }, weightParams(1.5f))
         bottom.addView(createKey("space", false, scale) { directCommit(" ") }, weightParams(3f))
-        bottom.addView(createKey("⌫", true, scale) { delete() }, weightParams(1.3f))
+        bottom.addView(createKey("⌫", true, scale) { quickDelete() }, weightParams(1.3f))
         bottom.addView(createKey("return", true, scale) { enter() }, weightParams(1.8f))
         keyboardContainer.addView(bottom)
     }
@@ -614,7 +622,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val bottom = newRow(scale)
         bottom.addView(createKey("タブ", true, scale) { renderCandidates(true) }, weightParams())
         bottom.addView(createKey("あいう", true, scale) { setMode("japanese") }, weightParams())
-        bottom.addView(createKey("⌫", true, scale) { delete() }, weightParams())
+        bottom.addView(createKey("⌫", true, scale) { quickDelete() }, weightParams())
         bottom.addView(createKey("space", false, scale) { space() }, weightParams(2f))
         bottom.addView(createKey("return", true, scale) { enter() }, weightParams())
         keyboardContainer.addView(bottom)
@@ -907,7 +915,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                             val startIndex = if (continueDeleteVariationOnRelease) {
                                 backwardWordDeleteContinuationStartIndex(pressActions) ?: 0
                             } else 0
-                            dispatchActions(pressActions, startIndex)
+                            dispatchActions(
+                                pressActions,
+                                startIndex,
+                                allowQuickWordDelete = true,
+                            )
                             feedback(target)
                         }
                     } else if (!didLongPress) {
@@ -917,7 +929,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                         else if (abs(dx) > abs(dy)) if (dx < 0) "left" else "right"
                         else if (dy < 0) "top" else "bottom"
                         val variation = findCustardVariation(key, "flick_variation", direction)
-                        dispatchActions(variation?.optJSONArray("press_actions") ?: key.optJSONArray("press_actions"))
+                        dispatchActions(
+                            variation?.optJSONArray("press_actions") ?: key.optJSONArray("press_actions"),
+                            allowQuickWordDelete = true,
+                        )
                         feedback(target)
                     } else if (pcVariations.isNotEmpty() && activeRepeatActions.length() == 0) {
                         val width = target.width.coerceAtLeast(1)
@@ -1221,7 +1236,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                             if (dy < 0) "up" else "down"
                         }
                         runCatching {
-                            dispatchAction(key.optJSONObject(direction) ?: key.optJSONObject("tap"))
+                            dispatchAction(
+                                key.optJSONObject(direction) ?: key.optJSONObject("tap"),
+                                allowQuickWordDelete = true,
+                            )
                         }
                         feedback(target)
                     }
@@ -1369,6 +1387,8 @@ class AzooKeyInputMethodService : InputMethodService() {
                             inputText("\t")
                         } else if (isDelete && direction == "left") {
                             smartDeleteDefault()
+                        } else if (isDelete) {
+                            quickDelete()
                         } else if (key.action != null) {
                             dispatchNamedAction(key.action)
                         } else {
@@ -1537,7 +1557,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 val repeat = object : Runnable {
                     override fun run() {
                         if (!repeating) return
-                        if (isDelete) action() else if (isNextCandidate) space() else selectNextCandidate()
+                        if (isDelete) delete() else if (isNextCandidate) space() else selectNextCandidate()
                         handler.postDelayed(this, 70)
                     }
                 }
@@ -1549,11 +1569,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                         textDragMoved = false
                         repeating = false
                         if (textDragSession == null) {
-                            if (isDelete) action() else toggleCursorBar()
+                            if (isDelete) delete() else toggleCursorBar()
                         }
                     } else if (isDelete) {
                         repeating = true
-                        action()
+                        delete()
                         handler.postDelayed(repeat, 70)
                     } else if (isNextCandidate) {
                         repeating = false
@@ -1604,7 +1624,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                                 if (isDelete && textDragMoved) {
                                     session.deleteSelection()
                                 } else if (!textDragMoved) {
-                                    if (isDelete) action() else toggleCursorBar()
+                                    if (isDelete) delete() else toggleCursorBar()
                                 }
                                 textDragSession = null
                                 return@setOnTouchListener true
@@ -1974,21 +1994,34 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun inputText(value: String?) {
         if (value.isNullOrEmpty()) return
+        val input = punctuationForInputMode(value, mode)
+        if (input.isBlank()) {
+            directCommit(input)
+            return
+        }
         if (mode == "english") {
-            inputEnglishText(value)
+            inputEnglishText(input)
             return
         }
-        if (shouldDirectCommitJapaneseInput(value)) {
-            directCommit(value)
+        if (shouldDirectCommitJapaneseInput(input)) {
+            directCommit(input)
             return
         }
-        if (layout == "qwerty") rawRoman += value.lowercase() else composing += value
+        prepareSelectionForInput()
+        if (layout == "qwerty") rawRoman += input.lowercase() else composing += input
         updateComposition()
+    }
+
+    private fun prepareSelectionForInput() {
+        if (composing.isEmpty() && rawRoman.isEmpty()) {
+            replaceCurrentSelection(currentInputConnection)
+        }
     }
 
     private fun inputEnglishText(value: String) {
         val resolved = if (shift || capsLock) value.uppercase(Locale.ROOT) else value
         if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+            prepareSelectionForInput()
             composing += resolved
             updateComposition()
         } else {
@@ -2354,8 +2387,11 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun directCommit(value: String) {
+        prepareSelectionForInput()
         commitComposition()
-        currentInputConnection?.commitText(value, 1)
+        currentInputConnection?.commitText(punctuationForInputMode(value, mode), 1)
+        candidates.clear()
+        selectedCandidate = 0
         renderCandidates()
         cursorBarView?.post { cursorBarView?.refresh() }
     }
@@ -2390,10 +2426,108 @@ class AzooKeyInputMethodService : InputMethodService() {
                 } else updateComposition()
             }
             else -> {
-                currentInputConnection?.deleteSurroundingText(1, 0)
+                deleteFromEditor(1, 0)
                 cursorBarView?.post { cursorBarView?.refresh() }
             }
         }
+    }
+
+    private fun deleteFromEditor(beforeCursor: Int, afterCursor: Int): Boolean {
+        val rawInputTarget = currentInputEditorInfo?.inputType == InputType.TYPE_NULL
+        return deleteEditorText(
+            currentInputConnection,
+            beforeCursor,
+            afterCursor,
+            preferKeyEvents = rawInputTarget,
+        )
+    }
+
+    /**
+     * A normal first press still feels immediate. If the same delete key is
+     * pressed again quickly, finish deleting the one word that was under the
+     * cursor before the first press. Remembering that original range prevents
+     * a one-character word such as a particle from consuming its neighbor.
+     */
+    private fun quickDelete() {
+        val now = SystemClock.uptimeMillis()
+        pendingQuickWordDelete?.let { pending ->
+            val applied = if (now <= pending.deadlineMillis && pending.composition) {
+                if (
+                    composing == pending.expectedComposing &&
+                    rawRoman == pending.expectedRawRoman
+                ) {
+                    composing = pending.targetComposing
+                    rawRoman = pending.targetRawRoman
+                    if (composing.isEmpty() && rawRoman.isEmpty()) clearComposition()
+                    else updateComposition()
+                    true
+                } else {
+                    false
+                }
+            } else if (now <= pending.deadlineMillis) {
+                val current = currentInputConnection
+                    ?.getTextBeforeCursor(2000, 0)
+                    ?.toString()
+                    .orEmpty()
+                if (current == pending.expectedContext) {
+                    if (pending.remainingContextCount > 0) {
+                        deleteFromEditor(pending.remainingContextCount, 0)
+                    }
+                    cursorBarView?.post { cursorBarView?.refresh() }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+            pendingQuickWordDelete = null
+            if (applied) return
+        }
+
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
+            val originalComposing = composing
+            val count = backwardWordDeleteCount(originalComposing)
+            if (count <= 0) return
+            val targetComposing = originalComposing.dropLast(
+                count.coerceAtMost(originalComposing.length),
+            )
+            val targetRawRoman = if (rawRoman.isEmpty()) {
+                ""
+            } else {
+                rawRomanPrefixForComposition(targetComposing).orEmpty()
+            }
+            delete()
+            pendingQuickWordDelete = PendingQuickWordDelete(
+                deadlineMillis = now + QUICK_WORD_DELETE_INTERVAL_MILLIS,
+                composition = true,
+                expectedComposing = composing,
+                expectedRawRoman = rawRoman,
+                targetComposing = targetComposing,
+                targetRawRoman = targetRawRoman,
+            )
+            return
+        }
+
+        val originalContext = currentInputConnection
+            ?.getTextBeforeCursor(2000, 0)
+            ?.toString()
+            .orEmpty()
+        if (originalContext.isEmpty()) {
+            // Some editors intentionally withhold surrounding text. A normal
+            // Backspace must still be sent even though word detection is not
+            // available for that target.
+            delete()
+            return
+        }
+        val count = backwardWordDeleteCount(originalContext)
+        delete()
+        pendingQuickWordDelete = PendingQuickWordDelete(
+            deadlineMillis = now + QUICK_WORD_DELETE_INTERVAL_MILLIS,
+            composition = false,
+            expectedContext = originalContext.dropLast(1),
+            remainingContextCount = (count - 1).coerceAtLeast(0),
+        )
     }
 
     private fun deleteForward() {
@@ -2401,16 +2535,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         // azooKey's behavior: a forward delete has nothing to remove until the
         // composition is committed or cleared.
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) return
-        currentInputConnection?.deleteSurroundingText(0, 1)
+        deleteFromEditor(0, 1)
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun space() {
         if (composing.isEmpty() && rawRoman.isEmpty()) {
-            currentInputConnection?.commitText(" ", 1)
+            directCommit(" ")
         } else if (mode == "english") {
             commitComposition()
-            currentInputConnection?.commitText(" ", 1)
+            directCommit(" ")
         } else if (settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
             selectedCandidate = (selectedCandidate + 1) % candidates.size
             currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
@@ -2422,7 +2556,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun spaceWithoutConversion() {
         commitComposition(useCandidate = false)
-        currentInputConnection?.commitText(" ", 1)
+        directCommit(" ")
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
@@ -2490,7 +2624,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
-    private fun dispatchAction(action: JSONObject?) {
+    private fun dispatchAction(
+        action: JSONObject?,
+        allowQuickWordDelete: Boolean = false,
+    ) {
         if (action == null) return
         val type = action.optString("type", "input")
         val value = action.optString("value", "")
@@ -2502,8 +2639,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                 val count = if (action.has("count")) action.optInt("count", 1)
                 else value.toIntOrNull() ?: 1
                 val deletion = surroundingDeleteFor(count)
-                repeat(deletion.beforeCursor) { delete() }
-                repeat(deletion.afterCursor) { deleteForward() }
+                if (shouldUseQuickWordDelete(allowQuickWordDelete, deletion)) {
+                    quickDelete()
+                } else {
+                    repeat(deletion.beforeCursor) { delete() }
+                    repeat(deletion.afterCursor) { deleteForward() }
+                }
             }
             "enter" -> enter()
             "space" -> spaceWithoutConversion()
@@ -2541,7 +2682,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
-    private fun dispatchActions(actions: JSONArray?, startIndex: Int = 0) {
+    private fun dispatchActions(
+        actions: JSONArray?,
+        startIndex: Int = 0,
+        allowQuickWordDelete: Boolean = false,
+    ) {
         if (actions == null) return
         var index = startIndex.coerceAtLeast(0)
         while (index < actions.length()) {
@@ -2551,7 +2696,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 dispatchCombinedBackwardSmartDelete(checkNotNull(action), checkNotNull(next))
                 index += 2
             } else {
-                dispatchAction(action)
+                dispatchAction(action, allowQuickWordDelete)
                 index += 1
             }
         }
@@ -2567,47 +2712,24 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun isBackwardSmartDelete(action: JSONObject?): Boolean {
         val value = action ?: return false
-        return value.optString("type") == "smart_delete_default" ||
+        return isDefaultWordDeleteAction(value) ||
             (
                 value.optString("type") == "smart_delete" &&
                     value.optString("direction", "forward") == "backward"
             )
     }
 
+    private fun isDefaultWordDeleteAction(action: JSONObject): Boolean =
+        action.optString("type") in setOf("smart_delete_default", "smartDeleteDefault")
+
     private fun dispatchCombinedBackwardSmartDelete(
-        deleteAction: JSONObject,
-        smartDeleteAction: JSONObject,
+        @Suppress("UNUSED_PARAMETER") deleteAction: JSONObject,
+        @Suppress("UNUSED_PARAMETER") smartDeleteAction: JSONObject,
     ) {
-        val leadingCount = if (deleteAction.has("count")) {
-            deleteAction.optInt("count", 1)
-        } else {
-            deleteAction.optString("value").toIntOrNull() ?: 1
-        }
-        val targets = if (smartDeleteAction.optString("type") == "smart_delete_default") {
-            defaultScanTargets
-        } else {
-            actionTargets(smartDeleteAction)
-        }
-        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            if (
-                rawRoman.isNotEmpty() ||
-                smartDeleteAction.optString("type") == "smart_delete_default"
-            ) {
-                clearComposition()
-                return
-            }
-            val count = combinedBackwardSmartDeleteCount(composing, leadingCount, targets)
-            composing = composing.dropLast(count.coerceAtMost(composing.length))
-            if (composing.isEmpty()) clearComposition() else updateComposition()
-            return
-        }
-        val text = currentInputConnection
-            ?.getTextBeforeCursor(2000, 0)
-            ?.toString()
-            .orEmpty()
-        val count = combinedBackwardSmartDeleteCount(text, leadingCount, targets)
-        if (count > 0) currentInputConnection?.deleteSurroundingText(count, 0)
-        cursorBarView?.post { cursorBarView?.refresh() }
+        // Ogura-style layouts express word deletion as `delete` followed by a
+        // backward smart-delete. Resolve the pair before either action mutates
+        // the editor so one-character Japanese words stay isolated.
+        smartDeleteDefault()
     }
 
     private fun backwardWordDeleteContinuationStartIndex(actions: JSONArray?): Int? {
@@ -2689,6 +2811,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun custardInput(value: String) {
         if (value.isEmpty()) return
+        if (value.isBlank()) {
+            directCommit(value)
+            return
+        }
         val custard = activeCustard()
         val language = custard?.optString("language", "undefined") ?: "undefined"
         val inputStyle = custard?.optString("input_style", "direct") ?: "direct"
@@ -2710,6 +2836,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             directCommit(value)
             return
         }
+        prepareSelectionForInput()
         mode = "japanese"
         if (inputStyle == "roman2kana") {
             layout = "qwerty"
@@ -2765,45 +2892,55 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun smartDeleteDefault() {
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            clearComposition()
+            val count = backwardWordDeleteCount(composing)
+            val remaining = composing.dropLast(count.coerceAtMost(composing.length))
+            if (rawRoman.isNotEmpty()) {
+                val remainingRaw = rawRomanPrefixForComposition(remaining)
+                if (remainingRaw == null) {
+                    clearComposition()
+                    return
+                }
+                rawRoman = remainingRaw
+            }
+            composing = remaining
+            if (composing.isEmpty()) clearComposition() else updateComposition()
             return
         }
-        smartDelete(JSONObject().put("direction", "backward").put("targets", JSONArray(defaultScanTargets)))
+        val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
+        val count = backwardWordDeleteCount(text)
+        if (count > 0) deleteFromEditor(count, 0)
+        cursorBarView?.post { cursorBarView?.refresh() }
+    }
+
+    private fun rawRomanPrefixForComposition(expected: String): String? {
+        for (end in rawRoman.length downTo 0) {
+            val prefix = rawRoman.substring(0, end)
+            if (romanToHiragana(prefix) == expected) return prefix
+        }
+        return null
     }
 
     private fun smartDelete(action: JSONObject) {
-        val targets = actionTargets(action)
         val backward = action.optString("direction", "forward") == "backward"
-        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            // The local composition cursor is at the trailing edge. Apply the
-            // requested boundaries to direct kana input so a word-delete action
-            // removes only the current token, not the complete composition.
-            if (backward && rawRoman.isEmpty()) {
-                val count = smartDeleteCount(composing, targets, backward = true)
-                composing = composing.dropLast(count.coerceAtMost(composing.length))
-                if (composing.isEmpty()) clearComposition() else updateComposition()
-            } else if (backward) {
-                // A roman buffer cannot be sliced safely by its converted kana
-                // length, so match azooKey and clear that active composition.
-                clearComposition()
-            }
+        if (backward) {
+            // Custard smart-delete is the layout-level word-delete gesture.
+            // Use the same linguistic boundary detector as a double delete tap
+            // instead of merely scanning back to a configured punctuation mark.
+            smartDeleteDefault()
             return
         }
-        if (backward) {
-            val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
-            currentInputConnection?.deleteSurroundingText(
-                smartDeleteCount(text, targets, backward = true),
-                0,
-            )
-            cursorBarView?.post { cursorBarView?.refresh() }
-        } else {
-            val text = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
-            currentInputConnection?.deleteSurroundingText(
-                0,
-                smartDeleteCount(text, targets, backward = false),
-            )
-            cursorBarView?.post { cursorBarView?.refresh() }
+        val targets = actionTargets(action)
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
+            // The local composition cursor is at its trailing edge, so a
+            // forward smart-delete has nothing to remove until it is committed.
+            return
         }
+        val text = currentInputConnection?.getTextAfterCursor(2000, 0)?.toString().orEmpty()
+        deleteFromEditor(
+            0,
+            smartDeleteCount(text, targets, backward = false),
+        )
+        cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun smartMoveCursor(action: JSONObject) {
@@ -2845,12 +2982,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         val source = displayReading()
         if (source.isEmpty()) return
         val form = forms?.optString(0).orEmpty()
+        if (mode == "english") {
+            englishCaseComposition(source, form)?.let { converted ->
+                // Case changes are editing operations, not a request to accept
+                // the current prediction. Keep marked text and candidates live.
+                composing = converted
+                rawRoman = ""
+                updateComposition()
+                return
+            }
+        }
         val converted = when (form) {
             "hiragana" -> katakanaToHiragana(source)
             "katakana" -> hiraganaToKatakana(source)
             "halfwidth_katakana" -> katakanaToHalfWidth(hiraganaToKatakana(source))
-            "uppercase" -> source.uppercase(Locale.ROOT)
-            "lowercase" -> source.lowercase(Locale.ROOT)
             else -> source
         }
         currentInputConnection?.commitText(converted, 1)
@@ -3177,6 +3322,17 @@ class AzooKeyInputMethodService : InputMethodService() {
         val layout: String,
     )
 
+    private data class PendingQuickWordDelete(
+        val deadlineMillis: Long,
+        val composition: Boolean,
+        val expectedComposing: String = "",
+        val expectedRawRoman: String = "",
+        val targetComposing: String = "",
+        val targetRawRoman: String = "",
+        val expectedContext: String = "",
+        val remainingContextCount: Int = 0,
+    )
+
     data class KeyboardPalette(
         val background: Int,
         val key: Int,
@@ -3206,6 +3362,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "azooKey_hotfix_dictionary_storage_latest_tag"
         private const val IME_LOG_TAG = "KeynakoIME"
         private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
+        private const val QUICK_WORD_DELETE_INTERVAL_MILLIS = 350L
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null
 

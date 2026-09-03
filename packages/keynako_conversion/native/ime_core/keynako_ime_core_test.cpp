@@ -8,7 +8,8 @@ int main() {
     using keynako::ImeSession;
     assert(ImeSession::roman_to_hiragana("nihongo") == "にほんご");
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
-    assert(ImeSession::roman_to_hiragana("nani?") == "なに?");
+    assert(ImeSession::roman_to_hiragana("nani?") == "なに？");
+    assert(ImeSession::roman_to_hiragana("nani!") == "なに！");
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},
@@ -35,6 +36,36 @@ int main() {
     assert(session.raw_input() == "henka");
     assert(!session.is_converting());
 
+    ImeSession word_delete;
+    for (const char value : std::string("hello")) word_delete.append_ascii(value);
+    word_delete.backspace();
+    assert(word_delete.raw_input() == "hell");
+    word_delete.backspace_word();
+    assert(word_delete.raw_input().empty());
+
+    ImeSession japanese_phrase_word_delete;
+    for (const char value : std::string("watashihanihongowonyuuryoku")) {
+        japanese_phrase_word_delete.append_ascii(value);
+    }
+    japanese_phrase_word_delete.backspace();
+    assert(japanese_phrase_word_delete.raw_input() ==
+           "watashihanihongowonyuuryok");
+    japanese_phrase_word_delete.backspace_word();
+    assert(japanese_phrase_word_delete.raw_input() == "watashihanihongowo");
+    japanese_phrase_word_delete.backspace();
+    assert(japanese_phrase_word_delete.raw_input() == "watashihanihongow");
+    japanese_phrase_word_delete.backspace_word();
+    assert(japanese_phrase_word_delete.raw_input() == "watashihanihongo");
+
+    ImeSession literal_word_delete;
+    for (const char value : std::string("nihongo")) literal_word_delete.append_ascii(value);
+    for (const char value : std::string("OpenAI")) {
+        literal_word_delete.append_literal_ascii(value);
+    }
+    literal_word_delete.backspace_word();
+    assert(literal_word_delete.raw_input() == "nihongo");
+    assert(literal_word_delete.display_text() == "日本語");
+
     ImeSession question_mark;
     question_mark.set_user_dictionary({
         {"なに", "何", 5},
@@ -45,9 +76,39 @@ int main() {
     assert(question_mark.begin_conversion());
     question_mark.append_ascii('?');
     assert(question_mark.raw_input() == "nani?");
-    assert(question_mark.reading() == "なに?");
-    assert(question_mark.display_text() == "何なの?");
+    assert(question_mark.reading() == "なに？");
+    assert(question_mark.display_text() == "何なの？");
     assert(question_mark.is_converting());
+    question_mark.append_ascii('!');
+    assert(question_mark.reading() == "なに？！");
+    assert(question_mark.display_text() == "何なの？！");
+    question_mark.backspace();
+    assert(question_mark.display_text() == "何なの？");
+
+    ImeSession english_punctuation;
+    english_punctuation.set_mode(keynako::InputMode::english);
+    english_punctuation.append_ascii('!');
+    english_punctuation.append_ascii('?');
+    assert(english_punctuation.reading() == "!?");
+    assert(english_punctuation.display_text() == "!?");
+
+    ImeSession mode_switch;
+    for (const char value : std::string("nihongo")) mode_switch.append_ascii(value);
+    assert(mode_switch.begin_conversion());
+    mode_switch.set_mode(keynako::InputMode::english);
+    assert(mode_switch.raw_input() == "nihongo");
+    assert(mode_switch.reading() == "nihongo");
+    assert(mode_switch.is_converting());
+    mode_switch.set_mode(keynako::InputMode::japanese);
+    assert(mode_switch.raw_input() == "nihongo");
+    assert(mode_switch.reading() == "にほんご");
+    assert(mode_switch.is_converting());
+    assert(mode_switch.display_text() == "日本語");
+    assert(std::any_of(
+        mode_switch.candidates().begin(), mode_switch.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.text == "日本語";
+        }));
 
     ImeSession mixed_text;
     mixed_text.set_user_dictionary({
@@ -65,7 +126,7 @@ int main() {
     assert(mixed_text.display_text() == "日本語入力OpenAI");
     assert(mixed_text.has_literal_suffix());
     mixed_text.append_ascii('?');
-    assert(mixed_text.display_text() == "日本語入力OpenAI?");
+    assert(mixed_text.display_text() == "日本語入力OpenAI？");
     mixed_text.backspace();
     assert(mixed_text.display_text() == "日本語入力OpenAI");
 
