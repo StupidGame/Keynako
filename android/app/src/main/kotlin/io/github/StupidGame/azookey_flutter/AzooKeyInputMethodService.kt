@@ -95,6 +95,7 @@ import kotlin.random.Random
 
 class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var inputViewFrame: FrameLayout
+    private lateinit var keyboardSurface: FrameLayout
     private lateinit var backgroundImageView: KeyboardBackgroundImageView
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
@@ -157,12 +158,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         inputViewFrame = FrameLayout(this).apply {
             setBackgroundColor(palette.background)
         }
+        keyboardSurface = FrameLayout(this)
+        inputViewFrame.addView(
+            keyboardSurface,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         backgroundImageView = KeyboardBackgroundImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             imageAlpha = 217
             visibility = View.GONE
         }
-        inputViewFrame.addView(
+        keyboardSurface.addView(
             backgroundImageView,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -172,7 +181,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        inputViewFrame.addView(
+        keyboardSurface.addView(
             root,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -1913,18 +1922,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             "right" -> Gravity.END
             else -> Gravity.CENTER_HORIZONTAL
         }
-        root.layoutParams = FrameLayout.LayoutParams(
+        keyboardSurface.layoutParams = FrameLayout.LayoutParams(
             width,
             FrameLayout.LayoutParams.WRAP_CONTENT,
             horizontalGravity or Gravity.BOTTOM,
         )
-        backgroundImageView.layoutParams = FrameLayout.LayoutParams(
-            width,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            horizontalGravity or Gravity.BOTTOM,
-        )
-        root.requestLayout()
-        backgroundImageView.requestLayout()
+        keyboardSurface.requestLayout()
         inputViewFrame.requestLayout()
     }
 

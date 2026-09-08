@@ -15,6 +15,9 @@ TSF key sink and preserved-key routes remain active. The key sink also handles
 the explicit IME on/off and DBE half-width/full-width virtual-key variants.
 Slash and `Shift+Slash` are translated through the active layout, so `/` and `?`
 work with both Japanese and US keyboards.
+The TIP also publishes its candidates through the TSF UI-less interfaces. Games
+and other full-screen clients that render IME candidates themselves can activate
+Keynako, receive the candidate list, change its selection, and finalize it.
 
 The Windows Input Indicator and keyboard-layout picker use the Android-matching
 app icon, and a separate `あ` or `A` mode item through `GUID_LBI_INPUTMODE`.
