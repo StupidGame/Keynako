@@ -6,13 +6,12 @@ selection, the shared Keynako dictionary and optional Zenzai conversion.
 `Space` starts/cycles conversion. The Japanese Convert key mirrors that behavior
 only while a composition exists; it is never used as an input-mode toggle.
 Hankaku/Zenkaku toggles Japanese/English mode while preserving the current composition
-and rebuilding its candidates for the selected mode. A thread-local `WH_KEYBOARD` hook
-accepts its physical JIS scan code on a Windows keyboard reported as Japanese,
-even while the logical layout is US. A real US 101/102-key keyboard keeps bare
-Backquote available for text entry and can toggle with `Alt+Backquote` (the
-Microsoft IME shortcut) or `Ctrl+Space`. If the hook is unavailable, the normal
-TSF key sink and preserved-key routes remain active. The key sink also handles
-the explicit IME on/off and DBE half-width/full-width virtual-key variants.
+and rebuilding its candidates for the selected mode when Windows reports that key
+through TSF. Keynako does not install a Windows keyboard hook. A US 101/102-key
+keyboard keeps bare Backquote available for text entry and can toggle with
+`Alt+Backquote` (the Microsoft IME shortcut) or `Ctrl+Space`. The TSF key sink and
+preserved-key routes also handle the explicit IME on/off and DBE
+half-width/full-width virtual-key variants.
 Slash and `Shift+Slash` are translated through the active layout, so `/` and `?`
 work with both Japanese and US keyboards.
 The TIP also publishes its candidates through the TSF UI-less interfaces. Games
@@ -30,9 +29,16 @@ Keynako shared-dictionary HTTPS gateway used by the app. Network work runs in a
 small out-of-process helper, so the focused application and TSF thread do not
 block on the request.
 The input-indicator menu can also refresh the shared dictionary immediately.
-While the IME is in use it requests a cache refresh at most once every five
-minutes through the desktop app's non-visual command mode, then reloads the
-newest per-user cache without blocking the focused application.
+The desktop app performs periodic cache refreshes. The TIP only reloads the newest
+local cache while typing, so a focused application never spawns a dictionary-refresh
+process in response to a key event.
+
+Windows loads a TSF text-service DLL inside the focused application. Release-tag
+artifacts must therefore carry a trusted Authenticode signature on the TIP, its
+Keynako helper executables, and the installer. Pull-request and manual Actions
+artifacts are deliberately marked unsigned and are for isolated testing only.
+Protected games can still apply their own allowlist, so a valid signature improves
+trust but cannot guarantee acceptance by every anti-cheat product.
 
 When `KEYNAKO_DICTIONARY_SUBMISSION_URL` is set to an HTTPS URL at CMake
 configure time, committing a non-first dictionary candidate shows an eight-second

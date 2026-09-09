@@ -64,6 +64,10 @@ add_custom_command(TARGET KeynakoIME POST_BUILD
 if(MSVC)
   target_compile_options(KeynakoIME PRIVATE /W4 /EHsc /utf-8 /permissive-)
   target_compile_options(KeynakoDictionarySubmit PRIVATE /W4 /EHsc /utf-8 /permissive-)
+  target_compile_options(KeynakoIME PRIVATE /guard:cf)
+  target_compile_options(KeynakoDictionarySubmit PRIVATE /guard:cf)
+  target_link_options(KeynakoIME PRIVATE /guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
+  target_link_options(KeynakoDictionarySubmit PRIVATE /guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
 endif()
 
 if(BUILD_TESTING)

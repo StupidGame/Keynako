@@ -277,6 +277,35 @@ jobs:
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-small-gguf' (Join-Path $imeRoot 'zenzai')
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-xsmall-gguf' (Join-Path $imeRoot 'zenzai')
 
+      - name: Sign the staged Windows binaries for release tags
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          KEYNAKO_WINDOWS_SIGNING_PFX: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PFX }}
+          KEYNAKO_WINDOWS_SIGNING_PASSWORD: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:KEYNAKO_WINDOWS_SIGNING_PFX) -or
+              [string]::IsNullOrWhiteSpace($env:KEYNAKO_WINDOWS_SIGNING_PASSWORD)) {
+            throw 'Release tags require KEYNAKO_WINDOWS_SIGNING_PFX and KEYNAKO_WINDOWS_SIGNING_PASSWORD.'
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'keynako-authenticode.pfx'
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:KEYNAKO_WINDOWS_SIGNING_PFX))
+            $packageRoot = Join-Path $env:RUNNER_TEMP 'Keynako-package'
+            & 'platforms/windows/sign-artifacts.ps1' `
+              -CertificatePath $certificatePath `
+              -CertificatePassword $env:KEYNAKO_WINDOWS_SIGNING_PASSWORD `
+              -Files @(
+                (Join-Path $packageRoot 'Keynako.exe'),
+                (Join-Path $packageRoot 'ime/KeynakoIME.dll'),
+                (Join-Path $packageRoot 'ime/KeynakoDictionarySubmit.exe'),
+                (Join-Path $packageRoot 'ime/keynako_zenzai.exe'))
+          } finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build the executable Windows installer and uninstaller
         shell: pwsh
         run: |
@@ -287,14 +316,51 @@ jobs:
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
           & $iscc "/DPackageRoot=$packageRoot" "/DOutputDir=$outputRoot" "/DBuildId=${{ github.run_number }}" 'platforms/windows/installer.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Sign the Windows installer for release tags
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          KEYNAKO_WINDOWS_SIGNING_PFX: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PFX }}
+          KEYNAKO_WINDOWS_SIGNING_PASSWORD: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'keynako-authenticode.pfx'
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:KEYNAKO_WINDOWS_SIGNING_PFX))
+            & 'platforms/windows/sign-artifacts.ps1' `
+              -CertificatePath $certificatePath `
+              -CertificatePassword $env:KEYNAKO_WINDOWS_SIGNING_PASSWORD `
+              -Files @('build/windows-installer/KeynakoSetup.exe')
+          } finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Record the Windows installer checksum
+        shell: pwsh
+        run: |
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE 'build/windows-installer'
           Get-FileHash -Algorithm SHA256 (Join-Path $outputRoot 'KeynakoSetup.exe') |
             ForEach-Object { "$($_.Hash.ToLower())  KeynakoSetup.exe" } |
             Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
 
-      - name: Upload the Windows desktop app
+      - name: Upload the signed Windows desktop app
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v7
         with:
-          name: keynako-windows-installer-${{ github.run_number }}
+          name: keynako-windows-installer-signed-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/windows-installer/KeynakoSetup.exe
+            build/windows-installer/KeynakoSetup.exe.sha256
+
+      - name: Upload the unsigned Windows test build
+        if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: keynako-windows-installer-unsigned-${{ github.run_number }}
           if-no-files-found: error
           retention-days: 14
           path: |

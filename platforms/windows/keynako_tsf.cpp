@@ -222,7 +222,6 @@ class TextService final : public ITfTextInputProcessorEx,
 public:
     TextService() { ++g_objects; }
     ~TextService() {
-        remove_keyboard_hook();
         hide_candidates();
         hide_improvement_prompt();
         remove_language_bar();
@@ -281,44 +280,12 @@ public:
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         ShellExecuteW(nullptr, L"open", executable.c_str(), nullptr, executable.parent_path().c_str(), SW_SHOWNORMAL);
     }
-    void refresh_shared_dictionary(bool force = true) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!force && last_dictionary_refresh_request_.time_since_epoch().count() != 0 &&
-            now - last_dictionary_refresh_request_ < std::chrono::minutes(5)) return;
-        if (!force) {
-            std::vector<std::filesystem::path> cache_files;
-            const auto local_app_data = environment_path(L"LOCALAPPDATA");
-            const auto program_data = environment_path(L"ProgramData");
-            if (!local_app_data.empty()) {
-                cache_files.push_back(local_app_data / L"Keynako" / L"shared_dictionary.tsv");
-            }
-            if (!program_data.empty()) {
-                cache_files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
-            }
-            std::error_code cache_error;
-            for (const auto &cache_file : cache_files) {
-                if (!std::filesystem::exists(cache_file, cache_error) || cache_error) {
-                    cache_error.clear();
-                    continue;
-                }
-                const auto modified = std::filesystem::last_write_time(cache_file, cache_error);
-                if (!cache_error && std::filesystem::file_time_type::clock::now() - modified <
-                                        std::chrono::minutes(5)) {
-                    last_dictionary_refresh_request_ = now;
-                    return;
-                }
-                break;
-            }
-        }
-        last_dictionary_refresh_request_ = now;
-
+    void refresh_shared_dictionary() {
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         std::error_code executable_error;
         if (!std::filesystem::exists(executable, executable_error) || executable_error) return;
-        const wchar_t *argument = force
-            ? L"--refresh-shared-dictionary"
-            : L"--refresh-shared-dictionary-if-due";
-        std::wstring command_line = L"\"" + executable.wstring() + L"\" " + argument;
+        std::wstring command_line = L"\"" + executable.wstring() +
+                                    L"\" --refresh-shared-dictionary";
         const auto working_directory = executable.parent_path().wstring();
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
@@ -330,12 +297,10 @@ public:
             CloseHandle(process.hThread);
             CloseHandle(process.hProcess);
         }
-        if (force) {
-            shared_submission_status_ = created
-                ? L"共有辞書を更新中です"
-                : L"共有辞書を更新できません";
-            if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
-        }
+        shared_submission_status_ = created
+            ? L"共有辞書を更新中です"
+            : L"共有辞書を更新できません";
+        if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
     }
 
     STDMETHODIMP Activate(ITfThreadMgr *thread_manager, TfClientId client_id) override {
@@ -359,7 +324,6 @@ public:
             }
             keys->Release();
         }
-        install_keyboard_hook();
         initialize_language_bar();
         sync_input_compartments();
         session_.set_bundled_dictionary_path(path_utf8(
@@ -368,7 +332,6 @@ public:
         return result;
     }
     STDMETHODIMP Deactivate() override {
-        remove_keyboard_hook();
         session_.clear();
         hide_candidates();
         hide_improvement_prompt();
@@ -403,7 +366,6 @@ public:
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
         hide_improvement_prompt();
-        refresh_shared_dictionary(false);
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         if (key != VK_BACK) last_backspace_press_ = {};
@@ -717,89 +679,8 @@ private:
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
-    std::chrono::steady_clock::time_point last_dictionary_refresh_request_{};
     std::chrono::steady_clock::time_point last_backspace_press_{};
     std::wstring shared_submission_status_;
-    HHOOK keyboard_hook_ = nullptr;
-    bool physical_shortcut_down_ = false;
-    inline static thread_local TextService *keyboard_hook_owner_ = nullptr;
-
-    static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM key, LPARAM key_data) {
-        TextService *owner = keyboard_hook_owner_;
-        if (!owner || code != HC_ACTION) {
-            return CallNextHookEx(owner ? owner->keyboard_hook_ : nullptr, code, key,
-                                  key_data);
-        }
-        return owner->handle_keyboard_hook(key, key_data);
-    }
-
-    LRESULT handle_keyboard_hook(WPARAM key, LPARAM key_data) {
-        const auto data = static_cast<ULONG_PTR>(key_data);
-        const auto scan_code = static_cast<std::uint32_t>((data >> 16) & 0xff);
-        const bool japanese_keyboard = uses_japanese_keyboard();
-        const bool convert_key = keynako::windows::is_convert_key(
-            static_cast<std::uint32_t>(key), scan_code);
-        const bool hankaku_zenkaku_key =
-            keynako::windows::is_hankaku_zenkaku_key(
-                static_cast<std::uint32_t>(key), scan_code,
-                japanese_keyboard);
-        if (!convert_key && !hankaku_zenkaku_key) {
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        const bool alt = (data & (static_cast<ULONG_PTR>(1) << 29)) != 0;
-        if (control || alt) {
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const bool released = (data & (static_cast<ULONG_PTR>(1) << 31)) != 0;
-        if (released) {
-            if (physical_shortcut_down_) {
-                physical_shortcut_down_ = false;
-                return 1;
-            }
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const auto action = keynako::windows::shortcut_action(
-            static_cast<std::uint32_t>(key), scan_code, false, false,
-            !session_.raw_input().empty(), japanese_keyboard);
-        if (action == keynako::windows::ShortcutAction::none) {
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const bool was_down = (data & (static_cast<ULONG_PTR>(1) << 30)) != 0;
-        if (!was_down && !physical_shortcut_down_) {
-            if (action == keynako::windows::ShortcutAction::toggle_input_mode) {
-                toggle_input_mode();
-            } else {
-                convert_or_cycle_active();
-            }
-        }
-        physical_shortcut_down_ = true;
-        return 1;
-    }
-
-    void install_keyboard_hook() {
-        if (keyboard_hook_) return;
-        if (keyboard_hook_owner_ && keyboard_hook_owner_ != this) {
-            keyboard_hook_owner_->remove_keyboard_hook();
-        }
-        keyboard_hook_ = SetWindowsHookExW(WH_KEYBOARD, keyboard_hook_proc, nullptr,
-                                           GetCurrentThreadId());
-        if (keyboard_hook_) keyboard_hook_owner_ = this;
-    }
-
-    void remove_keyboard_hook() {
-        if (keyboard_hook_) {
-            UnhookWindowsHookEx(keyboard_hook_);
-            keyboard_hook_ = nullptr;
-        }
-        if (keyboard_hook_owner_ == this) keyboard_hook_owner_ = nullptr;
-        physical_shortcut_down_ = false;
-    }
-
     void convert_or_cycle(ITfContext *context) {
         if (session_.raw_input().empty()) return;
         reload_shared_dictionary();
@@ -810,18 +691,6 @@ private:
             session_.select_next();
         }
         request_edit(context, EditAction::update);
-    }
-
-    void convert_or_cycle_active() {
-        if (!thread_manager_) return;
-        ITfDocumentMgr *document = nullptr;
-        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return;
-        ITfContext *context = nullptr;
-        if (SUCCEEDED(document->GetTop(&context)) && context) {
-            convert_or_cycle(context);
-            context->Release();
-        }
-        document->Release();
     }
 
     bool handles_key(WPARAM key, LPARAM key_data) const {
