@@ -158,24 +158,24 @@ class AzooKeyInputMethodService : InputMethodService() {
         inputViewFrame = FrameLayout(this).apply {
             setBackgroundColor(palette.background)
         }
+        backgroundImageView = KeyboardBackgroundImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            imageAlpha = 217
+            visibility = View.GONE
+        }
+        inputViewFrame.addView(
+            backgroundImageView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
         keyboardSurface = FrameLayout(this)
         inputViewFrame.addView(
             keyboardSurface,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        backgroundImageView = KeyboardBackgroundImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            imageAlpha = 217
-            visibility = View.GONE
-        }
-        keyboardSurface.addView(
-            backgroundImageView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
         root = LinearLayout(this).apply {
