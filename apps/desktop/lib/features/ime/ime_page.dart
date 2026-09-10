@@ -92,6 +92,26 @@ class _ImePageState extends State<ImePage> {
   }
 
   void _updateRawInput(String value) {
+    final openingDelimiter = DesktopInputController.trailingOpeningDelimiter(
+      value,
+    );
+    if (openingDelimiter != null) {
+      final precedingInput = value.substring(
+        0,
+        value.length - openingDelimiter.length,
+      );
+      if (precedingInput != controller.rawInput) {
+        controller.updateRawInput(precedingInput);
+      }
+      if (controller.rawInput.isNotEmpty) _commitSelected();
+      final selection = _outputController.selection;
+      controller.commitDirectText(
+        openingDelimiter,
+        replaceStart: selection.isValid ? selection.start : null,
+        replaceEnd: selection.isValid ? selection.end : null,
+      );
+      return;
+    }
     if (value.isNotEmpty && value.trim().isEmpty) {
       final selection = _outputController.selection;
       controller.commitDirectText(
@@ -541,6 +561,7 @@ class _InputCard extends StatelessWidget {
                         final sourceLabel = switch (candidate.source) {
                           'zenzai' => 'Zenzai',
                           'user' || 'shared' => '共有',
+                          'user-prediction' || 'dictionary-prediction' => '予測',
                           _ => null,
                         };
                         return AnimatedContainer(

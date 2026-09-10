@@ -351,6 +351,14 @@ class KeynakoEngine(IBus.Engine):
         self.commit_text(IBus.Text.new_from_string(self.session.selected_text() + suffix))
         self._clear()
 
+    def _commit_paired_delimiter(self, opening: str, closing: str) -> None:
+        if self.raw:
+            self._commit()
+        else:
+            self._replace_selection_before_input()
+        self.commit_text(IBus.Text.new_from_string(opening + closing))
+        self.forward_key_event(IBus.KEY_Left, 0, 0)
+
     def do_process_key_event(self, keyval: int, keycode: int, state: int) -> bool:
         del keycode
         if state & IBus.ModifierType.RELEASE_MASK:
@@ -440,6 +448,25 @@ class KeynakoEngine(IBus.Engine):
             self._render()
             return True
         scalar = IBus.keyval_to_unicode(keyval)
+        if scalar and self.mode == "ja":
+            opening = chr(scalar)
+            paired_delimiters = {
+                "[": ("「", "」"),
+                "{": ("{", "}"),
+                "(": ("(", ")"),
+                "「": ("「", "」"),
+                "『": ("『", "』"),
+                "（": ("（", "）"),
+                "［": ("［", "］"),
+                "｛": ("｛", "｝"),
+                "【": ("【", "】"),
+                "〈": ("〈", "〉"),
+                "《": ("《", "》"),
+            }
+            pair = paired_delimiters.get(opening)
+            if pair:
+                self._commit_paired_delimiter(*pair)
+                return True
         if scalar and chr(scalar).lower() in "abcdefghijklmnopqrstuvwxyz-,.!?/":
             if self.mode == "en":
                 return False

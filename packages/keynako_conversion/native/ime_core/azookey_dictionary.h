@@ -32,6 +32,9 @@ public:
     std::vector<std::string> candidates(const std::string &hiragana_reading,
                                         std::size_t limit = 48,
                                         const std::vector<AzooKeyAdditionalEntry> &additional_entries = {});
+    std::vector<std::string> predictions(const std::string &hiragana_prefix,
+                                         std::size_t limit = 32,
+                                         const std::vector<AzooKeyAdditionalEntry> &additional_entries = {});
 
 private:
     struct Impl;

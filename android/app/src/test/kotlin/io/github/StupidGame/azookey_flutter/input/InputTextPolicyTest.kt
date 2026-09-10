@@ -10,4 +10,27 @@ class InputTextPolicyTest {
         assertEquals("Really?!", punctuationForInputMode("Really？！", "english"))
         assertEquals("?!", punctuationForInputMode("?!", "symbols"))
     }
+
+    @Test
+    fun openingDelimitersResolveToTheirClosingPartner() {
+        assertEquals(
+            mapOf(
+                "「" to "」",
+                "『" to "』",
+                "(" to ")",
+                "（" to "）",
+                "[" to "]",
+                "［" to "］",
+                "{" to "}",
+                "｛" to "｝",
+                "【" to "】",
+                "〈" to "〉",
+                "《" to "》",
+            ),
+            listOf("「", "『", "(", "（", "[", "［", "{", "｛", "【", "〈", "《")
+                .associateWith(::closingDelimiterFor),
+        )
+        assertEquals(null, closingDelimiterFor("本文("))
+        assertEquals(null, closingDelimiterFor("」"))
+    }
 }

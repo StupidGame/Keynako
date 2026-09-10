@@ -87,6 +87,22 @@ void main() {
     controller.dispose();
   });
 
+  test('inserts paired delimiters and leaves the caret between them', () {
+    final controller = DesktopInputController();
+    controller.replaceCommittedText('前後');
+
+    controller.commitDirectText('「', replaceStart: 1, replaceEnd: 1);
+
+    expect(controller.committedText, '前「」後');
+    expect(controller.committedSelectionOffset, 2);
+
+    controller.commitDirectText('(', replaceStart: 2, replaceEnd: 2);
+
+    expect(controller.committedText, '前「()」後');
+    expect(controller.committedSelectionOffset, 3);
+    controller.dispose();
+  });
+
   test('previews the selected candidate during live conversion', () {
     final controller = DesktopInputController();
     controller.updateRawInput('nihongo');

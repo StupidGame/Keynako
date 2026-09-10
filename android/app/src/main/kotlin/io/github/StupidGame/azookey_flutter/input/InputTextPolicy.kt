@@ -5,3 +5,19 @@ internal fun punctuationForInputMode(value: String, mode: String): String = when
     "english" -> value.replace("？", "?").replace("！", "!")
     else -> value
 }
+
+/** Returns the closing delimiter inserted beside a standalone opening delimiter. */
+internal fun closingDelimiterFor(value: String): String? = when (value) {
+    "「" -> "」"
+    "『" -> "』"
+    "(" -> ")"
+    "（" -> "）"
+    "[" -> "]"
+    "［" -> "］"
+    "{" -> "}"
+    "｛" -> "｝"
+    "【" -> "】"
+    "〈" -> "〉"
+    "《" -> "》"
+    else -> null
+}

@@ -53,6 +53,8 @@ constexpr GUID kPreservedConvert = {0xa40d40d9, 0xc3ad, 0x492d, {0x82, 0x34, 0x9
 constexpr GUID kPreservedCtrlSpace = {0x6a2f2dbd, 0x3e9d, 0x4c08, {0x90, 0xa7, 0x41, 0x53, 0x66, 0xd1, 0xcb, 0x19}};
 // {AFE3FF6D-EB6A-4021-BB2A-36BBF7A4C232}
 constexpr GUID kPreservedAltGrave = {0xafe3ff6d, 0xeb6a, 0x4021, {0xbb, 0x2a, 0x36, 0xbb, 0xf7, 0xa4, 0xc2, 0x32}};
+// {55D868AC-534E-4EA6-AEA0-6B61FE8251AB}
+constexpr GUID kCandidateUIElement = {0x55d868ac, 0x534e, 0x4ea6, {0xae, 0xa0, 0x6b, 0x61, 0xfe, 0x82, 0x51, 0xab}};
 // GUID_LBI_INPUTMODE is not declared by every supported Windows SDK, even
 // though Windows 8 and later require this value for the taskbar mode button.
 constexpr GUID kLangBarInputMode = {0x2c77a81e, 0x41cc, 0x4178, {0xa3, 0xa7, 0x5f, 0x8a, 0x98, 0x75, 0x68, 0xe6}};
@@ -154,6 +156,9 @@ enum class ImprovementWindowState { prompt, sending, sent, failed };
 
 class TextService;
 
+ITfCandidateListUIElementBehavior *create_candidate_ui_element(
+    TextService *service, ITfDocumentMgr *document_manager);
+
 class LanguageBarItem final : public ITfLangBarItemButton, public ITfSource {
 public:
     explicit LanguageBarItem(TextService *owner);
@@ -189,7 +194,7 @@ private:
     DWORD status_ = 0;
 };
 
-enum class EditAction { update, commit, cancel };
+enum class EditAction { update, commit, cancel, insert_pair };
 
 class EditSession final : public ITfEditSession {
 public:
@@ -217,10 +222,10 @@ class TextService final : public ITfTextInputProcessorEx,
 public:
     TextService() { ++g_objects; }
     ~TextService() {
-        remove_keyboard_hook();
         hide_candidates();
         hide_improvement_prompt();
         remove_language_bar();
+        if (ui_element_manager_) ui_element_manager_->Release();
         if (composition_) composition_->Release();
         if (thread_manager_) thread_manager_->Release();
         --g_objects;
@@ -275,44 +280,12 @@ public:
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         ShellExecuteW(nullptr, L"open", executable.c_str(), nullptr, executable.parent_path().c_str(), SW_SHOWNORMAL);
     }
-    void refresh_shared_dictionary(bool force = true) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!force && last_dictionary_refresh_request_.time_since_epoch().count() != 0 &&
-            now - last_dictionary_refresh_request_ < std::chrono::minutes(5)) return;
-        if (!force) {
-            std::vector<std::filesystem::path> cache_files;
-            const auto local_app_data = environment_path(L"LOCALAPPDATA");
-            const auto program_data = environment_path(L"ProgramData");
-            if (!local_app_data.empty()) {
-                cache_files.push_back(local_app_data / L"Keynako" / L"shared_dictionary.tsv");
-            }
-            if (!program_data.empty()) {
-                cache_files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
-            }
-            std::error_code cache_error;
-            for (const auto &cache_file : cache_files) {
-                if (!std::filesystem::exists(cache_file, cache_error) || cache_error) {
-                    cache_error.clear();
-                    continue;
-                }
-                const auto modified = std::filesystem::last_write_time(cache_file, cache_error);
-                if (!cache_error && std::filesystem::file_time_type::clock::now() - modified <
-                                        std::chrono::minutes(5)) {
-                    last_dictionary_refresh_request_ = now;
-                    return;
-                }
-                break;
-            }
-        }
-        last_dictionary_refresh_request_ = now;
-
+    void refresh_shared_dictionary() {
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         std::error_code executable_error;
         if (!std::filesystem::exists(executable, executable_error) || executable_error) return;
-        const wchar_t *argument = force
-            ? L"--refresh-shared-dictionary"
-            : L"--refresh-shared-dictionary-if-due";
-        std::wstring command_line = L"\"" + executable.wstring() + L"\" " + argument;
+        std::wstring command_line = L"\"" + executable.wstring() +
+                                    L"\" --refresh-shared-dictionary";
         const auto working_directory = executable.parent_path().wstring();
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
@@ -324,12 +297,10 @@ public:
             CloseHandle(process.hThread);
             CloseHandle(process.hProcess);
         }
-        if (force) {
-            shared_submission_status_ = created
-                ? L"共有辞書を更新中です"
-                : L"共有辞書を更新できません";
-            if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
-        }
+        shared_submission_status_ = created
+            ? L"共有辞書を更新中です"
+            : L"共有辞書を更新できません";
+        if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
     }
 
     STDMETHODIMP Activate(ITfThreadMgr *thread_manager, TfClientId client_id) override {
@@ -340,6 +311,7 @@ public:
         thread_manager_ = thread_manager;
         thread_manager_->AddRef();
         client_id_ = client_id;
+        thread_manager_->QueryInterface(IID_PPV_ARGS(&ui_element_manager_));
         ITfKeystrokeMgr *keys = nullptr;
         const HRESULT result = thread_manager_->QueryInterface(IID_PPV_ARGS(&keys));
         if (SUCCEEDED(result)) {
@@ -352,7 +324,9 @@ public:
             }
             keys->Release();
         }
-        install_keyboard_hook();
+        // A text service instance is created for each newly opened process.
+        // Start direct so consoles do not unexpectedly receive Japanese text.
+        session_.set_mode(keynako::InputMode::english);
         initialize_language_bar();
         sync_input_compartments();
         session_.set_bundled_dictionary_path(path_utf8(
@@ -361,7 +335,9 @@ public:
         return result;
     }
     STDMETHODIMP Deactivate() override {
-        remove_keyboard_hook();
+        session_.clear();
+        hide_candidates();
+        hide_improvement_prompt();
         if (thread_manager_) {
             ITfKeystrokeMgr *keys = nullptr;
             if (SUCCEEDED(thread_manager_->QueryInterface(IID_PPV_ARGS(&keys)))) {
@@ -376,9 +352,10 @@ public:
             thread_manager_->Release();
             thread_manager_ = nullptr;
         }
-        session_.clear();
-        hide_candidates();
-        hide_improvement_prompt();
+        if (ui_element_manager_) {
+            ui_element_manager_->Release();
+            ui_element_manager_ = nullptr;
+        }
         return S_OK;
     }
 
@@ -392,7 +369,6 @@ public:
         if (!context || !eaten) return E_INVALIDARG;
         *eaten = FALSE;
         hide_improvement_prompt();
-        refresh_shared_dictionary(false);
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         if (key != VK_BACK) last_backspace_press_ = {};
@@ -441,6 +417,7 @@ public:
             reload_shared_dictionary();
             WCHAR translated[4]{};
             char value = 0;
+            std::wstring paired_text;
             if (key == '1' && shift) {
                 // Shift+1 is ! on the supported JIS and US layouts. Resolve
                 // it before candidate-number handling and ToUnicode.
@@ -455,8 +432,21 @@ public:
             } else {
                 const int count = ToUnicode(static_cast<UINT>(key), scan_code,
                                             keyboard, translated, 4, 0);
-                if (count > 0 && translated[0] < 128) {
-                    value = static_cast<char>(translated[0]);
+                if (count > 0) {
+                    if (session_.mode() == keynako::InputMode::japanese) {
+                        switch (translated[0]) {
+                            case L'「': paired_text = L"「」"; break;
+                            case L'『': paired_text = L"『』"; break;
+                            case L'（': paired_text = L"（）"; break;
+                            case L'［': paired_text = L"［］"; break;
+                            case L'｛': paired_text = L"｛｝"; break;
+                            case L'【': paired_text = L"【】"; break;
+                            case L'〈': paired_text = L"〈〉"; break;
+                            case L'《': paired_text = L"《》"; break;
+                            default: break;
+                        }
+                    }
+                    if (translated[0] < 128) value = static_cast<char>(translated[0]);
                 }
             }
             if (!value && keynako::windows::is_oem_text_key(
@@ -468,14 +458,25 @@ public:
                 value = static_cast<char>(
                     std::tolower(static_cast<unsigned char>(key)));
             }
-            const bool literal_english =
-                session_.mode() == keynako::InputMode::japanese &&
-                ((key >= 'A' && key <= 'Z' && shift) ||
-                 session_.has_literal_suffix());
-            if (literal_english) {
-                session_.append_literal_ascii(value);
+            if (paired_text.empty() &&
+                session_.mode() == keynako::InputMode::japanese) {
+                if (value == '(') paired_text = L"()";
+                else if (value == '[') paired_text = L"「」";
+                else if (value == '{') paired_text = L"{}";
+            }
+            if (!paired_text.empty()) {
+                pending_pair_text_ = std::move(paired_text);
+                action = EditAction::insert_pair;
             } else {
-                session_.append_ascii(value);
+                const bool literal_english =
+                    session_.mode() == keynako::InputMode::japanese &&
+                    ((key >= 'A' && key <= 'Z' && shift) ||
+                     session_.has_literal_suffix());
+                if (literal_english) {
+                    session_.append_literal_ascii(value);
+                } else {
+                    session_.append_ascii(value);
+                }
             }
         } else if (key == VK_BACK) {
             if (session_.raw_input().empty()) return S_OK;
@@ -576,6 +577,52 @@ public:
     }
 
     HRESULT apply_edit(TfEditCookie edit_cookie, ITfContext *context, EditAction action) {
+        if (action == EditAction::insert_pair) {
+            std::wstring text = session_.raw_input().empty()
+                ? std::wstring{}
+                : utf8_to_wide(session_.selected_text());
+            text += pending_pair_text_;
+            pending_pair_text_.clear();
+
+            ITfRange *range = nullptr;
+            HRESULT result = S_OK;
+            if (composition_) {
+                result = composition_->GetRange(&range);
+                if (SUCCEEDED(result)) {
+                    result = range->SetText(edit_cookie, 0, text.data(),
+                                            static_cast<LONG>(text.size()));
+                }
+                if (SUCCEEDED(result)) {
+                    ITfComposition *ending = composition_;
+                    composition_ = nullptr;
+                    ending->EndComposition(edit_cookie);
+                    ending->Release();
+                }
+            } else {
+                ITfInsertAtSelection *insert_at_selection = nullptr;
+                result = context->QueryInterface(IID_PPV_ARGS(&insert_at_selection));
+                if (SUCCEEDED(result)) {
+                    result = insert_at_selection->InsertTextAtSelection(
+                        edit_cookie, TF_IAS_NO_DEFAULT_COMPOSITION, text.data(),
+                        static_cast<LONG>(text.size()), &range);
+                    insert_at_selection->Release();
+                }
+            }
+            if (SUCCEEDED(result) && range) {
+                range->Collapse(edit_cookie, TF_ANCHOR_END);
+                LONG shifted = 0;
+                result = range->ShiftStart(edit_cookie, -1, &shifted, nullptr);
+                if (SUCCEEDED(result)) {
+                    range->Collapse(edit_cookie, TF_ANCHOR_START);
+                    TF_SELECTION selection{range, TF_AE_NONE, FALSE};
+                    result = context->SetSelection(edit_cookie, 1, &selection);
+                }
+            }
+            if (range) range->Release();
+            session_.clear();
+            hide_candidates();
+            return result;
+        }
         if (action == EditAction::cancel) {
             if (composition_) {
                 ITfRange *range = nullptr;
@@ -656,6 +703,34 @@ public:
         return result;
     }
 
+    std::size_t ui_candidate_count() const {
+        return session_.candidates().size();
+    }
+
+    std::size_t ui_candidate_selection() const {
+        return session_.selected_index();
+    }
+
+    std::wstring ui_candidate_text(std::size_t index) const {
+        if (index >= session_.candidates().size()) return {};
+        return utf8_to_wide(session_.candidates()[index].text);
+    }
+
+    HRESULT select_ui_candidate(std::size_t index) {
+        if (!session_.select_candidate(index)) return E_INVALIDARG;
+        return request_active_edit(EditAction::update) ? S_OK : E_FAIL;
+    }
+
+    HRESULT finalize_ui_candidate() {
+        if (!session_.is_converting()) return S_FALSE;
+        return request_active_edit(EditAction::commit) ? S_OK : E_FAIL;
+    }
+
+    HRESULT abort_ui_candidates() {
+        if (!session_.cancel_conversion()) return S_FALSE;
+        return request_active_edit(EditAction::update) ? S_OK : E_FAIL;
+    }
+
 private:
     std::atomic<ULONG> references_{1};
     ITfThreadMgr *thread_manager_ = nullptr;
@@ -672,92 +747,15 @@ private:
     std::unordered_set<std::string> reported_improvements_;
     UINT_PTR improvement_generation_ = 0;
     LanguageBarItem *language_bar_ = nullptr;
+    ITfUIElementMgr *ui_element_manager_ = nullptr;
+    ITfCandidateListUIElementBehavior *candidate_ui_element_ = nullptr;
+    DWORD candidate_ui_element_id_ = TF_INVALID_UIELEMENTID;
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
-    std::chrono::steady_clock::time_point last_dictionary_refresh_request_{};
     std::chrono::steady_clock::time_point last_backspace_press_{};
     std::wstring shared_submission_status_;
-    HHOOK keyboard_hook_ = nullptr;
-    bool physical_shortcut_down_ = false;
-    inline static thread_local TextService *keyboard_hook_owner_ = nullptr;
-
-    static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM key, LPARAM key_data) {
-        TextService *owner = keyboard_hook_owner_;
-        if (!owner || code != HC_ACTION) {
-            return CallNextHookEx(owner ? owner->keyboard_hook_ : nullptr, code, key,
-                                  key_data);
-        }
-        return owner->handle_keyboard_hook(key, key_data);
-    }
-
-    LRESULT handle_keyboard_hook(WPARAM key, LPARAM key_data) {
-        const auto data = static_cast<ULONG_PTR>(key_data);
-        const auto scan_code = static_cast<std::uint32_t>((data >> 16) & 0xff);
-        const bool japanese_keyboard = uses_japanese_keyboard();
-        const bool convert_key = keynako::windows::is_convert_key(
-            static_cast<std::uint32_t>(key), scan_code);
-        const bool hankaku_zenkaku_key =
-            keynako::windows::is_hankaku_zenkaku_key(
-                static_cast<std::uint32_t>(key), scan_code,
-                japanese_keyboard);
-        if (!convert_key && !hankaku_zenkaku_key) {
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        const bool alt = (data & (static_cast<ULONG_PTR>(1) << 29)) != 0;
-        if (control || alt) {
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const bool released = (data & (static_cast<ULONG_PTR>(1) << 31)) != 0;
-        if (released) {
-            if (physical_shortcut_down_) {
-                physical_shortcut_down_ = false;
-                return 1;
-            }
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const auto action = keynako::windows::shortcut_action(
-            static_cast<std::uint32_t>(key), scan_code, false, false,
-            !session_.raw_input().empty(), japanese_keyboard);
-        if (action == keynako::windows::ShortcutAction::none) {
-            return CallNextHookEx(keyboard_hook_, HC_ACTION, key, key_data);
-        }
-
-        const bool was_down = (data & (static_cast<ULONG_PTR>(1) << 30)) != 0;
-        if (!was_down && !physical_shortcut_down_) {
-            if (action == keynako::windows::ShortcutAction::toggle_input_mode) {
-                toggle_input_mode();
-            } else {
-                convert_or_cycle_active();
-            }
-        }
-        physical_shortcut_down_ = true;
-        return 1;
-    }
-
-    void install_keyboard_hook() {
-        if (keyboard_hook_) return;
-        if (keyboard_hook_owner_ && keyboard_hook_owner_ != this) {
-            keyboard_hook_owner_->remove_keyboard_hook();
-        }
-        keyboard_hook_ = SetWindowsHookExW(WH_KEYBOARD, keyboard_hook_proc, nullptr,
-                                           GetCurrentThreadId());
-        if (keyboard_hook_) keyboard_hook_owner_ = this;
-    }
-
-    void remove_keyboard_hook() {
-        if (keyboard_hook_) {
-            UnhookWindowsHookEx(keyboard_hook_);
-            keyboard_hook_ = nullptr;
-        }
-        if (keyboard_hook_owner_ == this) keyboard_hook_owner_ = nullptr;
-        physical_shortcut_down_ = false;
-    }
-
+    std::wstring pending_pair_text_;
     void convert_or_cycle(ITfContext *context) {
         if (session_.raw_input().empty()) return;
         reload_shared_dictionary();
@@ -768,18 +766,6 @@ private:
             session_.select_next();
         }
         request_edit(context, EditAction::update);
-    }
-
-    void convert_or_cycle_active() {
-        if (!thread_manager_) return;
-        ITfDocumentMgr *document = nullptr;
-        if (FAILED(thread_manager_->GetFocus(&document)) || !document) return;
-        ITfContext *context = nullptr;
-        if (SUCCEEDED(document->GetTop(&context)) && context) {
-            convert_or_cycle(context);
-            context->Release();
-        }
-        document->Release();
     }
 
     bool handles_key(WPARAM key, LPARAM key_data) const {
@@ -1472,7 +1458,13 @@ private:
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
             const std::string &source = session_.candidates()[index].source;
-            const wchar_t *source_text = source == "zenzai" ? L"Zenzai" : source == "shared" ? L"共有" : L"";
+            const wchar_t *source_text = source == "zenzai"
+                ? L"Zenzai"
+                : source == "shared"
+                    ? L"共有"
+                    : source.find("-prediction") != std::string::npos
+                        ? L"予測"
+                        : L"";
             if (*source_text) {
                 RECT source_rect = row;
                 source_rect.right -= MulDiv(12, static_cast<int>(dpi), 96);
@@ -1508,6 +1500,10 @@ private:
 
     void show_candidates(TfEditCookie cookie, ITfContext *context, ITfRange *range) {
         if (session_.candidates().empty()) { hide_candidates(); return; }
+        if (!update_candidate_ui_element(context)) {
+            hide_candidate_window();
+            return;
+        }
         HWND owner = nullptr;
         RECT rectangle{0, 0, 0, 0};
         BOOL clipped = FALSE;
@@ -1556,8 +1552,37 @@ private:
                        candidate_window_, OBJID_CLIENT, CHILDID_SELF);
     }
 
-    void hide_candidates() {
-        shared_submission_status_.clear();
+    bool update_candidate_ui_element(ITfContext *context) {
+        if (!ui_element_manager_) return true;
+        if (!candidate_ui_element_) {
+            ITfDocumentMgr *document_manager = nullptr;
+            if (FAILED(context->GetDocumentMgr(&document_manager)) || !document_manager) {
+                return true;
+            }
+            candidate_ui_element_ = create_candidate_ui_element(this, document_manager);
+            document_manager->Release();
+            if (!candidate_ui_element_) return true;
+
+            BOOL show = TRUE;
+            const HRESULT result = ui_element_manager_->BeginUIElement(
+                candidate_ui_element_, &show, &candidate_ui_element_id_);
+            if (FAILED(result)) {
+                candidate_ui_element_->Release();
+                candidate_ui_element_ = nullptr;
+                candidate_ui_element_id_ = TF_INVALID_UIELEMENTID;
+                return true;
+            }
+            candidate_ui_element_->Show(show);
+            return show != FALSE;
+        }
+
+        ui_element_manager_->UpdateUIElement(candidate_ui_element_id_);
+        BOOL show = TRUE;
+        candidate_ui_element_->IsShown(&show);
+        return show != FALSE;
+    }
+
+    void hide_candidate_window() {
         if (candidate_window_) {
             GetWindowRect(candidate_window_, &last_candidate_rectangle_);
             NotifyWinEvent(EVENT_OBJECT_IME_HIDE, candidate_window_, OBJID_CLIENT, CHILDID_SELF);
@@ -1567,8 +1592,187 @@ private:
         }
     }
 
+    void hide_candidates() {
+        shared_submission_status_.clear();
+        hide_candidate_window();
+        if (candidate_ui_element_) {
+            if (ui_element_manager_ && candidate_ui_element_id_ != TF_INVALID_UIELEMENTID) {
+                ui_element_manager_->EndUIElement(candidate_ui_element_id_);
+            }
+            candidate_ui_element_->Release();
+            candidate_ui_element_ = nullptr;
+            candidate_ui_element_id_ = TF_INVALID_UIELEMENTID;
+        }
+    }
+
     friend class EditSession;
 };
+
+class CandidateListUIElement final : public ITfCandidateListUIElementBehavior {
+public:
+    CandidateListUIElement(TextService *service, ITfDocumentMgr *document_manager)
+        : service_(service), document_manager_(document_manager) {
+        service_->AddRef();
+        document_manager_->AddRef();
+    }
+
+    ~CandidateListUIElement() {
+        document_manager_->Release();
+        service_->Release();
+    }
+
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object) return E_INVALIDARG;
+        *object = nullptr;
+        if (iid == IID_IUnknown || iid == IID_ITfUIElement ||
+            iid == IID_ITfCandidateListUIElement ||
+            iid == IID_ITfCandidateListUIElementBehavior) {
+            *object = static_cast<ITfCandidateListUIElementBehavior *>(this);
+        }
+        if (!*object) return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const ULONG value = --references_;
+        if (value == 0) delete this;
+        return value;
+    }
+
+    STDMETHODIMP GetDescription(BSTR *description) override {
+        if (!description) return E_INVALIDARG;
+        *description = SysAllocString(L"Keynako conversion candidates");
+        return *description ? S_OK : E_OUTOFMEMORY;
+    }
+
+    STDMETHODIMP GetGUID(GUID *guid) override {
+        if (!guid) return E_INVALIDARG;
+        *guid = kCandidateUIElement;
+        return S_OK;
+    }
+
+    STDMETHODIMP Show(BOOL show) override {
+        shown_ = show != FALSE;
+        return S_OK;
+    }
+
+    STDMETHODIMP IsShown(BOOL *show) override {
+        if (!show) return E_INVALIDARG;
+        *show = shown_ ? TRUE : FALSE;
+        return S_OK;
+    }
+
+    STDMETHODIMP GetUpdatedFlags(DWORD *flags) override {
+        if (!flags) return E_INVALIDARG;
+        *flags = TF_CLUIE_DOCUMENTMGR | TF_CLUIE_COUNT | TF_CLUIE_SELECTION |
+                 TF_CLUIE_STRING | TF_CLUIE_PAGEINDEX | TF_CLUIE_CURRENTPAGE;
+        return S_OK;
+    }
+
+    STDMETHODIMP GetDocumentMgr(ITfDocumentMgr **document_manager) override {
+        if (!document_manager) return E_INVALIDARG;
+        *document_manager = document_manager_;
+        document_manager_->AddRef();
+        return S_OK;
+    }
+
+    STDMETHODIMP GetCount(UINT *count) override {
+        if (!count) return E_INVALIDARG;
+        *count = static_cast<UINT>(service_->ui_candidate_count());
+        return S_OK;
+    }
+
+    STDMETHODIMP GetSelection(UINT *index) override {
+        if (!index) return E_INVALIDARG;
+        *index = static_cast<UINT>(service_->ui_candidate_selection());
+        return S_OK;
+    }
+
+    STDMETHODIMP GetString(UINT index, BSTR *text) override {
+        if (!text) return E_INVALIDARG;
+        *text = nullptr;
+        if (index >= service_->ui_candidate_count()) return E_INVALIDARG;
+        const std::wstring value = service_->ui_candidate_text(index);
+        *text = SysAllocStringLen(value.data(), static_cast<UINT>(value.size()));
+        return *text ? S_OK : E_OUTOFMEMORY;
+    }
+
+    STDMETHODIMP GetPageIndex(UINT *indices, UINT size, UINT *page_count) override {
+        if (!page_count || (size > 0 && !indices)) return E_INVALIDARG;
+        const auto pages = page_indices();
+        *page_count = static_cast<UINT>(pages.size());
+        const UINT copied = std::min(size, *page_count);
+        for (UINT index = 0; index < copied; ++index) indices[index] = pages[index];
+        return S_OK;
+    }
+
+    STDMETHODIMP SetPageIndex(UINT *indices, UINT page_count) override {
+        if (page_count > 0 && !indices) return E_INVALIDARG;
+        const UINT candidate_count = static_cast<UINT>(service_->ui_candidate_count());
+        if (page_count > 0 && (indices[0] != 0 || candidate_count == 0)) return E_INVALIDARG;
+        for (UINT index = 0; index < page_count; ++index) {
+            if (indices[index] >= candidate_count ||
+                (index > 0 && indices[index] <= indices[index - 1])) {
+                return E_INVALIDARG;
+            }
+        }
+        if (page_count == 0) {
+            page_indices_.clear();
+        } else {
+            page_indices_.assign(indices, indices + page_count);
+        }
+        return S_OK;
+    }
+
+    STDMETHODIMP GetCurrentPage(UINT *page) override {
+        if (!page) return E_INVALIDARG;
+        const auto pages = page_indices();
+        const UINT selection = static_cast<UINT>(service_->ui_candidate_selection());
+        *page = 0;
+        for (UINT index = 1; index < pages.size(); ++index) {
+            if (selection < pages[index]) break;
+            *page = index;
+        }
+        return S_OK;
+    }
+
+    STDMETHODIMP SetSelection(UINT index) override {
+        return service_->select_ui_candidate(index);
+    }
+
+    STDMETHODIMP Finalize() override {
+        return service_->finalize_ui_candidate();
+    }
+
+    STDMETHODIMP Abort() override {
+        return service_->abort_ui_candidates();
+    }
+
+private:
+    std::vector<UINT> page_indices() const {
+        const UINT candidate_count = static_cast<UINT>(service_->ui_candidate_count());
+        if (!page_indices_.empty() && page_indices_.back() < candidate_count) {
+            return page_indices_;
+        }
+        std::vector<UINT> pages;
+        for (UINT index = 0; index < candidate_count; index += 9) pages.push_back(index);
+        return pages;
+    }
+
+    std::atomic<ULONG> references_{1};
+    TextService *service_;
+    ITfDocumentMgr *document_manager_;
+    bool shown_ = true;
+    std::vector<UINT> page_indices_;
+};
+
+ITfCandidateListUIElementBehavior *create_candidate_ui_element(
+    TextService *service, ITfDocumentMgr *document_manager) {
+    if (!service || !document_manager) return nullptr;
+    return new (std::nothrow) CandidateListUIElement(service, document_manager);
+}
 
 HICON create_mode_icon(const wchar_t *glyph) {
     const int width = std::max(16, GetSystemMetrics(SM_CXSMICON));
@@ -1868,7 +2072,8 @@ HRESULT register_server() {
     ITfCategoryMgr *categories = nullptr;
     if (SUCCEEDED(result) && SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&categories)))) {
         const GUID values[] = {GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_SECUREMODE,
-                               GUID_TFCAT_TIPCAP_COMLESS, GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
+                               GUID_TFCAT_TIPCAP_UIELEMENTENABLED, GUID_TFCAT_TIPCAP_COMLESS,
+                               GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
                                GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
                                GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT};
         for (const auto &category : values) categories->RegisterCategory(kTextService, category, kTextService);
@@ -1887,7 +2092,8 @@ HRESULT unregister_server() {
     ITfCategoryMgr *categories = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&categories)))) {
         const GUID values[] = {GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_SECUREMODE,
-                               GUID_TFCAT_TIPCAP_COMLESS, GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
+                               GUID_TFCAT_TIPCAP_UIELEMENTENABLED, GUID_TFCAT_TIPCAP_COMLESS,
+                               GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
                                GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
                                GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT};
         for (const auto &category : values) categories->UnregisterCategory(kTextService, category, kTextService);

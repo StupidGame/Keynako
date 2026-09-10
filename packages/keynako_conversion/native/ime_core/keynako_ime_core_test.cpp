@@ -20,6 +20,17 @@ int main() {
     assert(session.candidates().front().text == "共有変換");
     assert(session.candidates()[1].text == "低い共有変換");
     assert(!session.is_converting());
+
+    ImeSession prefix_prediction;
+    prefix_prediction.set_user_dictionary({
+        {"にほん", "日本", 5},
+        {"にほんご", "日本語入力", 4},
+    });
+    for (const char value : std::string("niho")) prefix_prediction.append_ascii(value);
+    assert(prefix_prediction.display_text() == "にほ");
+    assert(prefix_prediction.candidates().size() >= 4);
+    assert(prefix_prediction.candidates()[2].text == "日本");
+    assert(prefix_prediction.candidates()[2].source == "shared-prediction");
     assert(session.begin_conversion());
     assert(session.is_converting());
     assert(session.selected_index() == 0);
@@ -139,6 +150,14 @@ int main() {
         bundled.candidates().begin(), bundled.candidates().end(),
         [](const keynako::Candidate &candidate) { return candidate.text == "日本語"; });
     assert(has_japanese);
+    ImeSession bundled_prediction;
+    assert(bundled_prediction.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("konni")) bundled_prediction.append_ascii(value);
+    assert(std::any_of(
+        bundled_prediction.candidates().begin(), bundled_prediction.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.source == "azookey-prediction";
+        }));
     bundled.set_user_dictionary({
         {"にほん", "共有", 5, 1000.0f, 1285, 1285, true},
     });

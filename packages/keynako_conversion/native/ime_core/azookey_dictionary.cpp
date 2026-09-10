@@ -25,6 +25,8 @@ constexpr int kCidCount = 1319;
 constexpr int kShardShift = 11;
 constexpr int kLocalMask = (1 << kShardShift) - 1;
 constexpr std::size_t kMaxWordLength = 20;
+constexpr std::size_t kMaxPredictionDepth = 8;
+constexpr std::size_t kMaxPredictionNodes = 192;
 constexpr std::size_t kBeamWidth = 48;
 constexpr std::size_t kBeamTrimThreshold = 256;
 constexpr std::size_t kEntriesPerReading = 32;
@@ -204,6 +206,41 @@ public:
             node = *next;
             auto values = entries(node);
             if (!values.empty()) result.emplace_back(index + 1, std::move(values));
+        }
+        return result;
+    }
+
+    std::vector<Entry> prediction_entries(const std::u32string &prefix,
+                                          std::size_t max_depth,
+                                          std::size_t max_nodes) {
+        int node = kRootNode;
+        for (const char32_t value : prefix) {
+            const auto character = character_ids_->find(value);
+            if (character == character_ids_->end()) return {};
+            const auto next = child(node, character->second);
+            if (!next) return {};
+            node = *next;
+        }
+
+        std::queue<std::pair<int, std::size_t>> pending;
+        for (int child_node = child_starts_[node]; child_node < child_ends_[node];
+             ++child_node) {
+            pending.emplace(child_node, 1);
+        }
+        std::vector<Entry> result;
+        std::size_t visited = 0;
+        while (!pending.empty() && visited < max_nodes) {
+            const auto [current, depth] = pending.front();
+            pending.pop();
+            ++visited;
+            auto values = entries(current);
+            result.insert(result.end(), std::make_move_iterator(values.begin()),
+                          std::make_move_iterator(values.end()));
+            if (depth >= max_depth) continue;
+            for (int child_node = child_starts_[current];
+                 child_node < child_ends_[current]; ++child_node) {
+                pending.emplace(child_node, depth + 1);
+            }
         }
         return result;
     }
@@ -458,6 +495,50 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
     std::vector<std::string> result;
     for (const auto &path : beams.back()) {
         if (!path.text.empty() && seen.insert(path.text).second) result.push_back(path.text);
+        if (result.size() >= limit) break;
+    }
+    return result;
+}
+
+std::vector<std::string> AzooKeyDictionary::predictions(
+    const std::string &hiragana_prefix, std::size_t limit,
+    const std::vector<AzooKeyAdditionalEntry> &additional_entries) {
+    if (!available() || hiragana_prefix.empty() || limit == 0) return {};
+    const auto prefix = to_katakana(utf8_to_u32(hiragana_prefix));
+    if (prefix.empty()) return {};
+
+    std::vector<Entry> entries;
+    if (auto *dictionary_shard = impl_->shard(prefix.front())) {
+        entries = dictionary_shard->prediction_entries(
+            prefix, kMaxPredictionDepth, kMaxPredictionNodes);
+    }
+    for (const auto &value : additional_entries) {
+        const auto ruby = to_katakana(utf8_to_u32(value.ruby));
+        if (ruby.size() <= prefix.size() ||
+            !std::equal(prefix.begin(), prefix.end(), ruby.begin())) {
+            continue;
+        }
+        entries.push_back(
+            {value.word, value.ruby, value.lcid, value.rcid, value.score});
+    }
+    const std::size_t prefix_length = prefix.size();
+    entries.erase(
+        std::remove_if(entries.begin(), entries.end(),
+                       [prefix_length](const Entry &entry) {
+                           return entry.word.empty() ||
+                                  utf8_to_u32(entry.ruby).size() <=
+                                      prefix_length;
+                       }),
+        entries.end());
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const Entry &left, const Entry &right) {
+                         return left.score > right.score;
+                     });
+
+    std::unordered_set<std::string> seen;
+    std::vector<std::string> result;
+    for (auto &entry : entries) {
+        if (seen.insert(entry.word).second) result.push_back(std::move(entry.word));
         if (result.size() >= limit) break;
     }
     return result;

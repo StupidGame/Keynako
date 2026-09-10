@@ -88,5 +88,8 @@ int main() {
     if (direct_input_mode_for_key(0xf4) != DirectInputMode::japanese) return 20;
     if (direct_input_mode_for_key(0x16) != DirectInputMode::japanese) return 21;
     if (direct_input_mode_for_key(0x1a) != DirectInputMode::english) return 22;
+    if (!is_oem_text_key(0xdb)) return 23;
+    if (oem_text_fallback(0xdb, false) != '[') return 24;
+    if (oem_text_fallback(0xdb, true) != '{') return 25;
     return 0;
 }
