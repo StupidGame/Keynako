@@ -2826,6 +2826,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             directCommit(value)
             return
         }
+        if (closingDelimiterFor(value) != null) {
+            mode = "japanese"
+            directCommit(value)
+            return
+        }
         if (
             shouldDirectCommitJapaneseInput(
                 value,

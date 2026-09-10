@@ -13,10 +13,23 @@ class InputTextPolicyTest {
 
     @Test
     fun openingDelimitersResolveToTheirClosingPartner() {
-        assertEquals("」", closingDelimiterFor("「"))
-        assertEquals(")", closingDelimiterFor("("))
-        assertEquals("）", closingDelimiterFor("（"))
-        assertEquals("]", closingDelimiterFor("["))
+        assertEquals(
+            mapOf(
+                "「" to "」",
+                "『" to "』",
+                "(" to ")",
+                "（" to "）",
+                "[" to "]",
+                "［" to "］",
+                "{" to "}",
+                "｛" to "｝",
+                "【" to "】",
+                "〈" to "〉",
+                "《" to "》",
+            ),
+            listOf("「", "『", "(", "（", "[", "［", "{", "｛", "【", "〈", "《")
+                .associateWith(::closingDelimiterFor),
+        )
         assertEquals(null, closingDelimiterFor("本文("))
         assertEquals(null, closingDelimiterFor("」"))
     }

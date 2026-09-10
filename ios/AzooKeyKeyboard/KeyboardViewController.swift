@@ -1368,6 +1368,11 @@ final class KeyboardViewController: UIInputViewController {
             directCommit(value)
             return
         }
+        if closingDelimiter(for: value) != nil {
+            mode = "japanese"
+            directCommit(value)
+            return
+        }
         // Numeric Custard tabs use `input` for full-width and ASCII digits.
         // Keep those values out of kana-kanji conversion just like the built-in
         // symbols tab does, while leaving replacement-sequence markers composed.
