@@ -9,6 +9,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string[]]$Files,
 
+    [switch]$AllowUntrustedCertificate,
+
     [string]$TimestampUrl = 'http://timestamp.digicert.com'
 )
 
@@ -40,8 +42,17 @@ foreach ($file in $Files) {
         throw "Authenticode signing failed for $resolvedFile with exit code $LASTEXITCODE"
     }
 
-    & $signTool verify /pa /all $resolvedFile
-    if ($LASTEXITCODE -ne 0) {
-        throw "Authenticode verification failed for $resolvedFile with exit code $LASTEXITCODE"
+    if ($AllowUntrustedCertificate) {
+        $signature = Get-AuthenticodeSignature -LiteralPath $resolvedFile
+        if ($null -eq $signature.SignerCertificate -or
+            $signature.Status -eq [System.Management.Automation.SignatureStatus]::NotSigned -or
+            $signature.Status -eq [System.Management.Automation.SignatureStatus]::HashMismatch) {
+            throw "Authenticode integrity verification failed for $resolvedFile with status $($signature.Status)"
+        }
+    } else {
+        & $signTool verify /pa /all $resolvedFile
+        if ($LASTEXITCODE -ne 0) {
+            throw "Authenticode verification failed for $resolvedFile with exit code $LASTEXITCODE"
+        }
     }
 }

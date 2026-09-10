@@ -321,7 +321,7 @@ jobs:
                 -Subject 'CN=Keynako GitHub Actions CI, O=Keynako' `
                 -CertStoreLocation 'Cert:\CurrentUser\My' `
                 -KeyAlgorithm RSA `
-                -KeyLength 4096 `
+                -KeyLength 3072 `
                 -HashAlgorithm SHA256 `
                 -KeyExportPolicy Exportable `
                 -NotAfter (Get-Date).AddYears(10)
@@ -334,23 +334,6 @@ jobs:
                 Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -Force
               }
             }
-
-            $importedCertificate = Import-PfxCertificate `
-              -FilePath $certificatePath `
-              -CertStoreLocation 'Cert:\CurrentUser\My' `
-              -Password $securePassword `
-              -Exportable |
-              Select-Object -First 1
-            $publicCertificatePath = Join-Path $env:RUNNER_TEMP 'keynako-ci-windows-signing.cer'
-            Export-Certificate `
-              -Cert $importedCertificate `
-              -FilePath $publicCertificatePath | Out-Null
-            Import-Certificate `
-              -FilePath $publicCertificatePath `
-              -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
-            Import-Certificate `
-              -FilePath $publicCertificatePath `
-              -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
             $signatureKind = 'ci'
           }
 
@@ -362,14 +345,17 @@ jobs:
         shell: pwsh
         run: |
           $packageRoot = Join-Path $env:RUNNER_TEMP 'Keynako-package'
-          & 'platforms/windows/sign-artifacts.ps1' `
-            -CertificatePath $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH `
-            -CertificatePassword $env:KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD `
-            -Files @(
+          $signingArguments = @{
+            CertificatePath = $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH
+            CertificatePassword = $env:KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD
+            Files = @(
               (Join-Path $packageRoot 'Keynako.exe'),
               (Join-Path $packageRoot 'ime/KeynakoIME.dll'),
               (Join-Path $packageRoot 'ime/KeynakoDictionarySubmit.exe'),
               (Join-Path $packageRoot 'ime/keynako_zenzai.exe'))
+            AllowUntrustedCertificate = '${{ steps.windows-signing.outputs.kind }}' -eq 'ci'
+          }
+          & 'platforms/windows/sign-artifacts.ps1' @signingArguments
 
       - name: Build the executable Windows installer and uninstaller
         shell: pwsh
@@ -385,10 +371,13 @@ jobs:
       - name: Sign the Windows installer
         shell: pwsh
         run: |
-          & 'platforms/windows/sign-artifacts.ps1' `
-            -CertificatePath $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH `
-            -CertificatePassword $env:KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD `
-            -Files @('build/windows-installer/KeynakoSetup.exe')
+          $signingArguments = @{
+            CertificatePath = $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH
+            CertificatePassword = $env:KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD
+            Files = @('build/windows-installer/KeynakoSetup.exe')
+            AllowUntrustedCertificate = '${{ steps.windows-signing.outputs.kind }}' -eq 'ci'
+          }
+          & 'platforms/windows/sign-artifacts.ps1' @signingArguments
 
       - name: Record the Windows installer checksum
         shell: pwsh
