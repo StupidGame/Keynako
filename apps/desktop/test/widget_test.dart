@@ -90,6 +90,29 @@ void main() {
     expect(controller.candidates, isEmpty);
   });
 
+  testWidgets('auto-closes an opening delimiter and selects its inside', (
+    tester,
+  ) async {
+    final controller = DesktopInputController();
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+
+    await tester.enterText(
+      find.byKey(const Key('composition-field')),
+      'nihongo(',
+    );
+    await tester.pump();
+
+    final editor = tester.widget<TextField>(
+      find.byKey(const Key('committed-editor')),
+    );
+    expect(controller.committedText, '日本語()');
+    expect(
+      editor.controller!.selection,
+      const TextSelection.collapsed(offset: 4),
+    );
+    expect(controller.rawInput, isEmpty);
+  });
+
   testWidgets('sends a candidate with a secondary click', (tester) async {
     final submitter = _FakeDictionarySubmitter();
     final controller = DesktopInputController(

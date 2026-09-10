@@ -24,6 +24,23 @@ static NSString *FromUtf8(const std::string &value) {
                                  encoding:NSUTF8StringEncoding] ?: @"";
 }
 
+static NSString *PairedDelimiter(unichar value) {
+    switch (value) {
+        case '(': return @"()";
+        case '[': return @"「」";
+        case '{': return @"{}";
+        case 0x300c: return @"「」";
+        case 0x300e: return @"『』";
+        case 0xff08: return @"（）";
+        case 0xff3b: return @"［］";
+        case 0xff5b: return @"｛｝";
+        case 0x3010: return @"【】";
+        case 0x3008: return @"〈〉";
+        case 0x300a: return @"《》";
+        default: return nil;
+    }
+}
+
 @interface KeynakoInputController : IMKInputController
 @end
 
@@ -138,6 +155,17 @@ static NSString *FromUtf8(const std::string &value) {
     NSString *characters = event.characters.lowercaseString;
     if (characters.length != 1) return NO;
     const unichar scalar = [characters characterAtIndex:0];
+    NSString *paired = _session.mode() == keynako::InputMode::japanese
+        ? PairedDelimiter(scalar)
+        : nil;
+    if (paired) {
+        if (!_session.raw_input().empty()) [self commitCurrent:sender];
+        [sender insertText:paired replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+        if ([sender respondsToSelector:@selector(doCommandBySelector:)]) {
+            [sender doCommandBySelector:@selector(moveLeft:)];
+        }
+        return YES;
+    }
     const BOOL accepted = (scalar >= 'a' && scalar <= 'z') || scalar == '-' ||
                           scalar == ',' || scalar == '.' || scalar == '/' ||
                           scalar == '?' || scalar == '!';

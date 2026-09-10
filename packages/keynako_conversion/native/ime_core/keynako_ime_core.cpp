@@ -417,6 +417,8 @@ void ImeSession::rebuild_candidates() {
     candidates_.clear(); selected_index_ = 0; converting_ = false;
     if (raw_input_.empty()) { reading_.clear(); return; }
     std::unordered_set<std::string> seen;
+    std::unordered_set<std::string> prediction_seen;
+    std::vector<Candidate> prefix_predictions;
     if (mode_ == InputMode::english) {
         reading_ = raw_input_;
         append_unique(candidates_, seen, raw_input_, "english");
@@ -453,10 +455,17 @@ void ImeSession::rebuild_candidates() {
         text += literal_suffix;
         append_unique(candidates_, seen, std::move(text), source);
     };
+    const auto append_prediction = [&](std::string text, const char *source) {
+        text += literal_suffix;
+        append_unique(prefix_predictions, prediction_seen, std::move(text), source);
+    };
 
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == conversion_reading) {
             append_converted(entry.value, "shared");
+        } else if (entry.reading.size() > conversion_reading.size() &&
+                   entry.reading.rfind(conversion_reading, 0) == 0) {
+            append_prediction(entry.value, "shared-prediction");
         }
     }
     if (bundled_dictionary_ && !conversion_reading.empty()) {
@@ -470,6 +479,10 @@ void ImeSession::rebuild_candidates() {
                  conversion_reading, 48, additional_entries)) {
             append_converted(std::move(value), "azookey");
         }
+        for (auto &value : bundled_dictionary_->predictions(
+                 conversion_reading, 32, additional_entries)) {
+            append_prediction(std::move(value), "azookey-prediction");
+        }
     }
     const auto dictionary = kDictionary.find(conversion_reading);
     if (dictionary != kDictionary.end()) {
@@ -477,9 +490,26 @@ void ImeSession::rebuild_candidates() {
             append_converted(value, "dictionary");
         }
     }
+    for (const auto &entry : kDictionary) {
+        if (entry.first.size() <= conversion_reading.size() ||
+            entry.first.rfind(conversion_reading, 0) != 0) {
+            continue;
+        }
+        for (const auto &value : entry.second) {
+            append_prediction(value, "dictionary-prediction");
+        }
+    }
     append_unique(candidates_, seen, reading_, "reading");
     append_converted(hiragana_to_katakana(conversion_reading), "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
+    auto insertion = candidates_.begin() +
+        static_cast<std::ptrdiff_t>(std::min<std::size_t>(2, candidates_.size()));
+    std::size_t inserted = 0;
+    for (auto &prediction : prefix_predictions) {
+        if (!seen.insert(prediction.text).second) continue;
+        insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
+        if (++inserted >= 32) break;
+    }
 }
 
 }  // namespace keynako

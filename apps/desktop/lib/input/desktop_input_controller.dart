@@ -34,6 +34,28 @@ class DesktopInputController extends ChangeNotifier {
 
   static const _japaneseConverter = JapaneseConverter();
   static const _englishConverter = EnglishConverter();
+  static const _closingDelimiters = <String, String>{
+    '「': '」',
+    '『': '』',
+    '(': ')',
+    '（': '）',
+    '[': ']',
+    '［': '］',
+    '{': '}',
+    '｛': '｝',
+    '【': '】',
+    '〈': '〉',
+    '《': '》',
+  };
+
+  static String? closingDelimiterFor(String value) => _closingDelimiters[value];
+
+  static String? trailingOpeningDelimiter(String value) {
+    for (final opening in _closingDelimiters.keys) {
+      if (value.endsWith(opening)) return opening;
+    }
+    return null;
+  }
 
   final ZenzaiEngineFactory? _zenzaiEngineFactory;
   final SharedDictionaryRepository? _sharedDictionaryRepository;
@@ -222,7 +244,15 @@ class DesktopInputController extends ChangeNotifier {
 
   void commitDirectText(String value, {int? replaceStart, int? replaceEnd}) {
     if (value.isEmpty) return;
-    _replaceCommittedRange(value, replaceStart, replaceEnd);
+    final closingDelimiter = closingDelimiterFor(value);
+    _replaceCommittedRange(
+      closingDelimiter == null ? value : '$value$closingDelimiter',
+      replaceStart,
+      replaceEnd,
+      selectionOffsetInReplacement: closingDelimiter == null
+          ? null
+          : value.length,
+    );
     cancelComposition();
   }
 
@@ -299,8 +329,9 @@ class DesktopInputController extends ChangeNotifier {
   void _replaceCommittedRange(
     String value,
     int? replaceStart,
-    int? replaceEnd,
-  ) {
+    int? replaceEnd, {
+    int? selectionOffsetInReplacement,
+  }) {
     var selectionStart = _committedText.length;
     var selectionEnd = _committedText.length;
     if (replaceStart != null &&
@@ -317,7 +348,8 @@ class DesktopInputController extends ChangeNotifier {
       selectionEnd,
       value,
     );
-    _committedSelectionOffset = selectionStart + value.length;
+    _committedSelectionOffset =
+        selectionStart + (selectionOffsetInReplacement ?? value.length);
   }
 
   void cancelComposition() {

@@ -90,6 +90,36 @@ void main() {
     expect(candidates.map((candidate) => candidate.text), contains('今日'));
   });
 
+  test('places prefix matches near the front without live autocompletion', () {
+    final candidates = converter.candidates(
+      input: 'にほ',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(
+            reading: 'にほんご',
+            value: '日本語入力',
+            importance: 5,
+          ),
+        ],
+      ),
+    );
+
+    expect(candidates.first.text, 'にほ');
+    expect(candidates[1].text, 'ニホ');
+    expect(candidates[2].text, '日本語入力');
+    expect(candidates.map((candidate) => candidate.text), contains('日本'));
+    expect(candidates[2].source, 'user-prediction');
+  });
+
+  test('can disable Japanese prefix predictions', () {
+    final candidates = converter.candidates(input: 'にほ', predictionLimit: 0);
+
+    expect(
+      candidates.map((candidate) => candidate.text),
+      isNot(contains('日本')),
+    );
+  });
+
   test('applies learning while preserving pinned kana order', () {
     final values = converter.candidates(
       input: 'にほんご',

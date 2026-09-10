@@ -777,6 +777,10 @@ final class KeyboardViewController: UIInputViewController {
             directCommit(value)
             return
         }
+        if closingDelimiter(for: value) != nil {
+            directCommit(value)
+            return
+        }
         if mode == "english" {
             inputEnglishText(punctuationForInputMode(value, mode: mode))
             return
@@ -874,7 +878,13 @@ final class KeyboardViewController: UIInputViewController {
 
     private func directCommit(_ value: String) {
         commitComposition()
-        textDocumentProxy.insertText(punctuationForInputMode(value, mode: mode))
+        let input = punctuationForInputMode(value, mode: mode)
+        if let closingDelimiter = closingDelimiter(for: input) {
+            textDocumentProxy.insertText(input + closingDelimiter)
+            textDocumentProxy.adjustTextPosition(byCharacterOffset: -1)
+        } else {
+            textDocumentProxy.insertText(input)
+        }
         candidates = []
         renderCandidates()
         refreshCursorBar()
@@ -2169,6 +2179,23 @@ private func punctuationForInputMode(_ value: String, mode: String) -> String {
             .replacingOccurrences(of: "！", with: "!")
     default:
         return value
+    }
+}
+
+private func closingDelimiter(for value: String) -> String? {
+    switch value {
+    case "「": return "」"
+    case "『": return "』"
+    case "(": return ")"
+    case "（": return "）"
+    case "[": return "]"
+    case "［": return "］"
+    case "{": return "}"
+    case "｛": return "｝"
+    case "【": return "】"
+    case "〈": return "〉"
+    case "《": return "》"
+    default: return nil
     }
 }
 

@@ -194,7 +194,7 @@ private:
     DWORD status_ = 0;
 };
 
-enum class EditAction { update, commit, cancel };
+enum class EditAction { update, commit, cancel, insert_pair };
 
 class EditSession final : public ITfEditSession {
 public:
@@ -324,6 +324,9 @@ public:
             }
             keys->Release();
         }
+        // A text service instance is created for each newly opened process.
+        // Start direct so consoles do not unexpectedly receive Japanese text.
+        session_.set_mode(keynako::InputMode::english);
         initialize_language_bar();
         sync_input_compartments();
         session_.set_bundled_dictionary_path(path_utf8(
@@ -414,6 +417,7 @@ public:
             reload_shared_dictionary();
             WCHAR translated[4]{};
             char value = 0;
+            std::wstring paired_text;
             if (key == '1' && shift) {
                 // Shift+1 is ! on the supported JIS and US layouts. Resolve
                 // it before candidate-number handling and ToUnicode.
@@ -428,8 +432,21 @@ public:
             } else {
                 const int count = ToUnicode(static_cast<UINT>(key), scan_code,
                                             keyboard, translated, 4, 0);
-                if (count > 0 && translated[0] < 128) {
-                    value = static_cast<char>(translated[0]);
+                if (count > 0) {
+                    if (session_.mode() == keynako::InputMode::japanese) {
+                        switch (translated[0]) {
+                            case L'「': paired_text = L"「」"; break;
+                            case L'『': paired_text = L"『』"; break;
+                            case L'（': paired_text = L"（）"; break;
+                            case L'［': paired_text = L"［］"; break;
+                            case L'｛': paired_text = L"｛｝"; break;
+                            case L'【': paired_text = L"【】"; break;
+                            case L'〈': paired_text = L"〈〉"; break;
+                            case L'《': paired_text = L"《》"; break;
+                            default: break;
+                        }
+                    }
+                    if (translated[0] < 128) value = static_cast<char>(translated[0]);
                 }
             }
             if (!value && keynako::windows::is_oem_text_key(
@@ -441,14 +458,25 @@ public:
                 value = static_cast<char>(
                     std::tolower(static_cast<unsigned char>(key)));
             }
-            const bool literal_english =
-                session_.mode() == keynako::InputMode::japanese &&
-                ((key >= 'A' && key <= 'Z' && shift) ||
-                 session_.has_literal_suffix());
-            if (literal_english) {
-                session_.append_literal_ascii(value);
+            if (paired_text.empty() &&
+                session_.mode() == keynako::InputMode::japanese) {
+                if (value == '(') paired_text = L"()";
+                else if (value == '[') paired_text = L"「」";
+                else if (value == '{') paired_text = L"{}";
+            }
+            if (!paired_text.empty()) {
+                pending_pair_text_ = std::move(paired_text);
+                action = EditAction::insert_pair;
             } else {
-                session_.append_ascii(value);
+                const bool literal_english =
+                    session_.mode() == keynako::InputMode::japanese &&
+                    ((key >= 'A' && key <= 'Z' && shift) ||
+                     session_.has_literal_suffix());
+                if (literal_english) {
+                    session_.append_literal_ascii(value);
+                } else {
+                    session_.append_ascii(value);
+                }
             }
         } else if (key == VK_BACK) {
             if (session_.raw_input().empty()) return S_OK;
@@ -549,6 +577,52 @@ public:
     }
 
     HRESULT apply_edit(TfEditCookie edit_cookie, ITfContext *context, EditAction action) {
+        if (action == EditAction::insert_pair) {
+            std::wstring text = session_.raw_input().empty()
+                ? std::wstring{}
+                : utf8_to_wide(session_.selected_text());
+            text += pending_pair_text_;
+            pending_pair_text_.clear();
+
+            ITfRange *range = nullptr;
+            HRESULT result = S_OK;
+            if (composition_) {
+                result = composition_->GetRange(&range);
+                if (SUCCEEDED(result)) {
+                    result = range->SetText(edit_cookie, 0, text.data(),
+                                            static_cast<LONG>(text.size()));
+                }
+                if (SUCCEEDED(result)) {
+                    ITfComposition *ending = composition_;
+                    composition_ = nullptr;
+                    ending->EndComposition(edit_cookie);
+                    ending->Release();
+                }
+            } else {
+                ITfInsertAtSelection *insert_at_selection = nullptr;
+                result = context->QueryInterface(IID_PPV_ARGS(&insert_at_selection));
+                if (SUCCEEDED(result)) {
+                    result = insert_at_selection->InsertTextAtSelection(
+                        edit_cookie, TF_IAS_NO_DEFAULT_COMPOSITION, text.data(),
+                        static_cast<LONG>(text.size()), &range);
+                    insert_at_selection->Release();
+                }
+            }
+            if (SUCCEEDED(result) && range) {
+                range->Collapse(edit_cookie, TF_ANCHOR_END);
+                LONG shifted = 0;
+                result = range->ShiftStart(edit_cookie, -1, &shifted, nullptr);
+                if (SUCCEEDED(result)) {
+                    range->Collapse(edit_cookie, TF_ANCHOR_START);
+                    TF_SELECTION selection{range, TF_AE_NONE, FALSE};
+                    result = context->SetSelection(edit_cookie, 1, &selection);
+                }
+            }
+            if (range) range->Release();
+            session_.clear();
+            hide_candidates();
+            return result;
+        }
         if (action == EditAction::cancel) {
             if (composition_) {
                 ITfRange *range = nullptr;
@@ -681,6 +755,7 @@ private:
     std::chrono::steady_clock::time_point last_dictionary_check_{};
     std::chrono::steady_clock::time_point last_backspace_press_{};
     std::wstring shared_submission_status_;
+    std::wstring pending_pair_text_;
     void convert_or_cycle(ITfContext *context) {
         if (session_.raw_input().empty()) return;
         reload_shared_dictionary();
@@ -1383,7 +1458,13 @@ private:
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
             const std::string &source = session_.candidates()[index].source;
-            const wchar_t *source_text = source == "zenzai" ? L"Zenzai" : source == "shared" ? L"共有" : L"";
+            const wchar_t *source_text = source == "zenzai"
+                ? L"Zenzai"
+                : source == "shared"
+                    ? L"共有"
+                    : source.find("-prediction") != std::string::npos
+                        ? L"予測"
+                        : L"";
             if (*source_text) {
                 RECT source_rect = row;
                 source_rect.right -= MulDiv(12, static_cast<int>(dpi), 96);

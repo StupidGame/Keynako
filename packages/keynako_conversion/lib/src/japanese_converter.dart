@@ -349,6 +349,7 @@ class JapaneseConverter {
   List<ConversionCandidate> candidates({
     required String input,
     bool romanInput = false,
+    int predictionLimit = 32,
     ConversionOptions options = const ConversionOptions(),
   }) {
     if (input.isEmpty) return const [];
@@ -357,6 +358,7 @@ class JapaneseConverter {
     final values = <ConversionCandidate>[
       ConversionCandidate(text: reading, reading: reading, score: 100),
     ];
+    final prefixPredictions = <ConversionCandidate>[];
 
     for (final entry in options.userDictionary) {
       if (entry.reading == reading) {
@@ -368,12 +370,41 @@ class JapaneseConverter {
             score: 340 + entry.importance.clamp(1, 5).toInt() * 20,
           ),
         );
+      } else if (predictionLimit > 0 &&
+          entry.reading.length > reading.length &&
+          entry.reading.startsWith(reading)) {
+        prefixPredictions.add(
+          ConversionCandidate(
+            text: entry.template ? _renderTemplate(entry) : entry.value,
+            reading: reading,
+            source: 'user-prediction',
+            score: 220 + entry.importance.clamp(1, 5).toInt() * 20,
+          ),
+        );
       }
     }
     for (final value in _dictionary[reading] ?? const <String>[]) {
       values.add(
         ConversionCandidate(text: value, reading: reading, score: 250),
       );
+    }
+    if (predictionLimit > 0) {
+      for (final entry in _dictionary.entries) {
+        if (entry.key.length <= reading.length ||
+            !entry.key.startsWith(reading)) {
+          continue;
+        }
+        for (final value in entry.value) {
+          prefixPredictions.add(
+            ConversionCandidate(
+              text: value,
+              reading: reading,
+              source: 'dictionary-prediction',
+              score: 180,
+            ),
+          );
+        }
+      }
     }
     final katakana = hiraganaToKatakana(reading);
     if (katakana != reading) {
@@ -468,6 +499,19 @@ class JapaneseConverter {
     }
     final result = unique.values.toList()
       ..sort((left, right) => right.score.compareTo(left.score));
+    final uniquePredictions = <String, ConversionCandidate>{};
+    for (final candidate in prefixPredictions) {
+      final learned = options.learningEnabled
+          ? options.learning['$reading\t${candidate.text}'] ?? 0
+          : 0;
+      final scored = candidate.copyWith(score: candidate.score + learned * 50);
+      final previous = uniquePredictions[candidate.text];
+      if (previous == null || scored.score > previous.score) {
+        uniquePredictions[candidate.text] = scored;
+      }
+    }
+    final predictions = uniquePredictions.values.toList()
+      ..sort((left, right) => right.score.compareTo(left.score));
     final liveCandidate =
         options.liveConversion && sourceReading == reading && result.isNotEmpty
         ? result.first
@@ -494,9 +538,22 @@ class JapaneseConverter {
             ),
     ];
     final pinnedTexts = pinned.map((candidate) => candidate.text).toSet();
-    return [
+    final baseCandidates = [
       ...pinned,
       ...result.where((candidate) => !pinnedTexts.contains(candidate.text)),
+    ];
+    final baseTexts = baseCandidates.map((candidate) => candidate.text).toSet();
+    final visiblePredictions = predictions
+        .where((candidate) => !baseTexts.contains(candidate.text))
+        .take(predictionLimit < 0 ? 0 : predictionLimit)
+        .toList(growable: false);
+    final predictionInsertIndex = baseCandidates.length < 2
+        ? baseCandidates.length
+        : 2;
+    return [
+      ...baseCandidates.take(predictionInsertIndex),
+      ...visiblePredictions,
+      ...baseCandidates.skip(predictionInsertIndex),
     ];
   }
 

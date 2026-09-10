@@ -68,6 +68,7 @@ import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
 import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
+import io.github.StupidGame.azookey_flutter.input.closingDelimiterFor
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.deleteEditorText
@@ -2378,7 +2379,16 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun directCommit(value: String) {
         prepareSelectionForInput()
         commitComposition()
-        currentInputConnection?.commitText(punctuationForInputMode(value, mode), 1)
+        val input = punctuationForInputMode(value, mode)
+        val closingDelimiter = closingDelimiterFor(input)
+        currentInputConnection?.commitText(
+            if (closingDelimiter == null) input else input + closingDelimiter,
+            1,
+        )
+        if (closingDelimiter != null) {
+            val moved = TextSelectionSession.capture(currentInputConnection)?.moveCursor(-1) == true
+            if (!moved) moveCursor(-1)
+        }
         candidates.clear()
         selectedCandidate = 0
         renderCandidates()
