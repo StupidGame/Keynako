@@ -14,6 +14,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
 import android.inputmethodservice.InputMethodService
 import android.media.AudioManager
@@ -33,7 +34,6 @@ import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.HorizontalScrollView
-import android.widget.ImageView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -94,9 +94,8 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 
 class AzooKeyInputMethodService : InputMethodService() {
-    private lateinit var inputViewFrame: FrameLayout
+    private lateinit var inputViewFrame: KeyboardInputFrame
     private lateinit var keyboardSurface: FrameLayout
-    private lateinit var backgroundImageView: KeyboardBackgroundImageView
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
     private lateinit var keyboardContainer: LinearLayout
@@ -155,21 +154,9 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     override fun onCreateInputView(): View {
         reloadState()
-        inputViewFrame = FrameLayout(this).apply {
+        inputViewFrame = KeyboardInputFrame(this).apply {
             setBackgroundColor(palette.background)
         }
-        backgroundImageView = KeyboardBackgroundImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            imageAlpha = 217
-            visibility = View.GONE
-        }
-        inputViewFrame.addView(
-            backgroundImageView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-            ),
-        )
         keyboardSurface = FrameLayout(this)
         inputViewFrame.addView(
             keyboardSurface,
@@ -381,17 +368,17 @@ class AzooKeyInputMethodService : InputMethodService() {
             "${it.absolutePath}:$revision"
         }
         if (configuredPath == null) {
-            backgroundImageView.setImageDrawable(null)
+            inputViewFrame.setKeyboardBackground(null)
             backgroundImageSignature = null
         } else if (signature != null && shouldReloadKeyboardBackground(
                 signature = signature,
                 loadedSignature = backgroundImageSignature,
-                hasDrawable = backgroundImageView.drawable != null,
+                hasDrawable = inputViewFrame.hasKeyboardBackground,
             )
         ) {
             val bitmap = file.let(::decodeKeyboardBackground)
             if (bitmap != null) {
-                backgroundImageView.setImageBitmap(bitmap)
+                inputViewFrame.setKeyboardBackground(bitmap)
                 backgroundImageSignature = signature
             } else {
                 Log.w(
@@ -403,8 +390,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         // A state/file replacement is atomic, but the filesystem can still be
         // briefly unavailable. Keep the already decoded image instead of
         // flashing the palette fallback until the next refresh.
-        val hasImage = configuredPath != null && backgroundImageView.drawable != null
-        backgroundImageView.visibility = if (hasImage) View.VISIBLE else View.GONE
+        val hasImage = configuredPath != null && inputViewFrame.hasKeyboardBackground
         root.setBackgroundColor(if (hasImage) Color.TRANSPARENT else palette.background)
     }
 
@@ -3470,24 +3456,74 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 }
 
-/** A decorative image must never contribute its bitmap's intrinsic size to the IME. */
-private class KeyboardBackgroundImageView(context: Context) : ImageView(context) {
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(
-            decorativeImageMeasuredDimension(
-                isExact = View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.EXACTLY,
-                exactSize = View.MeasureSpec.getSize(widthMeasureSpec),
-            ),
-            decorativeImageMeasuredDimension(
-                isExact = View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.EXACTLY,
-                exactSize = View.MeasureSpec.getSize(heightMeasureSpec),
-            ),
+/** Draws the decorative image without making it a child that can affect IME measurement. */
+private class KeyboardInputFrame(context: Context) : FrameLayout(context) {
+    private val keyboardBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        alpha = 217
+    }
+    private var keyboardBackground: Bitmap? = null
+
+    val hasKeyboardBackground: Boolean
+        get() = keyboardBackground != null
+
+    init {
+        setWillNotDraw(false)
+    }
+
+    fun setKeyboardBackground(bitmap: Bitmap?) {
+        keyboardBackground = bitmap
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val bitmap = keyboardBackground ?: return
+        val destination = centerCropDestination(
+            containerWidth = width,
+            containerHeight = height,
+            imageWidth = bitmap.width,
+            imageHeight = bitmap.height,
+        ) ?: return
+        canvas.drawBitmap(
+            bitmap,
+            null,
+            RectF(destination.left, destination.top, destination.right, destination.bottom),
+            keyboardBackgroundPaint,
         )
     }
 }
 
-internal fun decorativeImageMeasuredDimension(isExact: Boolean, exactSize: Int): Int =
-    if (isExact) exactSize else 0
+internal data class BackgroundImageDestination(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+)
+
+internal fun centerCropDestination(
+    containerWidth: Int,
+    containerHeight: Int,
+    imageWidth: Int,
+    imageHeight: Int,
+): BackgroundImageDestination? {
+    if (containerWidth <= 0 || containerHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+        return null
+    }
+    val scale = maxOf(
+        containerWidth.toFloat() / imageWidth,
+        containerHeight.toFloat() / imageHeight,
+    )
+    val drawnWidth = imageWidth * scale
+    val drawnHeight = imageHeight * scale
+    val left = (containerWidth - drawnWidth) / 2f
+    val top = (containerHeight - drawnHeight) / 2f
+    return BackgroundImageDestination(
+        left = left,
+        top = top,
+        right = left + drawnWidth,
+        bottom = top + drawnHeight,
+    )
+}
 
 internal fun shouldReloadKeyboardBackground(
     signature: String,
