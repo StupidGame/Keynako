@@ -33,12 +33,13 @@ The desktop app performs periodic cache refreshes. The TIP only reloads the newe
 local cache while typing, so a focused application never spawns a dictionary-refresh
 process in response to a key event.
 
-Windows loads a TSF text-service DLL inside the focused application. Release-tag
-artifacts must therefore carry a trusted Authenticode signature on the TIP, its
-Keynako helper executables, and the installer. Pull-request and manual Actions
-artifacts are deliberately marked unsigned and are for isolated testing only.
-Protected games can still apply their own allowlist, so a valid signature improves
-trust but cannot guarantee acceptance by every anti-cheat product.
+Windows loads a TSF text-service DLL inside the focused application. Every Actions
+artifact therefore carries an Authenticode signature on the TIP, its Keynako
+helper executables, and the installer. Pull-request and manual builds use a cached
+self-signed CI certificate; release tags use the trusted certificate from repository
+secrets when one is configured. A CI signature provides integrity but is not a
+trusted publisher identity. Protected games can still apply their own allowlist,
+so even a trusted signature cannot guarantee acceptance by every anti-cheat product.
 
 When `KEYNAKO_DICTIONARY_SUBMISSION_URL` is set to an HTTPS URL at CMake
 configure time, committing a non-first dictionary candidate shows an eight-second

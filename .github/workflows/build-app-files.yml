@@ -277,34 +277,99 @@ jobs:
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-small-gguf' (Join-Path $imeRoot 'zenzai')
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-xsmall-gguf' (Join-Path $imeRoot 'zenzai')
 
-      - name: Sign the staged Windows binaries for release tags
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Restore the stable CI Windows signing certificate
+        uses: actions/cache@v5
+        with:
+          path: .ci/keynako-ci-windows-signing.pfx
+          key: keynako-ci-windows-signing-v1
+
+      - name: Prepare the Windows signing certificate
+        id: windows-signing
         shell: pwsh
         env:
           KEYNAKO_WINDOWS_SIGNING_PFX: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PFX }}
           KEYNAKO_WINDOWS_SIGNING_PASSWORD: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:KEYNAKO_WINDOWS_SIGNING_PFX) -or
-              [string]::IsNullOrWhiteSpace($env:KEYNAKO_WINDOWS_SIGNING_PASSWORD)) {
-            throw 'Release tags require KEYNAKO_WINDOWS_SIGNING_PFX and KEYNAKO_WINDOWS_SIGNING_PASSWORD.'
+          $isReleaseTag =
+            $env:GITHUB_EVENT_NAME -eq 'push' -and
+            $env:GITHUB_REF.StartsWith('refs/tags/v')
+          $hasOfficialCertificate =
+            -not [string]::IsNullOrWhiteSpace($env:KEYNAKO_WINDOWS_SIGNING_PFX)
+          $hasOfficialPassword =
+            -not [string]::IsNullOrWhiteSpace($env:KEYNAKO_WINDOWS_SIGNING_PASSWORD)
+
+          if ($hasOfficialCertificate -ne $hasOfficialPassword) {
+            throw 'KEYNAKO_WINDOWS_SIGNING_PFX and KEYNAKO_WINDOWS_SIGNING_PASSWORD must be configured together.'
           }
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'keynako-authenticode.pfx'
-          try {
+
+          if ($isReleaseTag -and $hasOfficialCertificate) {
+            $certificatePath = Join-Path $env:RUNNER_TEMP 'keynako-authenticode.pfx'
             [IO.File]::WriteAllBytes(
               $certificatePath,
               [Convert]::FromBase64String($env:KEYNAKO_WINDOWS_SIGNING_PFX))
-            $packageRoot = Join-Path $env:RUNNER_TEMP 'Keynako-package'
-            & 'platforms/windows/sign-artifacts.ps1' `
-              -CertificatePath $certificatePath `
-              -CertificatePassword $env:KEYNAKO_WINDOWS_SIGNING_PASSWORD `
-              -Files @(
-                (Join-Path $packageRoot 'Keynako.exe'),
-                (Join-Path $packageRoot 'ime/KeynakoIME.dll'),
-                (Join-Path $packageRoot 'ime/KeynakoDictionarySubmit.exe'),
-                (Join-Path $packageRoot 'ime/keynako_zenzai.exe'))
-          } finally {
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+            $certificatePassword = $env:KEYNAKO_WINDOWS_SIGNING_PASSWORD
+            $signatureKind = 'trusted'
+          } else {
+            $certificatePath = Join-Path $env:GITHUB_WORKSPACE '.ci/keynako-ci-windows-signing.pfx'
+            $certificatePassword = 'keynako-ci-windows-signing-v1'
+            $securePassword = ConvertTo-SecureString $certificatePassword -AsPlainText -Force
+
+            if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf)) {
+              New-Item -ItemType Directory -Force -Path (Split-Path $certificatePath) | Out-Null
+              $certificate = New-SelfSignedCertificate `
+                -Type CodeSigningCert `
+                -Subject 'CN=Keynako GitHub Actions CI, O=Keynako' `
+                -CertStoreLocation 'Cert:\CurrentUser\My' `
+                -KeyAlgorithm RSA `
+                -KeyLength 4096 `
+                -HashAlgorithm SHA256 `
+                -KeyExportPolicy Exportable `
+                -NotAfter (Get-Date).AddYears(10)
+              try {
+                Export-PfxCertificate `
+                  -Cert $certificate `
+                  -FilePath $certificatePath `
+                  -Password $securePassword | Out-Null
+              } finally {
+                Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -Force
+              }
+            }
+
+            $importedCertificate = Import-PfxCertificate `
+              -FilePath $certificatePath `
+              -CertStoreLocation 'Cert:\CurrentUser\My' `
+              -Password $securePassword `
+              -Exportable |
+              Select-Object -First 1
+            $publicCertificatePath = Join-Path $env:RUNNER_TEMP 'keynako-ci-windows-signing.cer'
+            Export-Certificate `
+              -Cert $importedCertificate `
+              -FilePath $publicCertificatePath | Out-Null
+            Import-Certificate `
+              -FilePath $publicCertificatePath `
+              -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+            Import-Certificate `
+              -FilePath $publicCertificatePath `
+              -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
+            $signatureKind = 'ci'
           }
+
+          "KEYNAKO_WINDOWS_CERTIFICATE_PATH=$certificatePath" >> $env:GITHUB_ENV
+          "KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD=$certificatePassword" >> $env:GITHUB_ENV
+          "kind=$signatureKind" >> $env:GITHUB_OUTPUT
+
+      - name: Sign the staged Windows binaries
+        shell: pwsh
+        run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'Keynako-package'
+          & 'platforms/windows/sign-artifacts.ps1' `
+            -CertificatePath $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH `
+            -CertificatePassword $env:KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD `
+            -Files @(
+              (Join-Path $packageRoot 'Keynako.exe'),
+              (Join-Path $packageRoot 'ime/KeynakoIME.dll'),
+              (Join-Path $packageRoot 'ime/KeynakoDictionarySubmit.exe'),
+              (Join-Path $packageRoot 'ime/keynako_zenzai.exe'))
 
       - name: Build the executable Windows installer and uninstaller
         shell: pwsh
@@ -317,25 +382,13 @@ jobs:
           & $iscc "/DPackageRoot=$packageRoot" "/DOutputDir=$outputRoot" "/DBuildId=${{ github.run_number }}" 'platforms/windows/installer.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
-      - name: Sign the Windows installer for release tags
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Sign the Windows installer
         shell: pwsh
-        env:
-          KEYNAKO_WINDOWS_SIGNING_PFX: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PFX }}
-          KEYNAKO_WINDOWS_SIGNING_PASSWORD: ${{ secrets.KEYNAKO_WINDOWS_SIGNING_PASSWORD }}
         run: |
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'keynako-authenticode.pfx'
-          try {
-            [IO.File]::WriteAllBytes(
-              $certificatePath,
-              [Convert]::FromBase64String($env:KEYNAKO_WINDOWS_SIGNING_PFX))
-            & 'platforms/windows/sign-artifacts.ps1' `
-              -CertificatePath $certificatePath `
-              -CertificatePassword $env:KEYNAKO_WINDOWS_SIGNING_PASSWORD `
-              -Files @('build/windows-installer/KeynakoSetup.exe')
-          } finally {
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
-          }
+          & 'platforms/windows/sign-artifacts.ps1' `
+            -CertificatePath $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH `
+            -CertificatePassword $env:KEYNAKO_WINDOWS_CERTIFICATE_PASSWORD `
+            -Files @('build/windows-installer/KeynakoSetup.exe')
 
       - name: Record the Windows installer checksum
         shell: pwsh
@@ -346,26 +399,19 @@ jobs:
             Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
 
       - name: Upload the signed Windows desktop app
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v7
         with:
-          name: keynako-windows-installer-signed-${{ github.run_number }}
+          name: keynako-windows-installer-${{ steps.windows-signing.outputs.kind }}-signed-${{ github.run_number }}
           if-no-files-found: error
           retention-days: 14
           path: |
             build/windows-installer/KeynakoSetup.exe
             build/windows-installer/KeynakoSetup.exe.sha256
 
-      - name: Upload the unsigned Windows test build
-        if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v7
-        with:
-          name: keynako-windows-installer-unsigned-${{ github.run_number }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            build/windows-installer/KeynakoSetup.exe
-            build/windows-installer/KeynakoSetup.exe.sha256
+      - name: Remove the temporary official signing certificate
+        if: always() && steps.windows-signing.outputs.kind == 'trusted'
+        shell: pwsh
+        run: Remove-Item -LiteralPath $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH -Force -ErrorAction SilentlyContinue
 
   desktop-linux:
     name: Linux desktop IME
