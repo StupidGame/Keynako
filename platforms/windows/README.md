@@ -5,9 +5,9 @@ It owns composition, Japanese/English input mode, live conversion, candidate
 selection, the shared Keynako dictionary and optional Zenzai conversion.
 `Space` starts/cycles conversion. The Japanese Convert key mirrors that behavior
 only while a composition exists; it is never used as an input-mode toggle.
-Hankaku/Zenkaku toggles Japanese/English mode while preserving the current composition
-and rebuilding its candidates for the selected mode when Windows reports that key
-through TSF. Keynako does not install a Windows keyboard hook. A US 101/102-key
+Hankaku/Zenkaku commits the current composition before toggling Japanese/English
+mode when Windows reports that key through TSF. Keynako does not install a
+Windows keyboard hook. A US 101/102-key
 keyboard keeps bare Backquote available for text entry and can toggle with
 `Alt+Backquote` (the Microsoft IME shortcut) or `Ctrl+Space`. The TSF key sink and
 preserved-key routes also handle the explicit IME on/off and DBE

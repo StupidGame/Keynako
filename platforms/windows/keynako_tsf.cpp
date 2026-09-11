@@ -194,7 +194,14 @@ private:
     DWORD status_ = 0;
 };
 
-enum class EditAction { update, commit, cancel, insert_pair };
+enum class EditAction {
+    update,
+    commit,
+    commit_and_set_japanese,
+    commit_and_set_english,
+    cancel,
+    insert_pair,
+};
 
 class EditSession final : public ITfEditSession {
 public:
@@ -257,19 +264,41 @@ public:
     void set_input_mode(keynako::InputMode mode, ITfContext *context = nullptr) {
         if (session_.mode() == mode) return;
         const bool has_composition = !session_.raw_input().empty();
-        session_.set_mode(mode);
-        sync_input_compartments();
-        if (language_bar_) language_bar_->notify_mode_changed();
+        apply_input_mode(mode);
         if (has_composition) {
             if (context) request_edit(context, EditAction::update);
             else request_active_edit(EditAction::update);
         }
+    }
+    void set_input_mode_from_key(keynako::InputMode mode,
+                                 ITfContext *context) {
+        if (session_.mode() == mode) return;
+        if (!session_.raw_input().empty()) {
+            const EditAction action = mode == keynako::InputMode::japanese
+                ? EditAction::commit_and_set_japanese
+                : EditAction::commit_and_set_english;
+            request_edit(context, action);
+            return;
+        }
+        apply_input_mode(mode);
+    }
+    void apply_input_mode(keynako::InputMode mode) {
+        session_.set_mode(mode);
+        sync_input_compartments();
+        if (language_bar_) language_bar_->notify_mode_changed();
     }
     void toggle_input_mode(ITfContext *context = nullptr) {
         set_input_mode(session_.mode() == keynako::InputMode::japanese
                            ? keynako::InputMode::english
                            : keynako::InputMode::japanese,
                        context);
+    }
+    void toggle_input_mode_from_key(ITfContext *context) {
+        set_input_mode_from_key(
+            session_.mode() == keynako::InputMode::japanese
+                ? keynako::InputMode::english
+                : keynako::InputMode::japanese,
+            context);
     }
     void toggle_live_conversion() {
         session_.set_live_conversion(!session_.live_conversion());
@@ -377,7 +406,13 @@ public:
             static_cast<std::uint32_t>(key), scan_code, control, alt,
             !session_.raw_input().empty(), uses_japanese_keyboard());
         if (shortcut == keynako::windows::ShortcutAction::toggle_input_mode) {
-            toggle_input_mode(context);
+            if (keynako::windows::commits_composition_before_mode_change(
+                    static_cast<std::uint32_t>(key), scan_code,
+                    uses_japanese_keyboard())) {
+                toggle_input_mode_from_key(context);
+            } else {
+                toggle_input_mode(context);
+            }
             *eaten = TRUE;
             return S_OK;
         }
@@ -397,10 +432,11 @@ public:
         const auto direct_mode = keynako::windows::direct_input_mode_for_key(
             static_cast<std::uint32_t>(key));
         if (direct_mode != keynako::windows::DirectInputMode::none) {
-            set_input_mode(direct_mode == keynako::windows::DirectInputMode::japanese
-                               ? keynako::InputMode::japanese
-                               : keynako::InputMode::english,
-                           context);
+            set_input_mode_from_key(
+                direct_mode == keynako::windows::DirectInputMode::japanese
+                    ? keynako::InputMode::japanese
+                    : keynako::InputMode::english,
+                context);
 
             *eaten = TRUE;
             return S_OK;
@@ -559,8 +595,10 @@ public:
                 convert_or_cycle(context);
                 *eaten = TRUE;
             }
-        } else if (guid == kPreservedToggle || guid == kPreservedCtrlSpace ||
-                   guid == kPreservedAltGrave) {
+        } else if (guid == kPreservedToggle) {
+            toggle_input_mode_from_key(context);
+            *eaten = TRUE;
+        } else if (guid == kPreservedCtrlSpace || guid == kPreservedAltGrave) {
             toggle_input_mode(context);
             *eaten = TRUE;
         }
@@ -640,10 +678,14 @@ public:
             return S_OK;
         }
 
+        const bool commits = action == EditAction::commit ||
+                             action == EditAction::commit_and_set_japanese ||
+                             action == EditAction::commit_and_set_english;
         const auto improvement = action == EditAction::commit
             ? improvement_for_current_selection()
             : std::nullopt;
-        const std::wstring text = utf8_to_wide(action == EditAction::commit ? session_.selected_text() : session_.display_text());
+        const std::wstring text = utf8_to_wide(
+            commits ? session_.selected_text() : session_.display_text());
 
         bool inserted_at_selection = false;
         if (!composition_) {
@@ -683,7 +725,7 @@ public:
             result = range->SetText(edit_cookie, 0, text.data(),
                                     static_cast<LONG>(text.size()));
         }
-        if (SUCCEEDED(result) && action == EditAction::commit) {
+        if (SUCCEEDED(result) && commits) {
             range->Collapse(edit_cookie, TF_ANCHOR_END);
             ITfComposition *ending = composition_;
             composition_ = nullptr;
@@ -691,6 +733,11 @@ public:
             ending->Release();
             session_.clear();
             hide_candidates();
+            if (action == EditAction::commit_and_set_japanese) {
+                apply_input_mode(keynako::InputMode::japanese);
+            } else if (action == EditAction::commit_and_set_english) {
+                apply_input_mode(keynako::InputMode::english);
+            }
             if (improvement) show_improvement_prompt(*improvement);
         } else if (SUCCEEDED(result)) {
             if (session_.is_converting()) {

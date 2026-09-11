@@ -1572,21 +1572,19 @@ final class KeyboardViewController: UIInputViewController {
 
     private func completeCharacterForm(_ forms: [String]?) {
         guard !composing.isEmpty else { return }
-        if mode == "english" {
-            let caseConverted: String?
-            switch forms?.first {
-            case "uppercase": caseConverted = composing.uppercased()
-            case "lowercase": caseConverted = composing.lowercased()
-            default: caseConverted = nil
-            }
-            if let caseConverted {
-                // Changing case must not accept the current prediction. Leave
-                // the replacement marked and rebuild the matching candidates.
-                composing = caseConverted
-                rawRoman = ""
-                updateComposition()
-                return
-            }
+        let caseConverted: String?
+        switch forms?.first {
+        case "uppercase": caseConverted = composing.uppercased()
+        case "lowercase": caseConverted = composing.lowercased()
+        default: caseConverted = nil
+        }
+        if let caseConverted {
+            // Custom English layouts can keep the Japanese mode identifier.
+            // Leave the replacement active so later input continues the word.
+            composing = caseConverted
+            rawRoman = ""
+            updateComposition()
+            return
         }
         let converted: String
         switch forms?.first {
