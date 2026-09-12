@@ -1587,6 +1587,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun flickGuideCell(label: String, selected: Boolean): TextView = TextView(this).apply {
         text = label
+        textLocale = Locale.JAPAN
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTextColor(if (selected) Color.WHITE else palette.text)
@@ -1634,6 +1635,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val textSizeSetting = settings.optDouble("key_view_font_size", -1.0)
         return TextView(this).apply {
             text = label
+            textLocale = Locale.JAPAN
             gravity = Gravity.CENTER
             setTextColor(palette.text)
             textSize = if (textSizeSetting > 0) textSizeSetting.toFloat() else keyTextSize(label)
@@ -1841,6 +1843,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         for ((index, candidate) in candidates.withIndex()) {
             candidateRow.addView(TextView(this).apply {
                 text = candidate
+                textLocale = Locale.JAPAN
                 gravity = Gravity.CENTER
                 setPadding(dp(15), 0, dp(15), 0)
                 setTextColor(if (index == selectedCandidate) palette.accent else palette.text)
@@ -1871,6 +1874,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             candidateRow.addView(TextView(this).apply {
                 text = label
+                textLocale = Locale.JAPAN
                 gravity = Gravity.CENTER
                 setTextColor(palette.text)
                 setPadding(dp(16), 0, dp(16), 0)
@@ -1892,6 +1896,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         ) {
             candidateRow.addView(TextView(this).apply {
                 text = "📋"
+                textLocale = Locale.JAPAN
                 gravity = Gravity.CENTER
                 setTextColor(palette.text)
                 setPadding(dp(16), 0, dp(16), 0)
@@ -2069,6 +2074,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun addCandidateButton(label: String, action: () -> Unit) {
         candidateRow.addView(TextView(this).apply {
             text = label
+            textLocale = Locale.JAPAN
             gravity = Gravity.CENTER
             setTextColor(palette.text)
             setPadding(dp(15), 0, dp(15), 0)

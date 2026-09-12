@@ -31,6 +31,10 @@ void main() {
     expect(find.text('拡張'), findsOneWidget);
     expect(find.text('設定'), findsOneWidget);
     expect(find.text('Keynako', findRichText: true), findsOneWidget);
+    expect(
+      Localizations.localeOf(tester.element(find.text('設定'))),
+      const Locale('ja', 'JP'),
+    );
   });
 
   testWidgets('keyboard sandbox opens a real editable input field', (

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/app_controller.dart';
 import 'features/onboarding/onboarding_page.dart';
@@ -16,6 +17,9 @@ class AzooKeyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Keynako',
         debugShowCheckedModeBanner: false,
+        locale: const Locale('ja', 'JP'),
+        supportedLocales: const [Locale('ja', 'JP')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         themeMode: ThemeMode.system,
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
