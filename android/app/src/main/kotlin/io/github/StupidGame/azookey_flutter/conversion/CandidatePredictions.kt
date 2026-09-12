@@ -1,6 +1,5 @@
 package io.github.StupidGame.azookey_flutter.conversion
 
-import java.security.MessageDigest
 import java.util.Locale
 
 private val defaultEnglishPredictionWords = listOf(
@@ -62,34 +61,6 @@ internal fun compositionCommitText(
     candidates: List<String>,
     useCandidate: Boolean,
 ): String = if (useCandidate) candidates.firstOrNull() ?: reading else reading
-
-/** Maps the app's five importance levels into the dictionary's log-score range. */
-internal fun userDictionaryWordWeight(importance: Int): Double =
-    -15.0 + importance.coerceIn(1, 5) * 2.0
-
-/** Includes every dynamic entry in the conversion cache identity. */
-internal fun additionalDictionaryVersion(
-    baseVersion: String,
-    entries: List<AzooKeyHotfixDictionaryEntry>,
-): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    fun update(value: String) {
-        digest.update(value.length.toString().toByteArray(Charsets.UTF_8))
-        digest.update(':'.code.toByte())
-        digest.update(value.toByteArray(Charsets.UTF_8))
-    }
-
-    update(baseVersion)
-    for (entry in entries) {
-        update(entry.ruby)
-        update(entry.word)
-        update(entry.wordWeight.toBits().toString())
-        update(entry.lcid.toString())
-        update(entry.rcid.toString())
-        update(entry.mid.toString())
-    }
-    return digest.digest().joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 0xff) }
-}
 
 /** Returns dictionary values whose reading extends the text currently being composed. */
 internal fun prefixPredictionValues(

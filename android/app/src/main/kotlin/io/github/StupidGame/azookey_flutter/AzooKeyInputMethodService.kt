@@ -47,7 +47,6 @@ import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
-import io.github.StupidGame.azookey_flutter.conversion.additionalDictionaryVersion
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
@@ -62,7 +61,6 @@ import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
-import io.github.StupidGame.azookey_flutter.conversion.userDictionaryWordWeight
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationAction
@@ -2040,7 +2038,6 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun showEmoji() {
         candidateRow.removeAllViews()
-        addCandidateButton("← 戻る") { renderCandidates() }
         val emoji = listOf("😀", "😃", "😊", "😂", "🥰", "😍", "😭", "😡", "👍", "🙏", "❤️", "🎉", "✨", "⭐️")
         for (value in emoji) addCandidateButton(value) { directCommit(value) }
     }
@@ -2213,7 +2210,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         val predictionLimit = PREDICTION_LIMIT
         val userEntries = (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
             .sortedByDescending { it.optInt("importance", 3).coerceIn(1, 5) }
-        val localDictionaryEntries = mutableListOf<AzooKeyHotfixDictionaryEntry>()
         for (entry in userEntries) {
             val ruby = entry.optString("ruby")
             val value = if (entry.optBoolean("isTemplateMode", false)) {
@@ -2221,39 +2217,15 @@ class AzooKeyInputMethodService : InputMethodService() {
             } else {
                 entry.optString("word")
             }
-            if (ruby.isNotEmpty() && value.isNotEmpty()) {
-                localDictionaryEntries.add(
-                    AzooKeyHotfixDictionaryEntry(
-                        word = value,
-                        ruby = ruby,
-                        wordWeight = userDictionaryWordWeight(entry.optInt("importance", 3)),
-                        lcid = when {
-                            entry.optBoolean("isPersonName", false) -> 1289
-                            entry.optBoolean("isPlaceName", false) -> 1293
-                            else -> 1285
-                        },
-                        rcid = when {
-                            entry.optBoolean("isPersonName", false) -> 1289
-                            entry.optBoolean("isPlaceName", false) -> 1293
-                            else -> 1285
-                        },
-                        mid = 501,
-                    ),
-                )
-            }
             if (ruby == reading) values.add(value)
             else if (predictionLimit > 0 && ruby.startsWith(reading)) predictedValues.add(value)
         }
-        val dynamicDictionaryEntries = hotfixDictionaryEntries + localDictionaryEntries
         val officialCandidates = runCatching {
             azooKeyDictionary.candidates(
                 reading,
                 predictionLimit,
-                additionalEntries = dynamicDictionaryEntries,
-                additionalDictionaryVersion = additionalDictionaryVersion(
-                    hotfixDictionaryVersion,
-                    dynamicDictionaryEntries,
-                ),
+                additionalEntries = hotfixDictionaryEntries,
+                additionalDictionaryVersion = hotfixDictionaryVersion,
             )
         }.onFailure {
             Log.e("AzooKeyDictionary", "Failed to read the bundled dictionary", it)

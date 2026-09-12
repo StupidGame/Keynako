@@ -1,7 +1,7 @@
 import Foundation
 import KanaKanjiConverterModuleWithDefaultDictionary
 
-public struct AzooKeyHotfixDictionaryEntry: Sendable, Equatable {
+public struct AzooKeyHotfixDictionaryEntry: Sendable {
     public init(
         word: String,
         ruby: String,
@@ -35,8 +35,6 @@ public final class AzooKeyConversionEngine {
     private let memoryDirectoryURL: URL
     private var lastCandidates: [String: Candidate] = [:]
     private var hotfixDictionaryVersion: String?
-    private var hotfixDictionaryEntries: [AzooKeyHotfixDictionaryEntry] = []
-    private var userDictionaryEntries: [AzooKeyHotfixDictionaryEntry] = []
 
     public init(sharedContainerURL: URL) {
         self.sharedContainerURL = sharedContainerURL
@@ -56,30 +54,17 @@ public final class AzooKeyConversionEngine {
         version: String
     ) {
         guard hotfixDictionaryVersion != version else { return }
-        hotfixDictionaryEntries = entries
+        converter.importDynamicUserDictionary(entries.map { entry in
+            DicdataElement(
+                word: entry.word,
+                ruby: Self.toKatakana(entry.ruby),
+                lcid: entry.lcid,
+                rcid: entry.rcid,
+                mid: entry.mid,
+                value: PValue(entry.wordWeight)
+            )
+        })
         hotfixDictionaryVersion = version
-        applyDynamicUserDictionary()
-    }
-
-    public func updateUserDictionary(_ entries: [AzooKeyHotfixDictionaryEntry]) {
-        guard userDictionaryEntries != entries else { return }
-        userDictionaryEntries = entries
-        applyDynamicUserDictionary()
-    }
-
-    private func applyDynamicUserDictionary() {
-        converter.importDynamicUserDictionary(
-            (hotfixDictionaryEntries + userDictionaryEntries).map { entry in
-                DicdataElement(
-                    word: entry.word,
-                    ruby: Self.toKatakana(entry.ruby),
-                    lcid: entry.lcid,
-                    rcid: entry.rcid,
-                    mid: entry.mid,
-                    value: PValue(entry.wordWeight)
-                )
-            }
-        )
         lastCandidates = [:]
     }
 

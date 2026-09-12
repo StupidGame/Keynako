@@ -1813,7 +1813,6 @@ final class KeyboardViewController: UIInputViewController {
         if mode == "english" { return buildEnglishCandidates(composing) }
         var result: [String] = []
         var prefixPredictions: [String] = []
-        var localDictionaryEntries: [AzooKeyHotfixDictionaryEntry] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
             let ranked = dictionary.sorted {
                 ($0["importance"] as? Int ?? 3) > ($1["importance"] as? Int ?? 3)
@@ -1828,25 +1827,6 @@ final class KeyboardViewController: UIInputViewController {
                     value = entry["word"] as? String
                 }
                 guard let value, !value.isEmpty else { continue }
-                let importance = (entry["importance"] as? Int ?? 3).clamped(to: 1 ... 5)
-                let cid: Int
-                if entry["isPersonName"] as? Bool == true {
-                    cid = 1289
-                } else if entry["isPlaceName"] as? Bool == true {
-                    cid = 1293
-                } else {
-                    cid = 1285
-                }
-                localDictionaryEntries.append(
-                    AzooKeyHotfixDictionaryEntry(
-                        word: value,
-                        ruby: ruby,
-                        wordWeight: -15 + Double(importance * 2),
-                        lcid: cid,
-                        rcid: cid,
-                        mid: 501
-                    )
-                )
                 if ruby == composing {
                     result.append(value)
                 } else {
@@ -1854,7 +1834,6 @@ final class KeyboardViewController: UIInputViewController {
                 }
             }
         }
-        conversionEngine?.updateUserDictionary(localDictionaryEntries)
         let zenzai = zenzaiConfiguration()
         result.append(contentsOf: conversionEngine?.candidates(
             reading: composing,
@@ -2109,9 +2088,6 @@ final class KeyboardViewController: UIInputViewController {
 
     private func showEmoji() {
         candidateStack.removeAllArrangedSubviews()
-        candidateStack.addArrangedSubview(makeCandidateButton("← 戻る") { [weak self] in
-            self?.renderCandidates()
-        })
         for value in ["😀", "😃", "😊", "😂", "🥰", "😍", "😭", "😡", "👍", "🙏", "❤️", "🎉", "✨", "⭐️"] {
             candidateStack.addArrangedSubview(makeCandidateButton(value) { [weak self] in self?.directCommit(value) })
         }

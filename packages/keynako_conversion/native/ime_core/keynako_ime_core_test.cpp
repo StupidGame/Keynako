@@ -31,40 +31,6 @@ int main() {
     assert(prefix_prediction.candidates().size() >= 4);
     assert(prefix_prediction.candidates()[2].text == "日本");
     assert(prefix_prediction.candidates()[2].source == "shared-prediction");
-
-    ImeSession combined_conversion;
-    combined_conversion.set_user_dictionary({
-        {"きー", "Key", 5},
-        {"なこ", "nako", 5},
-        {"なこ", "Nako", 4},
-    });
-    for (const char value : std::string("ki-nako")) {
-        combined_conversion.append_ascii(value);
-    }
-    assert(std::any_of(
-        combined_conversion.candidates().begin(),
-        combined_conversion.candidates().end(),
-        [](const keynako::Candidate &candidate) {
-            return candidate.text == "Keynako" &&
-                   candidate.source == "combination";
-        }));
-    assert(std::any_of(
-        combined_conversion.candidates().begin(),
-        combined_conversion.candidates().end(),
-        [](const keynako::Candidate &candidate) {
-            return candidate.text == "KeyNako";
-        }));
-
-    ImeSession combination_around_particle;
-    for (const char value : std::string("watashihanihon")) {
-        combination_around_particle.append_ascii(value);
-    }
-    assert(std::any_of(
-        combination_around_particle.candidates().begin(),
-        combination_around_particle.candidates().end(),
-        [](const keynako::Candidate &candidate) {
-            return candidate.text == "私は日本";
-        }));
     assert(session.begin_conversion());
     assert(session.is_converting());
     assert(session.selected_index() == 0);
@@ -202,7 +168,7 @@ int main() {
             return candidate.source == "azookey-prediction";
         }));
     bundled.set_user_dictionary({
-        {"にほん", "共有", 5},
+        {"にほん", "共有", 5, 1000.0f, 1285, 1285, true},
     });
     const auto has_combined_shared_entry = std::any_of(
         bundled.candidates().begin(), bundled.candidates().end(),
