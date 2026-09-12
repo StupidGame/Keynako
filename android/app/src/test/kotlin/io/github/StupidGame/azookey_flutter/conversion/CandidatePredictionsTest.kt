@@ -1,6 +1,7 @@
 package io.github.StupidGame.azookey_flutter.conversion
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -22,6 +23,27 @@ class CandidatePredictionsTest {
                 candidates = listOf("仮面", "画面"),
                 useCandidate = true,
             ),
+        )
+    }
+
+    @Test
+    fun givesImportantUserWordsMoreDictionaryWeight() {
+        assertEquals(-13.0, userDictionaryWordWeight(1), 0.0)
+        assertEquals(-5.0, userDictionaryWordWeight(5), 0.0)
+    }
+
+    @Test
+    fun dynamicDictionaryCacheVersionTracksEveryCandidate() {
+        val first = AzooKeyHotfixDictionaryEntry("Key", "きー", -5.0, 1285, 1285, 501)
+        val second = first.copy(word = "キー")
+
+        assertEquals(
+            additionalDictionaryVersion("base", listOf(first)),
+            additionalDictionaryVersion("base", listOf(first)),
+        )
+        assertNotEquals(
+            additionalDictionaryVersion("base", listOf(first)),
+            additionalDictionaryVersion("base", listOf(second)),
         )
     }
 

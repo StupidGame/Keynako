@@ -72,4 +72,21 @@ class AzooKeyDictionaryTest {
         assertTrue("hotfix conversion should be included: $conversion", "KeynakoHotfix" in conversion)
         assertTrue("hotfix prediction should be included: $prediction", "KeynakoHotfix" in prediction)
     }
+
+    @Test
+    fun combinesMultipleDynamicDictionaryEntries() {
+        val entries = listOf(
+            AzooKeyHotfixDictionaryEntry("Key", "きー", 1000.0, 1285, 1285, 501),
+            AzooKeyHotfixDictionaryEntry("nako", "なこ", 1000.0, 1285, 1285, 501),
+        )
+
+        val candidates = dictionary.candidates(
+            "きーなこ",
+            predictionLimit = 0,
+            additionalEntries = entries,
+            additionalDictionaryVersion = additionalDictionaryVersion("test", entries),
+        ).conversions
+
+        assertTrue("combined candidate should be included: $candidates", "Keynako" in candidates)
+    }
 }
