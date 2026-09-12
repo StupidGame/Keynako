@@ -46,16 +46,16 @@ class CandidatePredictionsTest {
     }
 
     @Test
-    fun englishCaseFormsKeepTextAvailableForContinuedConversion() {
-        assertEquals("HEL", englishCaseComposition("Hel", "uppercase"))
-        assertEquals("hello", englishCaseComposition("Hello", "lowercase"))
+    fun caseFormsKeepCustomLayoutTextAvailableForContinuedConversion() {
+        assertEquals("HEL", caseConvertedComposition("Hel", "uppercase"))
+        assertEquals("hello", caseConvertedComposition("Hello", "lowercase"))
         assertEquals(
             listOf("HEL", "HELLO", "HELP"),
             englishPredictionCandidates(
-                checkNotNull(englishCaseComposition("hel", "uppercase")),
+                checkNotNull(caseConvertedComposition("hel", "uppercase")),
             ),
         )
-        assertNull(englishCaseComposition("かな", "katakana"))
+        assertNull(caseConvertedComposition("かな", "katakana"))
     }
 
     @Test
