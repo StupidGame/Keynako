@@ -124,6 +124,9 @@ void main() {
     expect(data.schemaVersion, currentSchemaVersion);
     expect(data.settings['live_conversion'], isFalse);
     expect(data.settings['keyboard_type'], 'flick');
+    expect(data.settings['keyboard_type_en'], 'flick');
+    expect(data.settings['keyboard_type_number'], 'tenkey');
+    expect(data.settings['automatic_keyboard_switching'], isTrue);
     expect(data.settings['half_kana_candidate'], isTrue);
     expect(data.settings['unicode_candidate'], isTrue);
     expect(data.themes, isNotEmpty);

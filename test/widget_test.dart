@@ -1,6 +1,7 @@
 import 'package:azookey_flutter/app.dart';
 import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
+import 'package:azookey_flutter/features/settings/keyboard_settings_page.dart';
 import 'package:azookey_flutter/models/app_data.dart';
 import 'package:azookey_flutter/widgets/keyboard_preview.dart';
 import 'package:flutter/material.dart';
@@ -79,5 +80,30 @@ void main() {
         ),
       );
     }
+  });
+
+  testWidgets('keyboard settings expose automatic switching and each layout', (
+    tester,
+  ) async {
+    final controller = AppController(storage: MemoryStorage());
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: KeyboardSettingsPage()),
+      ),
+    );
+
+    expect(find.text('入力欄に合わせる'), findsOneWidget);
+    expect(find.text('日本語'), findsWidgets);
+    expect(find.text('英語'), findsWidgets);
+    expect(find.text('数字'), findsWidgets);
+    expect(find.text('テンキー'), findsOneWidget);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(controller.data.settings['automatic_keyboard_switching'], isFalse);
   });
 }

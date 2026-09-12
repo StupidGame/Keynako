@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'azookey_hotfix_dictionary.dart';
 import 'custard.dart';
 
-const int currentSchemaVersion = 5;
+const int currentSchemaVersion = 6;
 
 const Map<String, dynamic> defaultKeyboardSettings = {
   'keyboard_type': 'flick',
   'keyboard_type_en': 'flick',
+  'keyboard_type_number': 'tenkey',
+  'automatic_keyboard_switching': true,
   'live_conversion': true,
   'automatic_completion_strength': 1,
   'enable_zenzai': true,

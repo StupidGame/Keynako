@@ -18,6 +18,7 @@ final class KeyboardViewController: UIInputViewController {
     private var candidates: [String] = []
     private var mode = "japanese"
     private var layout = "flick"
+    private var inputTraitSignature: String?
     private var shift = false
     private var capsLock = false
     private var activeCustomTab: String?
@@ -51,8 +52,7 @@ final class KeyboardViewController: UIInputViewController {
         resetComposition()
         cursorBarVisible = false
         cursorBarView = nil
-        mode = "japanese"
-        layout = stringSetting("keyboard_type", fallback: "flick")
+        synchronizeKeyboardWithInput(force: true)
         renderCandidates()
         renderKeyboard()
     }
@@ -61,6 +61,11 @@ final class KeyboardViewController: UIInputViewController {
         super.textWillChange(textInput)
         reloadState()
         refreshCursorBar()
+    }
+
+    override func textDidChange(_ textInput: (any UITextInput)?) {
+        super.textDidChange(textInput)
+        synchronizeKeyboardWithInput(force: false)
     }
 
     private func configureView() {
@@ -244,6 +249,12 @@ final class KeyboardViewController: UIInputViewController {
             renderCustomTab(activeCustomTab)
         } else if mode == "symbols" {
             renderSymbols()
+        } else if mode == "number", stringSetting("keyboard_type_number", fallback: "tenkey") == "symbols" {
+            renderSymbols()
+        } else if mode == "number" {
+            renderNumber()
+        } else if mode == "phone" {
+            renderPhone()
         } else if layout == "qwerty" {
             renderQwerty()
         } else {
@@ -341,6 +352,117 @@ final class KeyboardViewController: UIInputViewController {
         )
         bottom.addArrangedSubview(makeButton("return", special: true, action: enter))
         keyboardStack.addArrangedSubview(bottom)
+    }
+
+    private func renderNumber() {
+        let keyboardType = textDocumentProxy.keyboardType ?? .default
+        let showsSign = keyboardType == .numbersAndPunctuation
+        let showsDecimal = keyboardType == .decimalPad || keyboardType == .numbersAndPunctuation
+        renderNumericKeyboard(
+            sideKeys: [
+                NumericKey("⌫", action: "delete", special: true),
+                showsSign ? NumericKey("-", input: "-") : NumericKey(),
+                showsDecimal ? NumericKey(".", input: ".") : NumericKey(),
+                NumericKey("改行", action: "enter", special: true),
+            ],
+            bottomLeft: NumericKey("ABC", action: "english", special: true)
+        )
+    }
+
+    private func renderPhone() {
+        renderNumericKeyboard(
+            sideKeys: [
+                NumericKey("⌫", action: "delete", special: true),
+                NumericKey("+", input: "+"),
+                NumericKey("#", input: "#"),
+                NumericKey("改行", action: "enter", special: true),
+            ],
+            bottomLeft: NumericKey("*", input: "*")
+        )
+    }
+
+    private func renderNumericKeyboard(sideKeys: [NumericKey], bottomLeft: NumericKey) {
+        let rows = [
+            [NumericKey("1", input: "1"), NumericKey("2", input: "2"), NumericKey("3", input: "3"), sideKeys[0]],
+            [NumericKey("4", input: "4"), NumericKey("5", input: "5"), NumericKey("6", input: "6"), sideKeys[1]],
+            [NumericKey("7", input: "7"), NumericKey("8", input: "8"), NumericKey("9", input: "9"), sideKeys[2]],
+            [bottomLeft, NumericKey("0", input: "0"), NumericKey("☆123", action: "symbols", special: true), sideKeys[3]],
+        ]
+        for keys in rows {
+            let row = makeRow()
+            for key in keys {
+                guard !key.label.isEmpty else {
+                    row.addArrangedSubview(UIView())
+                    continue
+                }
+                row.addArrangedSubview(makeButton(key.label, special: key.special) { [weak self] in
+                    guard let self else { return }
+                    switch key.action {
+                    case "delete": self.delete()
+                    case "enter": self.enter()
+                    case "english": self.setMode("english")
+                    case "symbols": self.setMode("symbols")
+                    default: self.directCommit(key.input ?? "")
+                    }
+                })
+            }
+            keyboardStack.addArrangedSubview(row)
+        }
+    }
+
+    private func synchronizeKeyboardWithInput(force: Bool) {
+        let keyboardType = textDocumentProxy.keyboardType ?? .default
+        let contentType = textDocumentProxy.textContentType?.rawValue ?? ""
+        let signature = "\(keyboardType.rawValue)|\(contentType)"
+        guard force || signature != inputTraitSignature else { return }
+        inputTraitSignature = signature
+
+        let requestedMode: String
+        if boolSetting("automatic_keyboard_switching", fallback: true) {
+            requestedMode = requestedModeForCurrentInput(
+                keyboardType: keyboardType,
+                contentType: textDocumentProxy.textContentType
+            )
+        } else {
+            requestedMode = "japanese"
+        }
+
+        if !force, requestedMode == mode { return }
+        resetComposition()
+        activeCustomTab = nil
+        mode = requestedMode
+        switch requestedMode {
+        case "english": layout = stringSetting("keyboard_type_en", fallback: "flick")
+        case "japanese": layout = stringSetting("keyboard_type", fallback: "flick")
+        default: layout = "tenkey"
+        }
+        if !force {
+            renderCandidates()
+            renderKeyboard()
+        }
+    }
+
+    private func requestedModeForCurrentInput(
+        keyboardType: UIKeyboardType,
+        contentType: UITextContentType?
+    ) -> String {
+        switch keyboardType {
+        case .numberPad, .decimalPad, .asciiCapableNumberPad, .numbersAndPunctuation:
+            return "number"
+        case .phonePad, .namePhonePad:
+            return "phone"
+        case .asciiCapable, .emailAddress, .URL, .twitter, .webSearch:
+            return "english"
+        default:
+            break
+        }
+        guard let contentType else { return "japanese" }
+        switch contentType {
+        case .emailAddress, .URL, .username, .password, .newPassword, .oneTimeCode:
+            return "english"
+        default:
+            return "japanese"
+        }
     }
 
     private func renderCustomTab(_ id: String) {
@@ -2172,6 +2294,25 @@ final class KeyboardViewController: UIInputViewController {
         "ヘ": "ベ", "ベ": "ペ", "ペ": "ヘ",
         "ホ": "ボ", "ボ": "ポ", "ポ": "ホ",
     ]
+}
+
+private struct NumericKey {
+    let label: String
+    let input: String?
+    let action: String?
+    let special: Bool
+
+    init(
+        _ label: String = "",
+        input: String? = nil,
+        action: String? = nil,
+        special: Bool = false
+    ) {
+        self.label = label
+        self.input = input
+        self.action = action
+        self.special = special
+    }
 }
 
 private func punctuationForInputMode(_ value: String, mode: String) -> String {

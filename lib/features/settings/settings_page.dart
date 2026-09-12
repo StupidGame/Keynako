@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../core/app_controller.dart';
 import '../../models/app_data.dart';
 import '../../models/setting_descriptor.dart';
+import 'keyboard_settings_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -42,6 +43,26 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
             sliver: SliverList.list(
               children: [
+                if (_query.isEmpty ||
+                    'キーボード設定 入力欄 自動切り替え 日本語 英語 数字 電話 URL'
+                        .toLowerCase()
+                        .contains(_query.trim().toLowerCase())) ...[
+                  const _SectionHeader('キーボード'),
+                  Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: ListTile(
+                      leading: const Icon(Icons.keyboard_outlined),
+                      title: const Text('キーボード設定'),
+                      subtitle: const Text('入力欄に合わせた自動切り替えと、言語ごとの配列'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const KeyboardSettingsPage(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 for (final group in groups.entries) ...[
                   _SectionHeader(group.key),
                   Card(

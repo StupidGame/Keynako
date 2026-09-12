@@ -121,6 +121,15 @@ int main() {
             return candidate.text == "日本語";
         }));
 
+    ImeSession shifted_roman;
+    shifted_roman.set_user_dictionary({
+        {"にほんご", "日本語", 5},
+    });
+    for (const char value : std::string("niHonGo")) shifted_roman.append_ascii(value);
+    assert(shifted_roman.reading() == "にほんご");
+    assert(shifted_roman.display_text() == "日本語");
+    assert(!shifted_roman.has_literal_suffix());
+
     ImeSession mixed_text;
     mixed_text.set_user_dictionary({
         {"にほんご", "日本語", 5},

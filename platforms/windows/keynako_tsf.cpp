@@ -469,9 +469,11 @@ public:
                 action = EditAction::insert_pair;
             } else {
                 const bool literal_english =
-                    session_.mode() == keynako::InputMode::japanese &&
-                    ((key >= 'A' && key <= 'Z' && shift) ||
-                     session_.has_literal_suffix());
+                    keynako::windows::should_append_literal_english(
+                        session_.mode() == keynako::InputMode::japanese,
+                        !session_.raw_input().empty(),
+                        key >= 'A' && key <= 'Z' && shift,
+                        session_.has_literal_suffix());
                 if (literal_english) {
                     session_.append_literal_ascii(value);
                 } else {
