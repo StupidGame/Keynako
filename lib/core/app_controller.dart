@@ -210,6 +210,7 @@ class AppController extends ChangeNotifier {
   void removeCustomTab(String id) {
     data.customTabs.removeWhere((item) => item.id == id);
     data.tabBar.removeWhere((item) => item == 'custom:$id');
+    repairKeyboardLayoutSelections(data, removedId: id);
     _changed();
   }
 
@@ -280,6 +281,7 @@ class AppController extends ChangeNotifier {
   void removeCustard(String identifier) {
     data.custards.removeWhere((item) => item.identifier == identifier);
     data.tabBar.removeWhere((item) => item == 'custom:$identifier');
+    repairKeyboardLayoutSelections(data, removedId: identifier);
     _changed();
   }
 

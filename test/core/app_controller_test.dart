@@ -101,6 +101,27 @@ void main() {
     controller.dispose();
   });
 
+  test('resets input categories when their selected custom tab is deleted', () {
+    final controller = AppController(storage: _MemoryStorage());
+    const tab = CustomTabData(
+      id: 'phrases',
+      name: '定型文',
+      kind: 'scroll',
+      columns: 2,
+      rows: 5,
+      keys: [],
+    );
+    controller.replaceCustomTab(tab);
+    controller.setSetting('keyboard_type_en', 'custom:phrases');
+    controller.setSetting('keyboard_type_phone', 'custom:phrases');
+
+    controller.removeCustomTab('phrases');
+
+    expect(controller.data.settings['keyboard_type_en'], 'flick');
+    expect(controller.data.settings['keyboard_type_phone'], 'phone');
+    controller.dispose();
+  });
+
   test('persists a selected theme without waiting for debounce', () async {
     final storage = _MemoryStorage();
     final controller = AppController(storage: storage);
@@ -136,6 +157,10 @@ void main() {
     expect(controller.data.custards.single.displayName, '数字');
     expect(controller.data.tabBar, contains('custom:numbers'));
     expect(controller.data.customTabs, isEmpty);
+
+    controller.setSetting('keyboard_type_number', 'custom:numbers');
+    controller.removeCustard('numbers');
+    expect(controller.data.settings['keyboard_type_number'], 'tenkey');
     controller.dispose();
   });
 

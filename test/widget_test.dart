@@ -82,11 +82,34 @@ void main() {
     }
   });
 
-  testWidgets('keyboard settings expose automatic switching and each layout', (
+  testWidgets('keyboard settings select custom tabs and imported layouts', (
     tester,
   ) async {
     final controller = AppController(storage: MemoryStorage());
     await controller.initialize();
+    controller.data.customTabs.add(
+      const CustomTabData(
+        id: 'phrases',
+        name: '定型文',
+        kind: 'scroll',
+        columns: 2,
+        rows: 5,
+        keys: [],
+      ),
+    );
+    controller.importCustards('''
+{
+  "identifier": "numbers",
+  "language": "none",
+  "input_style": "direct",
+  "metadata": {"custard_version": "1.2", "display_name": "数字配列"},
+  "interface": {
+    "key_style": "pc_style",
+    "key_layout": {"type": "grid_fit", "row_count": 1, "column_count": 1},
+    "keys": []
+  }
+}
+''');
 
     await tester.pumpWidget(
       AppControllerScope(
@@ -105,5 +128,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(controller.data.settings['automatic_keyboard_switching'], isFalse);
+
+    await tester.tap(
+      find.byKey(const ValueKey('keyboard-layout-keyboard_type')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('カスタムタブ'), findsOneWidget);
+    expect(find.text('カスタム配列'), findsOneWidget);
+    expect(find.text('数字配列'), findsOneWidget);
+    await tester.tap(find.text('定型文'));
+    await tester.pumpAndSettle();
+
+    expect(controller.data.settings['keyboard_type'], 'custom:phrases');
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('keyboard-layout-keyboard_type_phone')),
+      240,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('keyboard-layout-keyboard_type_phone')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('数字配列'));
+    await tester.pumpAndSettle();
+
+    expect(controller.data.settings['keyboard_type_phone'], 'custom:numbers');
   });
 }

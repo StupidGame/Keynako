@@ -8,6 +8,47 @@ internal enum class RequestedKeyboardMode {
     DATE_TIME,
 }
 
+internal data class RequestedKeyboardSelection(
+    val layout: String,
+    val customTabId: String? = null,
+)
+
+/** Resolves a built-in or custom initial layout saved for an input category. */
+internal fun requestedKeyboardSelection(
+    mode: RequestedKeyboardMode,
+    configuredValue: String?,
+): RequestedKeyboardSelection {
+    val fallback = when (mode) {
+        RequestedKeyboardMode.JAPANESE, RequestedKeyboardMode.ENGLISH -> "flick"
+        RequestedKeyboardMode.NUMBER -> "tenkey"
+        RequestedKeyboardMode.PHONE -> "phone"
+        RequestedKeyboardMode.DATE_TIME -> "datetime"
+    }
+    val configured = configuredValue?.trim().orEmpty()
+    if (configured.startsWith("custom:")) {
+        val id = configured.removePrefix("custom:").trim()
+        if (id.isNotEmpty()) return RequestedKeyboardSelection(fallback, id)
+    }
+    val allowed = when (mode) {
+        RequestedKeyboardMode.JAPANESE,
+        RequestedKeyboardMode.ENGLISH -> setOf("flick", "qwerty")
+        RequestedKeyboardMode.NUMBER -> setOf("tenkey", "symbols")
+        RequestedKeyboardMode.PHONE -> setOf("phone")
+        RequestedKeyboardMode.DATE_TIME -> setOf("datetime")
+    }
+    return RequestedKeyboardSelection(
+        layout = configured.takeIf(allowed::contains) ?: fallback,
+    )
+}
+
+internal fun keyboardSettingKey(mode: RequestedKeyboardMode): String = when (mode) {
+    RequestedKeyboardMode.JAPANESE -> "keyboard_type"
+    RequestedKeyboardMode.ENGLISH -> "keyboard_type_en"
+    RequestedKeyboardMode.NUMBER -> "keyboard_type_number"
+    RequestedKeyboardMode.PHONE -> "keyboard_type_phone"
+    RequestedKeyboardMode.DATE_TIME -> "keyboard_type_datetime"
+}
+
 /** Chooses the initial keyboard from Android's EditorInfo input contract. */
 internal fun requestedKeyboardMode(
     inputType: Int,

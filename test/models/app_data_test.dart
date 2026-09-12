@@ -6,6 +6,7 @@ void main() {
   test('round trips all portable state', () {
     final data = AppData.defaults();
     data.settings['live_conversion'] = false;
+    data.settings['keyboard_type'] = 'custom:phrases';
     data.customTabs.add(
       const CustomTabData(
         id: 'phrases',
@@ -56,6 +57,7 @@ void main() {
     final decoded = AppData.decode(data.encode());
 
     expect(decoded.settings['live_conversion'], isFalse);
+    expect(decoded.settings['keyboard_type'], 'custom:phrases');
     expect(decoded.customTabs.single.keys.single.tap.value, 'こんにちは');
     expect(decoded.learning['にほん\t日本'], 3);
     expect(decoded.themes, hasLength(3));
@@ -126,6 +128,8 @@ void main() {
     expect(data.settings['keyboard_type'], 'flick');
     expect(data.settings['keyboard_type_en'], 'flick');
     expect(data.settings['keyboard_type_number'], 'tenkey');
+    expect(data.settings['keyboard_type_phone'], 'phone');
+    expect(data.settings['keyboard_type_datetime'], 'datetime');
     expect(data.settings['automatic_keyboard_switching'], isTrue);
     expect(data.settings['half_kana_candidate'], isTrue);
     expect(data.settings['unicode_candidate'], isTrue);
@@ -165,5 +169,20 @@ void main() {
     final decoded = AppData.fromJson(json);
 
     expect(decoded.tabBar, ['japanese', 'custom:phrases']);
+  });
+
+  test('repairs a selected custom layout that is no longer installed', () {
+    final data = AppData.fromJson({
+      'schemaVersion': currentSchemaVersion,
+      'settings': {
+        'keyboard_type': 'custom:missing',
+        'keyboard_type_number': 'custom:missing',
+        'keyboard_type_phone': 'custom:missing',
+      },
+    });
+
+    expect(data.settings['keyboard_type'], 'flick');
+    expect(data.settings['keyboard_type_number'], 'tenkey');
+    expect(data.settings['keyboard_type_phone'], 'phone');
   });
 }

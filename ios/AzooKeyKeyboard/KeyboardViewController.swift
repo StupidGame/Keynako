@@ -249,7 +249,7 @@ final class KeyboardViewController: UIInputViewController {
             renderCustomTab(activeCustomTab)
         } else if mode == "symbols" {
             renderSymbols()
-        } else if mode == "number", stringSetting("keyboard_type_number", fallback: "tenkey") == "symbols" {
+        } else if mode == "number", layout == "symbols" {
             renderSymbols()
         } else if mode == "number" {
             renderNumber()
@@ -429,13 +429,10 @@ final class KeyboardViewController: UIInputViewController {
 
         if !force, requestedMode == mode { return }
         resetComposition()
-        activeCustomTab = nil
         mode = requestedMode
-        switch requestedMode {
-        case "english": layout = stringSetting("keyboard_type_en", fallback: "flick")
-        case "japanese": layout = stringSetting("keyboard_type", fallback: "flick")
-        default: layout = "tenkey"
-        }
+        let selection = configuredKeyboardSelection(for: requestedMode)
+        activeCustomTab = selection.customTab
+        layout = selection.layout
         if !force {
             renderCandidates()
             renderKeyboard()
@@ -463,6 +460,58 @@ final class KeyboardViewController: UIInputViewController {
         default:
             return "japanese"
         }
+    }
+
+    private func configuredKeyboardSelection(for requestedMode: String) -> (
+        layout: String,
+        customTab: String?
+    ) {
+        let key: String
+        let fallback: String
+        let allowed: Set<String>
+        switch requestedMode {
+        case "english":
+            key = "keyboard_type_en"
+            fallback = "flick"
+            allowed = ["flick", "qwerty"]
+        case "number":
+            key = "keyboard_type_number"
+            fallback = "tenkey"
+            allowed = ["tenkey", "symbols"]
+        case "phone":
+            key = "keyboard_type_phone"
+            fallback = "phone"
+            allowed = ["phone"]
+        case "datetime":
+            key = "keyboard_type_datetime"
+            fallback = "datetime"
+            allowed = ["datetime"]
+        default:
+            key = "keyboard_type"
+            fallback = "flick"
+            allowed = ["flick", "qwerty"]
+        }
+        let configured = stringSetting(key, fallback: fallback)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if configured.hasPrefix("custom:") {
+            let id = String(configured.dropFirst("custom:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !id.isEmpty, customLayoutExists(id) {
+                return (fallback, id)
+            }
+        }
+        return (allowed.contains(configured) ? configured : fallback, nil)
+    }
+
+    private func customLayoutExists(_ id: String) -> Bool {
+        if (state["customTabs"] as? [[String: Any]])?.contains(where: {
+            ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == id
+        }) == true {
+            return true
+        }
+        return (state["custards"] as? [[String: Any]])?.contains(where: {
+            ($0["identifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == id
+        }) == true
     }
 
     private func renderCustomTab(_ id: String) {

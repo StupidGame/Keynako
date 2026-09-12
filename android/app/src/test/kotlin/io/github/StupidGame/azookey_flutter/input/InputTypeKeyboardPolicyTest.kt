@@ -60,4 +60,49 @@ class InputTypeKeyboardPolicyTest {
         assertEquals(false, isSensitiveInputType(0x00000001 or 0x00000020))
         assertEquals(false, isSensitiveInputType(0x00000002))
     }
+
+    @Test
+    fun resolvesBuiltInLayoutsForEveryInputCategory() {
+        assertEquals(
+            RequestedKeyboardSelection("qwerty"),
+            requestedKeyboardSelection(RequestedKeyboardMode.JAPANESE, "qwerty"),
+        )
+        assertEquals(
+            RequestedKeyboardSelection("symbols"),
+            requestedKeyboardSelection(RequestedKeyboardMode.NUMBER, "symbols"),
+        )
+        assertEquals(
+            RequestedKeyboardSelection("phone"),
+            requestedKeyboardSelection(RequestedKeyboardMode.PHONE, "unknown"),
+        )
+        assertEquals(
+            RequestedKeyboardSelection("datetime"),
+            requestedKeyboardSelection(RequestedKeyboardMode.DATE_TIME, null),
+        )
+    }
+
+    @Test
+    fun resolvesCustomLayoutsWithCategorySpecificFallbacks() {
+        assertEquals(
+            RequestedKeyboardSelection("flick", "phrases"),
+            requestedKeyboardSelection(RequestedKeyboardMode.ENGLISH, "custom:phrases"),
+        )
+        assertEquals(
+            RequestedKeyboardSelection("tenkey", "numbers"),
+            requestedKeyboardSelection(RequestedKeyboardMode.NUMBER, " custom:numbers "),
+        )
+        assertEquals(
+            RequestedKeyboardSelection("phone"),
+            requestedKeyboardSelection(RequestedKeyboardMode.PHONE, "custom: "),
+        )
+    }
+
+    @Test
+    fun mapsEveryInputCategoryToItsSetting() {
+        assertEquals("keyboard_type", keyboardSettingKey(RequestedKeyboardMode.JAPANESE))
+        assertEquals("keyboard_type_en", keyboardSettingKey(RequestedKeyboardMode.ENGLISH))
+        assertEquals("keyboard_type_number", keyboardSettingKey(RequestedKeyboardMode.NUMBER))
+        assertEquals("keyboard_type_phone", keyboardSettingKey(RequestedKeyboardMode.PHONE))
+        assertEquals("keyboard_type_datetime", keyboardSettingKey(RequestedKeyboardMode.DATE_TIME))
+    }
 }

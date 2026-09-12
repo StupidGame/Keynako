@@ -53,7 +53,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: ListTile(
                       leading: const Icon(Icons.keyboard_outlined),
                       title: const Text('キーボード設定'),
-                      subtitle: const Text('入力欄に合わせた自動切り替えと、言語ごとの配列'),
+                      subtitle: const Text('入力欄に合わせた自動切り替えと、種類ごとの配列'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(

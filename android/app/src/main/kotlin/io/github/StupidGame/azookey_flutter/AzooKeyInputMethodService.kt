@@ -73,13 +73,15 @@ import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.deleteEditorText
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
+import io.github.StupidGame.azookey_flutter.input.isSensitiveInputType
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
+import io.github.StupidGame.azookey_flutter.input.keyboardSettingKey
 import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
-import io.github.StupidGame.azookey_flutter.input.isSensitiveInputType
 import io.github.StupidGame.azookey_flutter.input.punctuationForInputMode
 import io.github.StupidGame.azookey_flutter.input.replaceCurrentSelection
 import io.github.StupidGame.azookey_flutter.input.requestedKeyboardMode
+import io.github.StupidGame.azookey_flutter.input.requestedKeyboardSelection
 import io.github.StupidGame.azookey_flutter.input.RequestedKeyboardMode
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
@@ -229,10 +231,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         cursorBarVisible = false
         cursorBarView = null
         sensitiveInput = isSensitiveInputType(info?.inputType ?: InputType.TYPE_NULL)
-        activeCustomTab = getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
-            .getString(ACTIVE_CUSTOM_TAB_KEY, null)
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
         val requestedMode = if (settings.optBoolean("automatic_keyboard_switching", true)) {
             requestedKeyboardMode(
                 inputType = info?.inputType ?: InputType.TYPE_NULL,
@@ -251,12 +249,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             RequestedKeyboardMode.PHONE -> "phone"
             RequestedKeyboardMode.DATE_TIME -> "datetime"
         }
-        if (requestedMode != RequestedKeyboardMode.JAPANESE) activeCustomTab = null
-        layout = when (requestedMode) {
-            RequestedKeyboardMode.JAPANESE -> settings.optString("keyboard_type", "flick")
-            RequestedKeyboardMode.ENGLISH -> settings.optString("keyboard_type_en", "flick")
-            else -> "tenkey"
-        }
+        val selection = requestedKeyboardSelection(
+            requestedMode,
+            settings.optString(keyboardSettingKey(requestedMode)),
+        )
+        activeCustomTab = selection.customTabId?.takeIf(::customLayoutExists)
+        layout = selection.layout
         if (::root.isInitialized) {
             applyKeyboardBackground()
             applyKeyboardWidth()
@@ -446,7 +444,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             when {
                 activeCustomTab != null -> renderCustomTab(activeCustomTab!!, heightScale)
                 mode == "symbols" -> renderSymbols(heightScale)
-                mode == "number" && settings.optString("keyboard_type_number", "tenkey") == "symbols" ->
+                mode == "number" && layout == "symbols" ->
                     renderSymbols(heightScale)
                 mode == "number" -> renderNumber(heightScale)
                 mode == "phone" -> renderPhone(heightScale)
@@ -730,6 +728,15 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (tab.optString("id").trim() == id) return tab
         }
         return null
+    }
+
+    private fun customLayoutExists(id: String): Boolean {
+        if (customTabDefinition(id) != null) return true
+        val custards = state.optJSONArray("custards") ?: return false
+        for (index in 0 until custards.length()) {
+            if (custards.optJSONObject(index)?.optString("identifier") == id) return true
+        }
+        return false
     }
 
     private fun renderCustard(id: String, scale: Double): Boolean {
@@ -1960,10 +1967,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             value.startsWith("custom:") -> {
                 commitComposition()
                 activeCustomTab = value.removePrefix("custom:").trim()
-                getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString(ACTIVE_CUSTOM_TAB_KEY, activeCustomTab)
-                    .apply()
                 mode = "japanese"
                 layout = "flick"
                 renderKeyboard()
@@ -2687,10 +2690,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         commitComposition()
         mode = newMode
         activeCustomTab = null
-        getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .remove(ACTIVE_CUSTOM_TAB_KEY)
-            .apply()
         layout = when (newMode) {
             "japanese" -> settings.optString("keyboard_type", "flick")
             "english" -> settings.optString("keyboard_type_en", "qwerty")
@@ -3473,7 +3472,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         private const val LEGACY_AZOOKEY_HOTFIX_LATEST_TAG_KEY =
             "azooKey_hotfix_dictionary_storage_latest_tag"
         private const val IME_LOG_TAG = "KeynakoIME"
-        private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
         private const val QUICK_WORD_DELETE_INTERVAL_MILLIS = 350L
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null
