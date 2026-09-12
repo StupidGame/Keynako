@@ -12,6 +12,13 @@ void main() {
     final controller = DesktopInputController();
     await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
 
+    expect(
+      Localizations.localeOf(
+        tester.element(find.byKey(const Key('composition-field'))),
+      ),
+      const Locale('ja', 'JP'),
+    );
+
     await tester.enterText(
       find.byKey(const Key('composition-field')),
       'nihongo',

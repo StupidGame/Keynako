@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'features/ime/ime_page.dart';
 import 'input/desktop_input_controller.dart';
@@ -13,6 +14,9 @@ class KeynakoDesktopApp extends StatelessWidget {
     return MaterialApp(
       title: 'Keynako Desktop IME',
       debugShowCheckedModeBanner: false,
+      locale: const Locale('ja', 'JP'),
+      supportedLocales: const [Locale('ja', 'JP')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       themeMode: ThemeMode.system,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),

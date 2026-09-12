@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import java.util.Locale
 
 /**
  * A key face that keeps flick alternatives in their gesture directions.
@@ -57,6 +58,7 @@ internal class DirectionalKeyView(
         if (value.isNullOrEmpty()) return
         val cell = TextView(context).apply {
             text = value
+            textLocale = Locale.JAPAN
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(textColor)
