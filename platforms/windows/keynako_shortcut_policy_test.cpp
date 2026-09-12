@@ -2,6 +2,7 @@
 
 using keynako::windows::ShortcutAction;
 using keynako::windows::DirectInputMode;
+using keynako::windows::commits_composition_before_mode_change;
 using keynako::windows::direct_input_mode_for_key;
 using keynako::windows::is_convert_key;
 using keynako::windows::is_candidate_selection_key;
@@ -27,6 +28,10 @@ static_assert(!is_convert_key(0, 0x7b));
 static_assert(is_hankaku_zenkaku_key(0x19, 0, false));
 static_assert(is_hankaku_zenkaku_key(0xc0, 0x29, true));
 static_assert(!is_hankaku_zenkaku_key(0xc0, 0x29, false));
+static_assert(commits_composition_before_mode_change(0x19, 0, false));
+static_assert(commits_composition_before_mode_change(0xc0, 0x29, true));
+static_assert(commits_composition_before_mode_change(0xf3, 0, false));
+static_assert(!commits_composition_before_mode_change(0x20, 0, false));
 static_assert(shortcut_action(0xc0, 0x29, false, false, false, true) ==
               ShortcutAction::toggle_input_mode);
 static_assert(shortcut_action(0xc0, 0x29, false, false, false, false) ==
@@ -91,5 +96,9 @@ int main() {
     if (!is_oem_text_key(0xdb)) return 23;
     if (oem_text_fallback(0xdb, false) != '[') return 24;
     if (oem_text_fallback(0xdb, true) != '{') return 25;
+    if (!commits_composition_before_mode_change(0x19, 0, false)) return 26;
+    if (!commits_composition_before_mode_change(0xc0, 0x29, true)) return 27;
+    if (!commits_composition_before_mode_change(0xf4, 0, false)) return 28;
+    if (commits_composition_before_mode_change(0x20, 0, false)) return 29;
     return 0;
 }

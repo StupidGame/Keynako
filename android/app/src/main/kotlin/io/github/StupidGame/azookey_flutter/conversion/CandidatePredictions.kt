@@ -40,10 +40,10 @@ internal fun englishPredictionCandidates(
 }
 
 /**
- * Applies an English case-only character form without completing the current
- * composition. Other character forms keep their normal commit semantics.
+ * Applies a case-only character form without completing the current
+ * composition, including from custom English layouts whose mode is Japanese.
  */
-internal fun englishCaseComposition(input: String, form: String?): String? = when (form) {
+internal fun caseConvertedComposition(input: String, form: String?): String? = when (form) {
     "uppercase" -> input.uppercase(Locale.ROOT)
     "lowercase" -> input.lowercase(Locale.ROOT)
     else -> null

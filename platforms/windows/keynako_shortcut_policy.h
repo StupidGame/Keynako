@@ -96,6 +96,13 @@ constexpr bool is_hankaku_zenkaku_key(std::uint32_t key,
             scan_code == kScanCodeJisHankakuZenkaku);
 }
 
+constexpr bool commits_composition_before_mode_change(
+    std::uint32_t key, std::uint32_t scan_code,
+    bool japanese_keyboard) {
+    return is_hankaku_zenkaku_key(key, scan_code, japanese_keyboard) ||
+           direct_input_mode_for_key(key) != DirectInputMode::none;
+}
+
 enum class ShortcutAction {
     none,
     toggle_input_mode,
