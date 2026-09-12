@@ -58,6 +58,35 @@ void main() {
     expect(candidates.first.text, '高い候補');
   });
 
+  test('shows combinations made from multiple conversion segments', () {
+    final candidates = converter.candidates(
+      input: 'きーなこ',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'きーなこ', value: '直接候補'),
+          ConversionDictionaryEntry(reading: 'きー', value: 'Key'),
+          ConversionDictionaryEntry(reading: 'なこ', value: 'nako'),
+          ConversionDictionaryEntry(reading: 'なこ', value: 'Nako'),
+        ],
+      ),
+    );
+
+    expect(candidates.first.text, '直接候補');
+    expect(candidates.map((candidate) => candidate.text), contains('Keynako'));
+    expect(candidates.map((candidate) => candidate.text), contains('KeyNako'));
+    expect(
+      candidates.firstWhere((candidate) => candidate.text == 'Keynako').source,
+      'combination',
+    );
+  });
+
+  test('combines conversions around an unconverted particle', () {
+    final candidates = converter.candidates(input: 'わたしはにほん');
+
+    expect(candidates.map((candidate) => candidate.text), contains('私は日本'));
+    expect(candidates.map((candidate) => candidate.text), contains('私は二本'));
+  });
+
   test('pins live conversion, hiragana, and katakana in that order', () {
     final candidates = converter.candidates(
       input: 'nihongo',
