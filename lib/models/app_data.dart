@@ -3,11 +3,19 @@ import 'dart:convert';
 import 'azookey_hotfix_dictionary.dart';
 import 'custard.dart';
 
-const int currentSchemaVersion = 5;
+const int currentSchemaVersion = 7;
 
-const Map<String, dynamic> defaultKeyboardSettings = {
+const Map<String, String> defaultKeyboardLayoutSettings = {
   'keyboard_type': 'flick',
   'keyboard_type_en': 'flick',
+  'keyboard_type_number': 'tenkey',
+  'keyboard_type_phone': 'phone',
+  'keyboard_type_datetime': 'datetime',
+};
+
+const Map<String, dynamic> defaultKeyboardSettings = {
+  ...defaultKeyboardLayoutSettings,
+  'automatic_keyboard_switching': true,
   'live_conversion': true,
   'automatic_completion_strength': 1,
   'enable_zenzai': true,
@@ -597,6 +605,7 @@ class AppData {
       final item = 'custom:${custard.identifier}';
       if (!data.tabBar.contains(item)) data.tabBar.add(item);
     }
+    repairKeyboardLayoutSelections(data);
     return data;
   }
 
@@ -639,4 +648,19 @@ class AppData {
   };
 
   String encode() => jsonEncode(toJson());
+}
+
+void repairKeyboardLayoutSelections(AppData data, {String? removedId}) {
+  final available = <String>{
+    for (final tab in data.customTabs) tab.id,
+    for (final custard in data.custards) custard.identifier,
+  };
+  for (final entry in defaultKeyboardLayoutSettings.entries) {
+    final selected = data.settings[entry.key];
+    if (selected is! String || !selected.startsWith('custom:')) continue;
+    final id = selected.substring('custom:'.length).trim();
+    if ((removedId != null && id == removedId) || !available.contains(id)) {
+      data.settings[entry.key] = entry.value;
+    }
+  }
 }

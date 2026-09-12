@@ -73,11 +73,16 @@ import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.deleteEditorText
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
+import io.github.StupidGame.azookey_flutter.input.isSensitiveInputType
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
+import io.github.StupidGame.azookey_flutter.input.keyboardSettingKey
 import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
 import io.github.StupidGame.azookey_flutter.input.longPressDelayMillis
 import io.github.StupidGame.azookey_flutter.input.punctuationForInputMode
 import io.github.StupidGame.azookey_flutter.input.replaceCurrentSelection
+import io.github.StupidGame.azookey_flutter.input.requestedKeyboardMode
+import io.github.StupidGame.azookey_flutter.input.requestedKeyboardSelection
+import io.github.StupidGame.azookey_flutter.input.RequestedKeyboardMode
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
@@ -109,6 +114,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var shift = false
     private var capsLock = false
     private var selectedCandidate = 0
+    private var sensitiveInput = false
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
     private var candidates = mutableListOf<String>()
@@ -224,19 +230,31 @@ class AzooKeyInputMethodService : InputMethodService() {
         selectedCandidate = 0
         cursorBarVisible = false
         cursorBarView = null
-        activeCustomTab = getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
-            .getString(ACTIVE_CUSTOM_TAB_KEY, null)
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
-        mode = when (info?.inputType?.and(0x0000000f)) {
-            0x00000002, 0x00000003 -> "symbols"
-            else -> "japanese"
-        }
-        layout = if (mode == "japanese") {
-            settings.optString("keyboard_type", "flick")
+        sensitiveInput = isSensitiveInputType(info?.inputType ?: InputType.TYPE_NULL)
+        val requestedMode = if (settings.optBoolean("automatic_keyboard_switching", true)) {
+            requestedKeyboardMode(
+                inputType = info?.inputType ?: InputType.TYPE_NULL,
+                imeOptions = info?.imeOptions ?: 0,
+                hintLocaleTags = info?.hintLocales?.let { locales ->
+                    (0 until locales.size()).map { locales[it].toLanguageTag() }
+                }.orEmpty(),
+            )
         } else {
-            "qwerty"
+            RequestedKeyboardMode.JAPANESE
         }
+        mode = when (requestedMode) {
+            RequestedKeyboardMode.JAPANESE -> "japanese"
+            RequestedKeyboardMode.ENGLISH -> "english"
+            RequestedKeyboardMode.NUMBER -> "number"
+            RequestedKeyboardMode.PHONE -> "phone"
+            RequestedKeyboardMode.DATE_TIME -> "datetime"
+        }
+        val selection = requestedKeyboardSelection(
+            requestedMode,
+            settings.optString(keyboardSettingKey(requestedMode)),
+        )
+        activeCustomTab = selection.customTabId?.takeIf(::customLayoutExists)
+        layout = selection.layout
         if (::root.isInitialized) {
             applyKeyboardBackground()
             applyKeyboardWidth()
@@ -426,6 +444,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             when {
                 activeCustomTab != null -> renderCustomTab(activeCustomTab!!, heightScale)
                 mode == "symbols" -> renderSymbols(heightScale)
+                mode == "number" && layout == "symbols" ->
+                    renderSymbols(heightScale)
+                mode == "number" -> renderNumber(heightScale)
+                mode == "phone" -> renderPhone(heightScale)
+                mode == "datetime" -> renderDateTime(heightScale)
                 layout == "qwerty" -> renderQwerty(heightScale)
                 else -> renderFlick(heightScale)
             }
@@ -435,6 +458,9 @@ class AzooKeyInputMethodService : InputMethodService() {
             keyboardContainer.removeAllViews()
             if (activeCustomTab != null) renderCustomTabFooter(heightScale)
             else if (mode == "symbols") renderSymbols(heightScale)
+            else if (mode == "number") renderNumber(heightScale)
+            else if (mode == "phone") renderPhone(heightScale)
+            else if (mode == "datetime") renderDateTime(heightScale)
             else if (layout == "qwerty") renderQwerty(heightScale)
             else renderFlick(heightScale)
         }
@@ -582,6 +608,77 @@ class AzooKeyInputMethodService : InputMethodService() {
         keyboardContainer.addView(bottom)
     }
 
+    private fun renderNumber(scale: Double) {
+        val inputType = currentInputEditorInfo?.inputType ?: InputType.TYPE_CLASS_NUMBER
+        val signed = inputType and InputType.TYPE_NUMBER_FLAG_SIGNED != 0
+        val decimal = inputType and InputType.TYPE_NUMBER_FLAG_DECIMAL != 0
+        renderNumericKeyboard(
+            scale,
+            sideKeys = listOf(
+                NumericKey("⌫", action = "delete", special = true),
+                if (signed) NumericKey("-", input = "-") else NumericKey(),
+                if (decimal) NumericKey(".", input = ".") else NumericKey(),
+                NumericKey("改行", action = "enter", special = true),
+            ),
+            bottomLeft = NumericKey("ABC", action = "english", special = true),
+        )
+    }
+
+    private fun renderPhone(scale: Double) {
+        renderNumericKeyboard(
+            scale,
+            sideKeys = listOf(
+                NumericKey("⌫", action = "delete", special = true),
+                NumericKey("+", input = "+"),
+                NumericKey("#", input = "#"),
+                NumericKey("改行", action = "enter", special = true),
+            ),
+            bottomLeft = NumericKey("*", input = "*"),
+        )
+    }
+
+    private fun renderDateTime(scale: Double) {
+        renderNumericKeyboard(
+            scale,
+            sideKeys = listOf(
+                NumericKey("⌫", action = "delete", special = true),
+                NumericKey("/", input = "/"),
+                NumericKey(":", input = ":"),
+                NumericKey("改行", action = "enter", special = true),
+            ),
+            bottomLeft = NumericKey("-", input = "-"),
+        )
+    }
+
+    private fun renderNumericKeyboard(
+        scale: Double,
+        sideKeys: List<NumericKey>,
+        bottomLeft: NumericKey,
+    ) {
+        val rows = listOf(
+            listOf(NumericKey("1", "1"), NumericKey("2", "2"), NumericKey("3", "3"), sideKeys[0]),
+            listOf(NumericKey("4", "4"), NumericKey("5", "5"), NumericKey("6", "6"), sideKeys[1]),
+            listOf(NumericKey("7", "7"), NumericKey("8", "8"), NumericKey("9", "9"), sideKeys[2]),
+            listOf(bottomLeft, NumericKey("0", "0"), NumericKey("☆123", action = "symbols", special = true), sideKeys[3]),
+        )
+        for (keys in rows) {
+            val row = newRow(scale)
+            for (key in keys) {
+                val view = when {
+                    key.label.isEmpty() -> View(this)
+                    key.action != null -> createKey(key.label, key.special, scale) {
+                        dispatchNamedAction(key.action)
+                    }
+                    else -> createKey(key.label, key.special, scale) {
+                        directCommit(key.input.orEmpty())
+                    }
+                }
+                row.addView(view, weightParams())
+            }
+            keyboardContainer.addView(row)
+        }
+    }
+
     private fun renderCustomTab(id: String, scale: Double) {
         val normalizedId = id.trim()
         if (renderCustard(normalizedId, scale)) return
@@ -631,6 +728,15 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (tab.optString("id").trim() == id) return tab
         }
         return null
+    }
+
+    private fun customLayoutExists(id: String): Boolean {
+        if (customTabDefinition(id) != null) return true
+        val custards = state.optJSONArray("custards") ?: return false
+        for (index in 0 until custards.length()) {
+            if (custards.optJSONObject(index)?.optString("identifier") == id) return true
+        }
+        return false
     }
 
     private fun renderCustard(id: String, scale: Double): Boolean {
@@ -1861,10 +1967,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             value.startsWith("custom:") -> {
                 commitComposition()
                 activeCustomTab = value.removePrefix("custom:").trim()
-                getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString(ACTIVE_CUSTOM_TAB_KEY, activeCustomTab)
-                    .apply()
                 mode = "japanese"
                 layout = "flick"
                 renderKeyboard()
@@ -2010,7 +2112,9 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun inputEnglishText(value: String) {
         val resolved = if (shift || capsLock) value.uppercase(Locale.ROOT) else value
-        if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+        if (sensitiveInput) {
+            directCommit(resolved)
+        } else if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
             prepareSelectionForInput()
             composing += resolved
             updateComposition()
@@ -2586,10 +2690,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         commitComposition()
         mode = newMode
         activeCustomTab = null
-        getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .remove(ACTIVE_CUSTOM_TAB_KEY)
-            .apply()
         layout = when (newMode) {
             "japanese" -> settings.optString("keyboard_type", "flick")
             "english" -> settings.optString("keyboard_type_en", "qwerty")
@@ -3132,6 +3232,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         val customTarget: String? = null,
     )
 
+    private data class NumericKey(
+        val label: String = "",
+        val input: String? = null,
+        val action: String? = null,
+        val special: Boolean = false,
+    )
+
     /** Reflect-style cursor bar used by azooKey's new cursor-bar setting. */
     private inner class CursorBarView : View(this@AzooKeyInputMethodService) {
         private val handler = Handler(Looper.getMainLooper())
@@ -3364,7 +3471,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         private const val LEGACY_AZOOKEY_HOTFIX_LATEST_TAG_KEY =
             "azooKey_hotfix_dictionary_storage_latest_tag"
         private const val IME_LOG_TAG = "KeynakoIME"
-        private const val ACTIVE_CUSTOM_TAB_KEY = "keynako_active_custom_tab"
         private const val QUICK_WORD_DELETE_INTERVAL_MILLIS = 350L
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null

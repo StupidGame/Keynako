@@ -72,6 +72,16 @@ constexpr bool is_candidate_selection_key(std::uint32_t key, bool shift) {
            key <= static_cast<std::uint32_t>('9');
 }
 
+// Shift can begin a standalone Latin word in Japanese mode, but must not split
+// an in-progress roman-to-kana composition into a permanent Latin suffix.
+constexpr bool should_append_literal_english(bool japanese,
+                                             bool has_composition,
+                                             bool shifted_letter,
+                                             bool has_literal_suffix) {
+    return japanese &&
+           ((!has_composition && shifted_letter) || has_literal_suffix);
+}
+
 constexpr char oem_text_fallback(std::uint32_t key, bool shift,
                                  std::uint32_t scan_code = 0) {
     if (is_slash_text_key(key, scan_code)) {

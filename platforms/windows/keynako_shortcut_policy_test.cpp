@@ -11,6 +11,7 @@ using keynako::windows::is_oem_text_key;
 using keynako::windows::is_slash_text_key;
 using keynako::windows::oem_text_fallback;
 using keynako::windows::shortcut_action;
+using keynako::windows::should_append_literal_english;
 
 static_assert(shortcut_action(0x1c, 0, false, false, false) ==
               ShortcutAction::none);
@@ -48,6 +49,10 @@ static_assert(is_oem_text_key(0xff, 0x35));
 static_assert(oem_text_fallback(0xff, false, 0x35) == '/');
 static_assert(oem_text_fallback(0xff, true, 0x35) == '?');
 static_assert(!is_slash_text_key(0x6f, 0x35));
+static_assert(should_append_literal_english(true, false, true, false));
+static_assert(!should_append_literal_english(true, true, true, false));
+static_assert(should_append_literal_english(true, true, false, true));
+static_assert(!should_append_literal_english(false, false, true, false));
 static_assert(direct_input_mode_for_key(0x15) == DirectInputMode::japanese);
 static_assert(direct_input_mode_for_key(0x16) == DirectInputMode::japanese);
 static_assert(direct_input_mode_for_key(0xf2) == DirectInputMode::japanese);
@@ -96,9 +101,12 @@ int main() {
     if (!is_oem_text_key(0xdb)) return 23;
     if (oem_text_fallback(0xdb, false) != '[') return 24;
     if (oem_text_fallback(0xdb, true) != '{') return 25;
-    if (!commits_composition_before_mode_change(0x19, 0, false)) return 26;
-    if (!commits_composition_before_mode_change(0xc0, 0x29, true)) return 27;
-    if (!commits_composition_before_mode_change(0xf4, 0, false)) return 28;
-    if (commits_composition_before_mode_change(0x20, 0, false)) return 29;
+    // Shift changes the letter case without ending an active Japanese reading.
+    if (should_append_literal_english(true, true, true, false)) return 26;
+    if (!should_append_literal_english(true, false, true, false)) return 27;
+    if (!commits_composition_before_mode_change(0x19, 0, false)) return 28;
+    if (!commits_composition_before_mode_change(0xc0, 0x29, true)) return 29;
+    if (!commits_composition_before_mode_change(0xf4, 0, false)) return 30;
+    if (commits_composition_before_mode_change(0x20, 0, false)) return 31;
     return 0;
 }

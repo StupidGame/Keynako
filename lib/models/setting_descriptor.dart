@@ -47,28 +47,6 @@ class SettingDescriptor {
 
 const List<SettingDescriptor> settingCatalog = [
   SettingDescriptor(
-    group: 'キーボードの種類',
-    key: 'keyboard_type',
-    title: '日本語キーボード',
-    explanation: '日本語の入力方法をフリック入力とローマ字入力から選択できます。',
-    kind: SettingKind.choice,
-    options: [
-      SettingOption('flick', 'フリック入力'),
-      SettingOption('qwerty', 'ローマ字入力'),
-    ],
-  ),
-  SettingDescriptor(
-    group: 'キーボードの種類',
-    key: 'keyboard_type_en',
-    title: '英語キーボード',
-    explanation: '英語の入力方法をフリック入力とQWERTY入力から選択できます。',
-    kind: SettingKind.choice,
-    options: [
-      SettingOption('flick', 'フリック入力'),
-      SettingOption('qwerty', 'QWERTY入力'),
-    ],
-  ),
-  SettingDescriptor(
     group: 'ライブ変換',
     key: 'live_conversion',
     title: 'ライブ変換',
