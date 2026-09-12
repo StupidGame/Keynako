@@ -61,18 +61,6 @@ void main() {
     expect(values.skip(1).take(2).map((value) => value.text), ['きーなこ', 'キーナコ']);
   });
 
-  test('shows combined user dictionary conversions for one reading', () {
-    final data = AppData.defaults();
-    data.userDictionary.addAll(const [
-      UserDictionaryEntry(id: 30, ruby: 'きー', word: 'Key'),
-      UserDictionaryEntry(id: 31, ruby: 'なこ', word: 'nako'),
-    ]);
-
-    final values = converter.candidates(input: 'きーなこ', data: data);
-
-    expect(values.map((value) => value.text), contains('Keynako'));
-  });
-
   test('pins hiragana and katakana first when live conversion is disabled', () {
     final data = AppData.defaults();
     data.settings['live_conversion'] = false;

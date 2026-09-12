@@ -1,32 +1,6 @@
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
 
-class _CombinationEntry {
-  const _CombinationEntry({
-    required this.reading,
-    required this.text,
-    required this.score,
-  });
-
-  final List<int> reading;
-  final String text;
-  final int score;
-}
-
-class _CombinationPath {
-  const _CombinationPath({
-    required this.text,
-    required this.convertedLength,
-    required this.segmentCount,
-    required this.score,
-  });
-
-  final String text;
-  final int convertedLength;
-  final int segmentCount;
-  final int score;
-}
-
 /// Stateless, platform-independent Japanese input transforms and candidates.
 class JapaneseConverter {
   const JapaneseConverter();
@@ -386,13 +360,6 @@ class JapaneseConverter {
     ];
     final prefixPredictions = <ConversionCandidate>[];
 
-    values.addAll(
-      _combinedCandidates(
-        reading: reading,
-        userDictionary: options.userDictionary,
-      ),
-    );
-
     for (final entry in options.userDictionary) {
       if (entry.reading == reading) {
         values.add(
@@ -588,142 +555,6 @@ class JapaneseConverter {
       ...visiblePredictions,
       ...baseCandidates.skip(predictionInsertIndex),
     ];
-  }
-
-  List<ConversionCandidate> _combinedCandidates({
-    required String reading,
-    required List<ConversionDictionaryEntry> userDictionary,
-  }) {
-    final readingRunes = reading.runes.toList(growable: false);
-    if (readingRunes.length < 2) return const [];
-
-    final entriesByFirstRune = <int, List<_CombinationEntry>>{};
-    void addEntry(String entryReading, String text, int score) {
-      if (entryReading.isEmpty || text.isEmpty) return;
-      final normalizedReading = katakanaToHiragana(entryReading);
-      final runes = normalizedReading.runes.toList(growable: false);
-      if (runes.isEmpty || runes.length > readingRunes.length) return;
-      entriesByFirstRune
-          .putIfAbsent(runes.first, () => <_CombinationEntry>[])
-          .add(_CombinationEntry(reading: runes, text: text, score: score));
-    }
-
-    for (final entry in userDictionary) {
-      addEntry(
-        entry.reading,
-        entry.template ? _renderTemplate(entry) : entry.value,
-        340 + entry.importance.clamp(1, 5).toInt() * 20,
-      );
-    }
-    for (final entry in _dictionary.entries) {
-      for (final text in entry.value) {
-        addEntry(entry.key, text, 250);
-      }
-    }
-
-    final paths = List.generate(
-      readingRunes.length + 1,
-      (_) => <_CombinationPath>[],
-    );
-    paths[0].add(
-      const _CombinationPath(
-        text: '',
-        convertedLength: 0,
-        segmentCount: 0,
-        score: 0,
-      ),
-    );
-
-    for (var start = 0; start < readingRunes.length; start++) {
-      final previous = paths[start];
-      if (previous.isEmpty) continue;
-      final touchedEnds = <int>{start + 1};
-
-      for (final path in previous) {
-        paths[start + 1].add(
-          _CombinationPath(
-            text: path.text + String.fromCharCode(readingRunes[start]),
-            convertedLength: path.convertedLength,
-            segmentCount: path.segmentCount,
-            score: path.score - 8,
-          ),
-        );
-      }
-
-      for (final entry
-          in entriesByFirstRune[readingRunes[start]] ??
-              const <_CombinationEntry>[]) {
-        final end = start + entry.reading.length;
-        if (end > readingRunes.length) continue;
-        var matches = true;
-        for (var offset = 0; offset < entry.reading.length; offset++) {
-          if (readingRunes[start + offset] != entry.reading[offset]) {
-            matches = false;
-            break;
-          }
-        }
-        if (!matches) continue;
-        touchedEnds.add(end);
-        for (final path in previous) {
-          paths[end].add(
-            _CombinationPath(
-              text: path.text + entry.text,
-              convertedLength: path.convertedLength + entry.reading.length,
-              segmentCount: path.segmentCount + 1,
-              score: path.score + entry.score,
-            ),
-          );
-        }
-      }
-
-      for (final end in touchedEnds) {
-        paths[end] = _trimCombinationPaths(paths[end]);
-      }
-    }
-
-    final combined =
-        paths.last
-            .where((path) => path.segmentCount >= 2)
-            .toList(growable: false)
-          ..sort(_compareCombinationPaths);
-    final seen = <String>{};
-    return combined
-        .where((path) => seen.add(path.text))
-        .take(24)
-        .map(
-          (path) => ConversionCandidate(
-            text: path.text,
-            reading: reading,
-            source: 'combination',
-            score:
-                path.score ~/ path.segmentCount - 20 + path.convertedLength,
-          ),
-        )
-        .toList(growable: false);
-  }
-
-  List<_CombinationPath> _trimCombinationPaths(
-    List<_CombinationPath> candidates,
-  ) {
-    if (candidates.length <= 48) return candidates;
-    candidates.sort(_compareCombinationPaths);
-    final seen = <String>{};
-    return candidates
-        .where(
-          (path) => seen.add(
-            '${path.text}\u0000${path.convertedLength}\u0000${path.segmentCount}',
-          ),
-        )
-        .take(48)
-        .toList(growable: true);
-  }
-
-  int _compareCombinationPaths(_CombinationPath left, _CombinationPath right) {
-    final converted = right.convertedLength.compareTo(left.convertedLength);
-    if (converted != 0) return converted;
-    final score = right.score.compareTo(left.score);
-    if (score != 0) return score;
-    return right.segmentCount.compareTo(left.segmentCount);
   }
 
   String _renderTemplate(ConversionDictionaryEntry entry) {

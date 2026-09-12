@@ -74,116 +74,6 @@ void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> 
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
 }
 
-struct CombinationEntry {
-    std::string reading;
-    std::string text;
-    int score = 0;
-};
-
-struct CombinationPath {
-    std::string text;
-    std::size_t converted_length = 0;
-    int segment_count = 0;
-    int score = 0;
-};
-
-bool better_combination_path(const CombinationPath &left,
-                             const CombinationPath &right) {
-    if (left.converted_length != right.converted_length) {
-        return left.converted_length > right.converted_length;
-    }
-    if (left.score != right.score) return left.score > right.score;
-    return left.segment_count > right.segment_count;
-}
-
-std::size_t next_utf8_position(const std::string &value, std::size_t start) {
-    if (start >= value.size()) return value.size();
-    const unsigned char first = static_cast<unsigned char>(value[start]);
-    const std::size_t length = first < 0x80 ? 1 :
-        (first & 0xe0) == 0xc0 ? 2 : (first & 0xf0) == 0xe0 ? 3 :
-        (first & 0xf8) == 0xf0 ? 4 : 1;
-    return std::min(value.size(), start + length);
-}
-
-void trim_combination_paths(std::vector<CombinationPath> &paths) {
-    constexpr std::size_t kCombinationBeamWidth = 48;
-    if (paths.size() <= kCombinationBeamWidth) return;
-    std::stable_sort(paths.begin(), paths.end(), better_combination_path);
-    std::unordered_set<std::string> seen;
-    std::vector<CombinationPath> trimmed;
-    for (auto &path : paths) {
-        const std::string key = path.text + '\0' +
-            std::to_string(path.converted_length) + '\0' +
-            std::to_string(path.segment_count);
-        if (seen.insert(key).second) trimmed.push_back(std::move(path));
-        if (trimmed.size() >= kCombinationBeamWidth) break;
-    }
-    paths = std::move(trimmed);
-}
-
-std::vector<std::string> combined_dictionary_candidates(
-    const std::string &reading,
-    const std::vector<DictionaryEntry> &user_dictionary) {
-    if (reading.empty()) return {};
-    std::vector<CombinationEntry> entries;
-    for (const auto &entry : user_dictionary) {
-        if (!entry.reading.empty() && !entry.value.empty()) {
-            entries.push_back({entry.reading, entry.value,
-                               100 + std::clamp(entry.importance, 1, 5) * 20});
-        }
-    }
-    for (const auto &entry : kDictionary) {
-        for (const auto &text : entry.second) {
-            entries.push_back({entry.first, text, 100});
-        }
-    }
-
-    std::vector<std::vector<CombinationPath>> paths(reading.size() + 1);
-    paths.front().push_back({"", 0, 0, 0});
-    for (std::size_t start = 0; start < reading.size(); ++start) {
-        if (paths[start].empty()) continue;
-        const auto previous = paths[start];
-        std::unordered_set<std::size_t> touched_ends;
-
-        const std::size_t fallback_end = next_utf8_position(reading, start);
-        touched_ends.insert(fallback_end);
-        for (const auto &path : previous) {
-            paths[fallback_end].push_back({
-                path.text + reading.substr(start, fallback_end - start),
-                path.converted_length, path.segment_count, path.score - 8});
-        }
-
-        for (const auto &entry : entries) {
-            if (entry.reading.size() > reading.size() - start ||
-                reading.compare(start, entry.reading.size(), entry.reading) != 0) {
-                continue;
-            }
-            const std::size_t end = start + entry.reading.size();
-            touched_ends.insert(end);
-            for (const auto &path : previous) {
-                paths[end].push_back({path.text + entry.text,
-                    path.converted_length + entry.reading.size(),
-                    path.segment_count + 1, path.score + entry.score});
-            }
-        }
-        for (const auto end : touched_ends) trim_combination_paths(paths[end]);
-    }
-
-    auto completed = std::move(paths.back());
-    std::stable_sort(completed.begin(), completed.end(), better_combination_path);
-    std::unordered_set<std::string> seen;
-    std::vector<std::string> result;
-    for (auto &path : completed) {
-        if (path.segment_count < 2 || path.text.empty() ||
-            !seen.insert(path.text).second) {
-            continue;
-        }
-        result.push_back(std::move(path.text));
-        if (result.size() >= 24) break;
-    }
-    return result;
-}
-
 bool is_literal_candidate_suffix(char value) {
     return value == '!' || value == '?' || value == '/';
 }
@@ -581,10 +471,9 @@ void ImeSession::rebuild_candidates() {
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;
         for (const auto &entry : user_dictionary_) {
+            if (!entry.has_word_weight) continue;
             additional_entries.push_back({entry.value, entry.reading, entry.lcid,
-                entry.rcid, entry.has_word_weight
-                    ? entry.word_weight
-                    : -15.0f + std::clamp(entry.importance, 1, 5) * 2.0f});
+                                          entry.rcid, entry.word_weight});
         }
         for (auto &value : bundled_dictionary_->candidates(
                  conversion_reading, 48, additional_entries)) {
@@ -600,10 +489,6 @@ void ImeSession::rebuild_candidates() {
         for (const auto &value : dictionary->second) {
             append_converted(value, "dictionary");
         }
-    }
-    for (auto &value : combined_dictionary_candidates(
-             conversion_reading, user_dictionary_)) {
-        append_converted(std::move(value), "combination");
     }
     for (const auto &entry : kDictionary) {
         if (entry.first.size() <= conversion_reading.size() ||
