@@ -36,7 +36,7 @@ void main() {
       'categories': <dynamic>[],
       'note': 'Desktop candidate right-click',
       'source': 'Keynako',
-      'app_version': '3.0.1',
+      'app_version': '3.1.0',
     });
   });
 
