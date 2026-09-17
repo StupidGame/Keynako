@@ -615,13 +615,18 @@ final class KeyboardViewController: UIInputViewController {
         }
         let design = key["design"] as? [String: Any] ?? [:]
         let label = design["label"] as? [String: Any]
+        let uppercaseLabels = keyStyle == "pc_style" && shouldUppercaseEnglishLabels
+        let centerActions = key["press_actions"] as? [[String: Any]] ?? []
         let directionTitles = custardFlickDirectionLabels(
             key: key,
             label: label,
-            variationsEnabled: variationsEnabled
+            variationsEnabled: variationsEnabled,
+            uppercaseEnglish: uppercaseLabels
         )
         let button = CustardButton(
-            title: directionTitles.isEmpty ? custardLabel(label) : custardPrimaryLabel(label),
+            title: directionTitles.isEmpty
+                ? custardLabel(label, actions: centerActions, uppercaseEnglish: uppercaseLabels)
+                : custardPrimaryLabel(label, actions: centerActions, uppercaseEnglish: uppercaseLabels),
             directionTitles: directionTitles,
             key: key,
             keyStyle: keyStyle,
@@ -694,31 +699,58 @@ final class KeyboardViewController: UIInputViewController {
         renderCandidates(showTabs: false)
     }
 
-    private func custardLabel(_ label: [String: Any]?) -> String {
+    private func custardLabel(
+        _ label: [String: Any]?,
+        actions: [[String: Any]] = [],
+        uppercaseEnglish: Bool = false
+    ) -> String {
         guard let label else { return "" }
-        if let text = label["text"] as? String { return text }
+        if let text = label["text"] as? String {
+            return shiftedLabel(text, actions: actions, uppercaseEnglish: uppercaseEnglish)
+        }
         if let image = label["system_image"] as? String { return systemImageLabel(image) }
         switch label["type"] as? String {
         case "main_and_sub":
-            return "\(label["main"] as? String ?? "")\n\(label["sub"] as? String ?? "")"
-        case "main_and_directions": return label["main"] as? String ?? ""
+            let main = shiftedLabel(
+                label["main"] as? String ?? "",
+                actions: actions,
+                uppercaseEnglish: uppercaseEnglish
+            )
+            return "\(main)\n\(label["sub"] as? String ?? "")"
+        case "main_and_directions":
+            return shiftedLabel(
+                label["main"] as? String ?? "",
+                actions: actions,
+                uppercaseEnglish: uppercaseEnglish
+            )
         case "system_image": return systemImageLabel(label["system_image"] as? String ?? "")
         default: return label["text"] as? String ?? ""
         }
     }
 
-    private func custardPrimaryLabel(_ label: [String: Any]?) -> String {
+    private func custardPrimaryLabel(
+        _ label: [String: Any]?,
+        actions: [[String: Any]] = [],
+        uppercaseEnglish: Bool = false
+    ) -> String {
         guard let label else { return "" }
         switch label["type"] as? String {
-        case "main_and_sub", "main_and_directions": return label["main"] as? String ?? ""
-        default: return custardLabel(label)
+        case "main_and_sub", "main_and_directions":
+            return shiftedLabel(
+                label["main"] as? String ?? "",
+                actions: actions,
+                uppercaseEnglish: uppercaseEnglish
+            )
+        default:
+            return custardLabel(label, actions: actions, uppercaseEnglish: uppercaseEnglish)
         }
     }
 
     private func custardFlickDirectionLabels(
         key: [String: Any],
         label: [String: Any]?,
-        variationsEnabled: Bool
+        variationsEnabled: Bool,
+        uppercaseEnglish: Bool
     ) -> [String: String] {
         guard variationsEnabled else { return [:] }
         let variations = (key["variations"] as? [[String: Any]] ?? [])
@@ -734,10 +766,20 @@ final class KeyboardViewController: UIInputViewController {
             let variation = variations.first(where: { $0["direction"] as? String == direction })
             let variationKey = variation?["key"] as? [String: Any]
             let design = variationKey?["design"] as? [String: Any]
-            let variationLabel = custardLabel(design?["label"] as? [String: Any])
             let actions = variationKey?["press_actions"] as? [[String: Any]] ?? []
-            let actionLabel = actionDisplayLabel(actions.first)
-            let declaredLabel = declaredDirections?[direction] as? String
+            let variationLabel = custardLabel(
+                design?["label"] as? [String: Any],
+                actions: actions,
+                uppercaseEnglish: uppercaseEnglish
+            )
+            let actionLabel = actionDisplayLabel(
+                actions.first,
+                uppercaseEnglish: uppercaseEnglish,
+                actionCount: actions.count
+            )
+            let declaredLabel = (declaredDirections?[direction] as? String).map {
+                shiftedLabel($0, actions: actions, uppercaseEnglish: uppercaseEnglish)
+            }
             let candidates: [String?] = [variationLabel, declaredLabel, actionLabel]
             if let value = candidates.compactMap({ $0 }).first(where: { !$0.isEmpty }) {
                 values[direction] = value
@@ -746,16 +788,59 @@ final class KeyboardViewController: UIInputViewController {
         return values
     }
 
-    private func actionDisplayLabel(_ action: [String: Any]?) -> String? {
+    private func actionDisplayLabel(
+        _ action: [String: Any]?,
+        uppercaseEnglish: Bool = false,
+        actionCount: Int = 1
+    ) -> String? {
         guard let action else { return nil }
+        let type = action["type"] as? String ?? "input"
         let value: String?
-        switch action["type"] as? String ?? "input" {
+        switch type {
         case "input": value = action["text"] as? String ?? action["value"] as? String
         case "directInput": value = action["value"] as? String
         case "direct_input": value = action["text"] as? String
         default: value = nil
         }
-        return value?.isEmpty == false ? value : nil
+        guard let value, !value.isEmpty else { return nil }
+        return shiftedInputLabel(
+            value,
+            actionType: type,
+            inputValue: value,
+            actionCount: actionCount,
+            uppercaseEnabled: uppercaseEnglish
+        )
+    }
+
+    private func shiftedLabel(
+        _ label: String,
+        actions: [[String: Any]],
+        uppercaseEnglish: Bool
+    ) -> String {
+        let action = actions.first
+        let input = action?["text"] as? String ?? action?["value"] as? String
+        return shiftedInputLabel(
+            label,
+            actionType: action?["type"] as? String ?? "",
+            inputValue: input,
+            actionCount: actions.count,
+            uppercaseEnabled: uppercaseEnglish
+        )
+    }
+
+    private func shiftedInputLabel(
+        _ label: String,
+        actionType: String,
+        inputValue: String?,
+        actionCount: Int,
+        uppercaseEnabled: Bool
+    ) -> String {
+        guard uppercaseEnabled,
+              label.count == 1,
+              actionCount == 1,
+              actionType == "input",
+              inputValue == label else { return label }
+        return label.uppercased()
     }
 
     private func systemImageLabel(_ name: String) -> String {
@@ -805,14 +890,22 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func makeCustomButton(_ key: [String: Any]) -> UIButton {
+        let uppercaseLabels = shouldUppercaseEnglishLabels
+        let tapAction = key["tap"] as? [String: Any]
+        let title = shiftedLabel(
+            key["label"] as? String ?? key["name"] as? String ?? "",
+            actions: tapAction.map { [$0] } ?? [],
+            uppercaseEnglish: uppercaseLabels
+        )
         let directionTitles = [
-            "left": actionDisplayLabel(key["left"] as? [String: Any]),
-            "top": actionDisplayLabel(key["up"] as? [String: Any]),
-            "right": actionDisplayLabel(key["right"] as? [String: Any]),
-            "bottom": actionDisplayLabel(key["down"] as? [String: Any]),
+            "left": actionDisplayLabel(key["left"] as? [String: Any], uppercaseEnglish: uppercaseLabels),
+            "top": actionDisplayLabel(key["up"] as? [String: Any], uppercaseEnglish: uppercaseLabels),
+            "right": actionDisplayLabel(key["right"] as? [String: Any], uppercaseEnglish: uppercaseLabels),
+            "bottom": actionDisplayLabel(key["down"] as? [String: Any], uppercaseEnglish: uppercaseLabels),
         ].compactMapValues { $0 }
         let button = CustomFlickButton(
             key: key,
+            title: title,
             directionTitles: directionTitles,
             sensitivity: CGFloat(doubleSetting("flick_sensitivity_setting", fallback: 1))
         ) { [weak self] action, allowQuickWordDelete in
@@ -934,9 +1027,9 @@ final class KeyboardViewController: UIInputViewController {
         default:
             if value.hasPrefix("custom:") {
                 commitComposition()
-                activeCustomTab = String(value.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
-                mode = "japanese"
-                layout = "flick"
+                activateCustomLayout(
+                    String(value.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+                )
                 renderKeyboard()
             }
         }
@@ -1264,7 +1357,7 @@ final class KeyboardViewController: UIInputViewController {
         let value = action["value"] as? String ?? ""
         switch type {
         case "input":
-            if let text = action["text"] as? String { custardInput(text) } else { directCommit(value) }
+            if let text = action["text"] as? String { custardInput(text) } else { customInput(value) }
         case "directInput": directCommit(value)
         case "direct_input": directCommit(action["text"] as? String ?? "")
         case "delete":
@@ -1486,6 +1579,71 @@ final class KeyboardViewController: UIInputViewController {
     private func activeCustard() -> [String: Any]? {
         guard let id = activeCustomTab else { return nil }
         return (state["custards"] as? [[String: Any]])?.first { $0["identifier"] as? String == id }
+    }
+
+    private func customTabDefinition(_ id: String) -> [String: Any]? {
+        (state["customTabs"] as? [[String: Any]])?.first {
+            ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == id
+        }
+    }
+
+    private func customLayoutProfile(_ id: String) -> (language: String, inputStyle: String)? {
+        if let tab = customTabDefinition(id) {
+            return (
+                tab["language"] as? String ?? "ja_JP",
+                tab["inputStyle"] as? String ?? "direct"
+            )
+        }
+        if let custard = (state["custards"] as? [[String: Any]])?.first(where: {
+            $0["identifier"] as? String == id
+        }) {
+            return (
+                custard["language"] as? String ?? "undefined",
+                custard["input_style"] as? String ?? "direct"
+            )
+        }
+        return nil
+    }
+
+    private func activateCustomLayout(_ id: String) {
+        activeCustomTab = id
+        guard let profile = customLayoutProfile(id) else { return }
+        switch profile.language {
+        case "en_US":
+            mode = "english"
+            layout = "qwerty"
+        case "ja_JP":
+            mode = "japanese"
+            layout = profile.inputStyle == "roman2kana" ? "qwerty" : "flick"
+        default:
+            break
+        }
+    }
+
+    private var shouldUppercaseEnglishLabels: Bool {
+        mode == "english" && (shift || capsLock)
+    }
+
+    private func customInput(_ value: String) {
+        guard !value.isEmpty else { return }
+        guard let id = activeCustomTab, let tab = customTabDefinition(id) else {
+            input(value)
+            return
+        }
+        let language = tab["language"] as? String ?? "ja_JP"
+        let inputStyle = tab["inputStyle"] as? String ?? "direct"
+        switch language {
+        case "en_US":
+            mode = "english"
+            layout = "qwerty"
+            inputEnglishText(value)
+        case "ja_JP":
+            mode = "japanese"
+            layout = inputStyle == "roman2kana" ? "qwerty" : "flick"
+            input(value)
+        default:
+            directCommit(value)
+        }
     }
 
     private func makeCustardInputRollback(
@@ -1772,7 +1930,7 @@ final class KeyboardViewController: UIInputViewController {
     private func moveTab(_ action: [String: Any]) {
         if action["tab_type"] as? String == "custom" {
             commitComposition()
-            activeCustomTab = action["identifier"] as? String
+            activateCustomLayout(action["identifier"] as? String ?? "")
             renderCandidates()
             renderKeyboard()
             return
@@ -1846,7 +2004,7 @@ final class KeyboardViewController: UIInputViewController {
             fullWidthRomanCandidate: boolSetting("full_roman_candidate", fallback: true),
             halfWidthKanaCandidate: boolSetting("half_kana_candidate", fallback: true),
             unicodeCandidate: boolSetting("unicode_candidate", fallback: true),
-            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.0.1"
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
         ) ?? [])
         if boolSetting("use_OS_user_dict", fallback: true) {
             result.append(contentsOf: osLexicon[composing] ?? [])
@@ -2955,6 +3113,7 @@ private final class CustomFlickButton: DirectionalKeyButton {
 
     init(
         key: [String: Any],
+        title: String,
         directionTitles: [String: String],
         sensitivity: CGFloat,
         callback: @escaping ([String: Any]?, Bool) -> Void
@@ -2963,7 +3122,7 @@ private final class CustomFlickButton: DirectionalKeyButton {
         self.sensitivity = sensitivity
         self.callback = callback
         super.init(
-            title: key["label"] as? String ?? key["name"] as? String ?? "",
+            title: title,
             directionTitles: directionTitles
         )
     }

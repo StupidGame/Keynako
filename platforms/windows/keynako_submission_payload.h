@@ -36,7 +36,7 @@ inline std::string shared_candidate_payload(const std::string &word,
            "\",\"ruby\":\"" + json_escape(ruby) +
            "\",\"importance\":3,\"categories\":[],"
            "\"note\":\"Windows candidate right-click\","
-           "\"source\":\"Keynako\",\"app_version\":\"3.0.1\"}";
+           "\"source\":\"Keynako\",\"app_version\":\"3.1.0\"}";
 }
 
 }  // namespace keynako::windows

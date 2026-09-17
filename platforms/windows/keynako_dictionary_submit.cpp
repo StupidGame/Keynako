@@ -50,7 +50,7 @@ bool post_payload(const std::wstring &endpoint, const std::string &payload) {
         path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
     }
 
-    HINTERNET session = WinHttpOpen(L"Keynako/3.0.1",
+    HINTERNET session = WinHttpOpen(L"Keynako/3.1.0",
                                     WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                     WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS, 0);

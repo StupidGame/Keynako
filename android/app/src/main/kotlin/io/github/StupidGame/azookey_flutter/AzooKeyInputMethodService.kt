@@ -70,6 +70,7 @@ import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.closingDelimiterFor
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
+import io.github.StupidGame.azookey_flutter.input.customLayoutSelection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.deleteEditorText
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
@@ -86,6 +87,7 @@ import io.github.StupidGame.azookey_flutter.input.RequestedKeyboardMode
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
+import io.github.StupidGame.azookey_flutter.input.shiftedInputLabel
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -880,28 +882,43 @@ class AzooKeyInputMethodService : InputMethodService() {
         val design = key.optJSONObject("design") ?: JSONObject()
         val color = design.optString("color", "normal")
         val label = design.optJSONObject("label")
-        val fullCenterLabel = custardLabel(label)
+        val uppercaseLabels = keyStyle == "pc_style" && shouldUppercaseEnglishLabels()
+        val centerActions = key.optJSONArray("press_actions")
+        val fullCenterLabel = custardLabel(label, centerActions, uppercaseLabels)
         val flickVariations = if (variationsEnabled) custardVariations(key, "flick_variation") else emptyList()
         fun variationLabel(direction: String): String? {
             val variationKey = flickVariations
                 .firstOrNull { it.optString("direction") == direction }
                 ?.optJSONObject("key")
                 ?: return null
+            val actions = variationKey.optJSONArray("press_actions")
             return variationKey.optJSONObject("design")
                 ?.optJSONObject("label")
-                ?.let(::custardLabel)
+                ?.let { custardLabel(it, actions, uppercaseLabels) }
                 ?.takeIf(String::isNotEmpty)
-                ?: variationKey.optJSONArray("press_actions")
+                ?: actions
                     ?.optJSONObject(0)
-                    ?.let(::actionDisplayLabel)
+                    ?.let { actionDisplayLabel(it, uppercaseLabels, actions.length()) }
         }
-        val leftLabel = variationLabel("left") ?: custardDirectionLabel(label, "left")
-        val upLabel = variationLabel("top") ?: custardDirectionLabel(label, "top")
-        val rightLabel = variationLabel("right") ?: custardDirectionLabel(label, "right")
-        val downLabel = variationLabel("bottom") ?: custardDirectionLabel(label, "bottom")
+        fun directionLabel(direction: String): String? {
+            val actions = flickVariations
+                .firstOrNull { it.optString("direction") == direction }
+                ?.optJSONObject("key")
+                ?.optJSONArray("press_actions")
+            return variationLabel(direction) ?:
+                custardDirectionLabel(label, direction, actions, uppercaseLabels)
+        }
+        val leftLabel = directionLabel("left")
+        val upLabel = directionLabel("top")
+        val rightLabel = directionLabel("right")
+        val downLabel = directionLabel("bottom")
         val special = color == "special" || color == "unimportant"
         val hasDirectionLabels = listOf(leftLabel, upLabel, rightLabel, downLabel).any { !it.isNullOrEmpty() }
-        val centerLabel = if (hasDirectionLabels) custardPrimaryLabel(label) else fullCenterLabel
+        val centerLabel = if (hasDirectionLabels) {
+            custardPrimaryLabel(label, centerActions, uppercaseLabels)
+        } else {
+            fullCenterLabel
+        }
         val view = if (hasDirectionLabels) {
             createDirectionalKey(
                 centerLabel,
@@ -1180,33 +1197,68 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
-    private fun custardLabel(label: JSONObject?): String {
+    private fun custardLabel(
+        label: JSONObject?,
+        actions: JSONArray? = null,
+        uppercaseEnglish: Boolean = false,
+    ): String {
         if (label == null) return ""
-        if (label.has("text")) return label.optString("text")
+        if (label.has("text")) {
+            return shiftedLabelForActions(label.optString("text"), actions, uppercaseEnglish)
+        }
         if (label.has("system_image")) return custardSystemImageLabel(label.optString("system_image"))
         return when (label.optString("type")) {
-            "main_and_sub" -> "${label.optString("main")}\n${label.optString("sub")}"
-            "main_and_directions" -> label.optString("main")
+            "main_and_sub" ->
+                "${shiftedLabelForActions(label.optString("main"), actions, uppercaseEnglish)}\n${label.optString("sub")}"
+            "main_and_directions" ->
+                shiftedLabelForActions(label.optString("main"), actions, uppercaseEnglish)
             "system_image" -> custardSystemImageLabel(label.optString("system_image"))
             else -> label.optString("text")
         }
     }
 
-    private fun custardDirectionLabel(label: JSONObject?, direction: String): String? {
+    private fun custardDirectionLabel(
+        label: JSONObject?,
+        direction: String,
+        actions: JSONArray? = null,
+        uppercaseEnglish: Boolean = false,
+    ): String? {
         if (label?.optString("type") != "main_and_directions") return null
         return label.optJSONObject("directions")
             ?.optString(direction)
             ?.takeIf(String::isNotEmpty)
+            ?.let { shiftedLabelForActions(it, actions, uppercaseEnglish) }
     }
 
-    private fun actionDisplayLabel(action: JSONObject?): String? {
+    private fun actionDisplayLabel(
+        action: JSONObject?,
+        uppercaseEnglish: Boolean = false,
+        actionCount: Int = 1,
+    ): String? {
         if (action == null) return null
-        return when (action.optString("type", "input")) {
+        val type = action.optString("type", "input")
+        val value = when (type) {
             "input" -> if (action.has("text")) action.optString("text") else action.optString("value")
             "directInput" -> action.optString("value")
             "direct_input" -> action.optString("text")
             else -> null
-        }?.takeIf(String::isNotEmpty)
+        }?.takeIf(String::isNotEmpty) ?: return null
+        return shiftedInputLabel(value, type, value, actionCount, uppercaseEnglish)
+    }
+
+    private fun shiftedLabelForActions(
+        label: String,
+        actions: JSONArray?,
+        uppercaseEnglish: Boolean,
+    ): String {
+        val action = actions?.optJSONObject(0)
+        val type = action?.optString("type", "input").orEmpty()
+        val input = when {
+            action == null -> null
+            action.has("text") -> action.optString("text")
+            else -> action.optString("value")
+        }
+        return shiftedInputLabel(label, type, input, actions?.length() ?: 0, uppercaseEnglish)
     }
 
     private fun findCustardVariation(key: JSONObject, type: String, direction: String?): JSONObject? {
@@ -1247,11 +1299,18 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun createCustomKey(key: JSONObject, scale: Double): View {
-        val centerLabel = key.optString("label", key.optString("name", ""))
-        val leftLabel = actionDisplayLabel(key.optJSONObject("left"))
-        val upLabel = actionDisplayLabel(key.optJSONObject("up"))
-        val rightLabel = actionDisplayLabel(key.optJSONObject("right"))
-        val downLabel = actionDisplayLabel(key.optJSONObject("down"))
+        val uppercaseLabels = shouldUppercaseEnglishLabels()
+        val tapAction = key.optJSONObject("tap")
+        val tapActions = JSONArray().apply { if (tapAction != null) put(tapAction) }
+        val centerLabel = shiftedLabelForActions(
+            key.optString("label", key.optString("name", "")),
+            tapActions,
+            uppercaseLabels,
+        )
+        val leftLabel = actionDisplayLabel(key.optJSONObject("left"), uppercaseLabels)
+        val upLabel = actionDisplayLabel(key.optJSONObject("up"), uppercaseLabels)
+        val rightLabel = actionDisplayLabel(key.optJSONObject("right"), uppercaseLabels)
+        val downLabel = actionDisplayLabel(key.optJSONObject("down"), uppercaseLabels)
         val view = if (listOf(leftLabel, upLabel, rightLabel, downLabel).any { !it.isNullOrEmpty() }) {
             createDirectionalKey(centerLabel, leftLabel, upLabel, rightLabel, downLabel, special = false)
         } else {
@@ -1296,7 +1355,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     runCatching {
                         showFlickGuide(
                             target,
-                            key.optString("label", key.optString("name", "")),
+                            centerLabel,
                             leftLabel,
                             upLabel,
                             rightLabel,
@@ -1793,11 +1852,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
-    private fun custardPrimaryLabel(label: JSONObject?): String {
+    private fun custardPrimaryLabel(
+        label: JSONObject?,
+        actions: JSONArray? = null,
+        uppercaseEnglish: Boolean = false,
+    ): String {
         if (label == null) return ""
         return when (label.optString("type")) {
-            "main_and_sub", "main_and_directions" -> label.optString("main")
-            else -> custardLabel(label)
+            "main_and_sub", "main_and_directions" ->
+                shiftedLabelForActions(label.optString("main"), actions, uppercaseEnglish)
+            else -> custardLabel(label, actions, uppercaseEnglish)
         }
     }
 
@@ -1971,9 +2035,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             value == "clipboard" -> showClipboardHistory()
             value.startsWith("custom:") -> {
                 commitComposition()
-                activeCustomTab = value.removePrefix("custom:").trim()
-                mode = "japanese"
-                layout = "flick"
+                activateCustomLayout(value.removePrefix("custom:").trim())
                 renderKeyboard()
             }
             value == "resize" -> showResizeControls()
@@ -2737,7 +2799,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val type = action.optString("type", "input")
         val value = action.optString("value", "")
         when (type) {
-            "input" -> if (action.has("text")) custardInput(action.optString("text")) else directCommit(value)
+            "input" -> if (action.has("text")) custardInput(action.optString("text")) else customInput(value)
             "directInput" -> directCommit(value)
             "direct_input" -> directCommit(action.optString("text"))
             "delete" -> {
@@ -2877,6 +2939,73 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (custard.optString("identifier") == id) return custard
         }
         return null
+    }
+
+    private fun customLayoutProfile(id: String): Pair<String, String>? {
+        customTabDefinition(id)?.let { tab ->
+            return tab.optString("language", "ja_JP") to tab.optString("inputStyle", "direct")
+        }
+        val custards = state.optJSONArray("custards") ?: return null
+        for (index in 0 until custards.length()) {
+            val custard = custards.optJSONObject(index) ?: continue
+            if (custard.optString("identifier") == id) {
+                return custard.optString("language", "undefined") to
+                    custard.optString("input_style", "direct")
+            }
+        }
+        return null
+    }
+
+    private fun activateCustomLayout(id: String) {
+        activeCustomTab = id
+        val profile = customLayoutProfile(id) ?: return
+        val selection = customLayoutSelection(
+            language = profile.first,
+            inputStyle = profile.second,
+            currentMode = mode,
+            currentLayout = layout,
+        )
+        mode = selection.mode
+        layout = selection.layout
+    }
+
+    private fun shouldUppercaseEnglishLabels(): Boolean =
+        mode == "english" && (shift || capsLock)
+
+    private fun customInput(value: String) {
+        if (value.isEmpty()) return
+        val tab = activeCustomTab?.let(::customTabDefinition)
+        if (tab == null) {
+            inputText(value)
+            return
+        }
+        val language = tab.optString("language", "ja_JP")
+        val inputStyle = tab.optString("inputStyle", "direct")
+        if (language == "en_US") {
+            mode = "english"
+            layout = "qwerty"
+            inputEnglishText(value)
+            return
+        }
+        if (language != "ja_JP") {
+            directCommit(value)
+            return
+        }
+        if (value.isBlank() || closingDelimiterFor(value) != null || shouldDirectCommitJapaneseInput(value)) {
+            directCommit(value)
+            return
+        }
+        prepareSelectionForInput()
+        mode = "japanese"
+        if (inputStyle == "roman2kana") {
+            layout = "qwerty"
+            rawRoman += value.lowercase(Locale.ROOT)
+            composing = romanToHiragana(rawRoman)
+        } else {
+            layout = "flick"
+            composing += value
+        }
+        updateComposition()
     }
 
     private fun compositionSnapshot() = CompositionSnapshot(
@@ -3116,7 +3245,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun moveTab(action: JSONObject) {
         if (action.optString("tab_type") == "custom") {
             commitComposition()
-            activeCustomTab = action.optString("identifier")
+            activateCustomLayout(action.optString("identifier"))
             renderCandidates()
             renderKeyboard()
             return

@@ -21,7 +21,7 @@ class ReportClientTest {
                 textContentType = "1",
                 returnKeyType = "default",
             ),
-            appVersion = "3.0.1",
+            appVersion = "3.1.0",
         )
 
         assertEquals("小倉", payload["word"])
@@ -30,7 +30,7 @@ class ReportClientTest {
         assertEquals(emptyList<String>(), payload["categories"])
         assertEquals("IME候補改善: 第2候補を選択", payload["note"])
         assertEquals("Keynako IME", payload["source"])
-        assertEquals("3.0.1", payload["app_version"])
+        assertEquals("3.1.0", payload["app_version"])
         assertFalse(payload.containsKey("leftContext"))
         assertFalse(payload.containsKey("rightContext"))
         assertFalse(payload.values.contains("小椋"))

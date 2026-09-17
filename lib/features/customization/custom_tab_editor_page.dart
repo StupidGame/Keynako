@@ -16,6 +16,8 @@ class _CustomTabEditorPageState extends State<CustomTabEditorPage> {
   late int _columns;
   late int _rows;
   late bool _addToTabBar;
+  late String _language;
+  late String _inputStyle;
   late List<CustomKeyData> _keys;
 
   @override
@@ -26,6 +28,8 @@ class _CustomTabEditorPageState extends State<CustomTabEditorPage> {
     _columns = widget.tab?.columns ?? (_kind == 'scroll' ? 2 : 4);
     _rows = widget.tab?.rows ?? 5;
     _addToTabBar = widget.tab?.addToTabBar ?? true;
+    _language = widget.tab?.language ?? 'ja_JP';
+    _inputStyle = widget.tab?.inputStyle ?? 'direct';
     _keys = [...?widget.tab?.keys];
   }
 
@@ -43,6 +47,34 @@ class _CustomTabEditorPageState extends State<CustomTabEditorPage> {
             controller: _name,
             decoration: const InputDecoration(labelText: 'タブ名'),
           ),
+          const SizedBox(height: 14),
+          DropdownButtonFormField<String>(
+            initialValue: _language,
+            decoration: const InputDecoration(labelText: '入力言語'),
+            items: const [
+              DropdownMenuItem(value: 'ja_JP', child: Text('日本語')),
+              DropdownMenuItem(value: 'en_US', child: Text('英語')),
+              DropdownMenuItem(value: 'none', child: Text('直接入力')),
+            ],
+            onChanged: (value) {
+              setState(() {
+                _language = value ?? 'ja_JP';
+                if (_language != 'ja_JP') _inputStyle = 'direct';
+              });
+            },
+          ),
+          if (_language == 'ja_JP') ...[
+            const SizedBox(height: 14),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'direct', label: Text('かな入力')),
+                ButtonSegment(value: 'roman2kana', label: Text('ローマ字入力')),
+              ],
+              selected: {_inputStyle},
+              onSelectionChanged: (value) =>
+                  setState(() => _inputStyle = value.first),
+            ),
+          ],
           const SizedBox(height: 14),
           SegmentedButton<String>(
             segments: const [
@@ -152,6 +184,8 @@ class _CustomTabEditorPageState extends State<CustomTabEditorPage> {
       columns: _columns,
       rows: _rows,
       keys: _keys,
+      language: _language,
+      inputStyle: _inputStyle,
       addToTabBar: _addToTabBar,
     );
     AppControllerScope.of(context).replaceCustomTab(tab);

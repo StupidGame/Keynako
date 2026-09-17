@@ -14,6 +14,8 @@ void main() {
         kind: 'scroll',
         columns: 2,
         rows: 5,
+        language: 'en_US',
+        inputStyle: 'roman2kana',
         keys: [
           CustomKeyData(
             id: 'hello',
@@ -59,6 +61,8 @@ void main() {
     expect(decoded.settings['live_conversion'], isFalse);
     expect(decoded.settings['keyboard_type'], 'custom:phrases');
     expect(decoded.customTabs.single.keys.single.tap.value, 'こんにちは');
+    expect(decoded.customTabs.single.language, 'en_US');
+    expect(decoded.customTabs.single.inputStyle, 'roman2kana');
     expect(decoded.learning['にほん\t日本'], 3);
     expect(decoded.themes, hasLength(3));
     expect(

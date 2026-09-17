@@ -36,7 +36,7 @@ void main() {
         'importance': 5,
         'categories': ['場所・建物などの名前'],
         'source': 'Keynako',
-        'app_version': '3.0.1',
+        'app_version': '3.1.0',
       });
     },
   );

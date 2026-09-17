@@ -59,7 +59,7 @@ class KeynakoDictionarySubmissionClient implements KeynakoDictionarySubmitter {
         'categories': categories,
         if (note?.trim().isNotEmpty ?? false) 'note': note!.trim(),
         'source': 'Keynako',
-        'app_version': '3.0.1',
+        'app_version': '3.1.0',
       }),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) return false;
@@ -83,7 +83,7 @@ class KeynakoDictionarySubmissionClient implements KeynakoDictionarySubmitter {
       request.followRedirects = true;
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'Keynako 3.0.1');
+      request.headers.set(HttpHeaders.userAgentHeader, 'Keynako 3.1.0');
       request.write(body);
       var response = await request.close().timeout(const Duration(seconds: 30));
       final redirect = response.headers.value(HttpHeaders.locationHeader);
@@ -102,7 +102,7 @@ class KeynakoDictionarySubmissionClient implements KeynakoDictionarySubmitter {
         );
         redirectRequest.headers.set(
           HttpHeaders.userAgentHeader,
-          'Keynako 3.0.1',
+          'Keynako 3.1.0',
         );
         response = await redirectRequest.close().timeout(
           const Duration(seconds: 30),

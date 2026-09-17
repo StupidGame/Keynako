@@ -199,7 +199,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         const ListTile(
                           leading: Icon(Icons.info_outline),
                           title: Text('バージョン'),
-                          trailing: Text('3.0.1'),
+                          trailing: Text('3.1.0'),
                         ),
                       ],
                     ),

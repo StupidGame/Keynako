@@ -1,6 +1,7 @@
 import 'package:azookey_flutter/app.dart';
 import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
+import 'package:azookey_flutter/features/customization/customization_page.dart';
 import 'package:azookey_flutter/features/settings/keyboard_settings_page.dart';
 import 'package:azookey_flutter/models/app_data.dart';
 import 'package:azookey_flutter/widgets/keyboard_preview.dart';
@@ -158,5 +159,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.data.settings['keyboard_type_phone'], 'custom:numbers');
+  });
+
+  testWidgets('custom tab editor preserves the English input language', (
+    tester,
+  ) async {
+    final controller = AppController(storage: MemoryStorage());
+    await controller.initialize();
+    const tab = CustomTabData(
+      id: 'english-custom',
+      name: 'English custom',
+      kind: 'grid',
+      columns: 4,
+      rows: 5,
+      keys: [],
+      language: 'en_US',
+    );
+    controller.data.customTabs.add(tab);
+
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: CustomTabEditorPage(tab: tab)),
+      ),
+    );
+
+    expect(find.text('入力言語'), findsOneWidget);
+    expect(find.text('英語'), findsOneWidget);
+    await tester.tap(find.text('保存'));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(controller.data.customTabs.single.language, 'en_US');
+    expect(controller.data.customTabs.single.inputStyle, 'direct');
   });
 }

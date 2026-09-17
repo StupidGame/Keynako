@@ -94,7 +94,11 @@ flutter run -d windows # linux、macosも指定可能
 
 ## azooKey / Custard互換性
 
+Keynako 3.1は、azooKeyの安定版[v3.1](https://github.com/azooKey/azooKey/releases/tag/v3.1)を基準にし、2026年9月17日時点の`main`（[`754a9ad`](https://github.com/azooKey/azooKey/commit/754a9ad17cf300596d761845466b9faa652835f5)）までの変更を確認しています。この更新では、[#761](https://github.com/azooKey/azooKey/pull/761)の複合ラベル仕様に合わせ、英語カスタム配列のラベルがShift／Caps Lockへ追従します。iOS 27向けのSwiftUI固有修正など、UIKitで実装するKeynakoに該当しない変更は取り込んでいません。かな漢字変換パッケージ、標準辞書、Zenzaiモデルは、azooKey v3.1が使用する互換リビジョンを維持しています。
+
 「拡張」の読み込みボタンへCustard URLを入力すると、元のazooKeyと同じJSON形式を単体・配列のどちらでも読み込めます。`https://custard.azookey.com/tab/...` は公式API URLへ自動変換されます。キー座標とサイズ、system key、複数アクション、長押し開始・反復、フリック／PCバリエーションは定義を無損失で保持し、AndroidとiOSのネイティブキーボードが直接実行します。Custardの`input`／`direct_input`でも開き記号は対応する閉じ記号を補完し、カーソルを内側へ移動します。
+
+端末上で作るカスタムタブには、日本語（かな入力／ローマ字入力）、英語、直接入力を設定できます。日本語と英語の`input`アクションは未確定文字列へ追加されるため、Shiftで大文字へ切り替えた場合も変換・予測候補が途切れません。確定入力が必要なキーには`directInput`を指定します。
 
 「この変換をKeynakoと共有」をオンにしたユーザ辞書語は、保存時にHTTPSゲートウェイから`StupidGame/keynako_hotfix_dictionary_storage`へ自動送信されます。重要度1〜5も辞書の変換順位に反映します。Android/iOSは`main`の`data_v1.json`を5分間隔で確認し、更新があれば取り込みます。設定の「Keynako共有変換辞書」から手動更新もできます。送信先はビルド時の`KEYNAKO_DICTIONARY_SUBMISSION_URL`で設定します。
 
