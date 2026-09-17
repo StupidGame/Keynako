@@ -2034,9 +2034,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             value == "english" -> setMode("english")
             value == "clipboard" -> showClipboardHistory()
             value.startsWith("custom:") -> {
-                commitComposition()
-                activateCustomLayout(value.removePrefix("custom:").trim())
-                renderKeyboard()
+                switchToCustomLayout(value.removePrefix("custom:"))
             }
             value == "resize" -> showResizeControls()
         }
@@ -2755,7 +2753,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun setMode(newMode: String) {
-        commitComposition()
+        if (mode != "english" || newMode != "english") commitComposition()
         mode = newMode
         activeCustomTab = null
         layout = when (newMode) {
@@ -2967,6 +2965,17 @@ class AzooKeyInputMethodService : InputMethodService() {
         )
         mode = selection.mode
         layout = selection.layout
+    }
+
+    private fun switchToCustomLayout(rawId: String) {
+        val id = rawId.trim()
+        val profile = customLayoutProfile(id) ?: return
+        // Custard Shift/Caps Lock can be separate tabs, with an input action
+        // followed by move_tab to return. Neither move should accept the word.
+        if (mode != "english" || profile.first != "en_US") commitComposition()
+        activateCustomLayout(id)
+        renderCandidates()
+        renderKeyboard()
     }
 
     private fun shouldUppercaseEnglishLabels(): Boolean =
@@ -3244,10 +3253,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun moveTab(action: JSONObject) {
         if (action.optString("tab_type") == "custom") {
-            commitComposition()
-            activateCustomLayout(action.optString("identifier"))
-            renderCandidates()
-            renderKeyboard()
+            switchToCustomLayout(action.optString("identifier"))
             return
         }
         when (action.optString("identifier")) {
@@ -3265,7 +3271,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun setForcedLayout(newMode: String, newLayout: String) {
-        commitComposition()
+        if (mode != "english" || newMode != "english") commitComposition()
         mode = newMode
         layout = newLayout
         activeCustomTab = null

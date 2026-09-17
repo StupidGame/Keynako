@@ -1026,11 +1026,7 @@ final class KeyboardViewController: UIInputViewController {
         case "clipboard": showClipboardHistory()
         default:
             if value.hasPrefix("custom:") {
-                commitComposition()
-                activateCustomLayout(
-                    String(value.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-                renderKeyboard()
+                switchToCustomLayout(String(value.dropFirst(7)))
             }
         }
     }
@@ -1286,7 +1282,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setMode(_ newMode: String) {
-        commitComposition()
+        if mode != "english" || newMode != "english" { commitComposition() }
         mode = newMode
         activeCustomTab = nil
         switch newMode {
@@ -1620,6 +1616,17 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private func switchToCustomLayout(_ rawID: String) {
+        let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let profile = customLayoutProfile(id) else { return }
+        // Custard Shift/Caps Lock can be separate tabs, with an input action
+        // followed by move_tab to return. Neither move should accept the word.
+        if mode != "english" || profile.language != "en_US" { commitComposition() }
+        activateCustomLayout(id)
+        renderCandidates()
+        renderKeyboard()
+    }
+
     private var shouldUppercaseEnglishLabels: Bool {
         mode == "english" && (shift || capsLock)
     }
@@ -1929,10 +1936,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func moveTab(_ action: [String: Any]) {
         if action["tab_type"] as? String == "custom" {
-            commitComposition()
-            activateCustomLayout(action["identifier"] as? String ?? "")
-            renderCandidates()
-            renderKeyboard()
+            switchToCustomLayout(action["identifier"] as? String ?? "")
             return
         }
         switch action["identifier"] as? String {
@@ -1951,7 +1955,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setForcedLayout(mode: String, layout: String) {
-        commitComposition()
+        if self.mode != "english" || mode != "english" { commitComposition() }
         self.mode = mode
         self.layout = layout
         activeCustomTab = nil
