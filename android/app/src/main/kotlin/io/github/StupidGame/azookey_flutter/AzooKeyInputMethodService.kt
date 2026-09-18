@@ -3075,6 +3075,13 @@ class AzooKeyInputMethodService : InputMethodService() {
             directCommit(value)
             return
         }
+        // In a direct-style Japanese Custard, printable ASCII is already the
+        // intended literal input. Do not feed it to kana-kanji conversion,
+        // where live conversion can replace it with a full-width candidate.
+        if (inputStyle == "direct" && value.all { it.code <= 0x7f }) {
+            directCommit(value)
+            return
+        }
         if (
             shouldDirectCommitJapaneseInput(
                 value,
