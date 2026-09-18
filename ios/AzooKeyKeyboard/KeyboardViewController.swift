@@ -1136,9 +1136,9 @@ final class KeyboardViewController: UIInputViewController {
         renderCandidates()
     }
 
-    private func directCommit(_ value: String) {
+    private func directCommit(_ value: String, normalizePunctuation: Bool = true) {
         commitComposition()
-        let input = punctuationForInputMode(value, mode: mode)
+        let input = normalizePunctuation ? punctuationForInputMode(value, mode: mode) : value
         if let closingDelimiter = closingDelimiter(for: input) {
             textDocumentProxy.insertText(input + closingDelimiter)
             textDocumentProxy.adjustTextPosition(byCharacterOffset: -1)
@@ -1354,8 +1354,8 @@ final class KeyboardViewController: UIInputViewController {
         switch type {
         case "input":
             if let text = action["text"] as? String { custardInput(text) } else { customInput(value) }
-        case "directInput": directCommit(value)
-        case "direct_input": directCommit(action["text"] as? String ?? "")
+        case "directInput": directCommit(value, normalizePunctuation: false)
+        case "direct_input": directCommit(action["text"] as? String ?? "", normalizePunctuation: false)
         case "delete":
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
             let boundedCount = min(100, max(-100, count))
@@ -1713,7 +1713,7 @@ final class KeyboardViewController: UIInputViewController {
         // kana-kanji input. Commit it immediately so template/snippet keys never
         // enter live conversion or become full-width candidates.
         if inputStyle == "direct", value.unicodeScalars.allSatisfy({ $0.value <= 0x7F }) {
-            directCommit(value)
+            directCommit(value, normalizePunctuation: false)
             return
         }
         // Numeric Custard tabs use `input` for full-width and ASCII digits.
