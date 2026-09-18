@@ -163,6 +163,16 @@ class CustomEnglishCompositionTest {
     }
 
     @Test
+    fun directInputKeepsHalfWidthPunctuationVerbatim() {
+        moveTab("kana")
+        dispatch(JSONObject().put("type", "direct_input").put("text", "?[]()"))
+
+        assertEquals(listOf("?[]()"), commits)
+        assertEquals("", ReflectionHelpers.getField<String>(service, "composing"))
+        assertEquals("", markedText)
+    }
+
+    @Test
     fun japaneseRoman2KanaCustardStillConvertsAscii() {
         moveTab("romaji")
         input("ka")
