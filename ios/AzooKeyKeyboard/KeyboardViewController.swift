@@ -1709,6 +1709,13 @@ final class KeyboardViewController: UIInputViewController {
             directCommit(value)
             return
         }
+        // In a direct-style Japanese Custard, printable ASCII is already the
+        // intended literal input. Do not feed it to kana-kanji conversion,
+        // where live conversion can replace it with a full-width candidate.
+        if inputStyle == "direct", value.unicodeScalars.allSatisfy({ $0.value <= 0x7F }) {
+            directCommit(value)
+            return
+        }
         // Numeric Custard tabs use `input` for full-width and ASCII digits.
         // Keep those values out of kana-kanji conversion just like the built-in
         // symbols tab does, while leaving replacement-sequence markers composed.
