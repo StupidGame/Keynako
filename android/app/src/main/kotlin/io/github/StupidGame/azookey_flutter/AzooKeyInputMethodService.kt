@@ -2546,10 +2546,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         renderCandidates()
     }
 
-    private fun directCommit(value: String) {
+    private fun directCommit(
+        value: String,
+        normalizePunctuation: Boolean = true,
+    ) {
         prepareSelectionForInput()
         commitComposition()
-        val input = punctuationForInputMode(value, mode)
+        val input = if (normalizePunctuation) punctuationForInputMode(value, mode) else value
         val closingDelimiter = closingDelimiterFor(input)
         currentInputConnection?.commitText(
             if (closingDelimiter == null) input else input + closingDelimiter,
@@ -2798,8 +2801,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         val value = action.optString("value", "")
         when (type) {
             "input" -> if (action.has("text")) custardInput(action.optString("text")) else customInput(value)
-            "directInput" -> directCommit(value)
-            "direct_input" -> directCommit(action.optString("text"))
+            "directInput" -> directCommit(value, normalizePunctuation = false)
+            "direct_input" -> directCommit(action.optString("text"), normalizePunctuation = false)
             "delete" -> {
                 val count = if (action.has("count")) action.optInt("count", 1)
                 else value.toIntOrNull() ?: 1
@@ -3073,6 +3076,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (closingDelimiterFor(value) != null) {
             mode = "japanese"
             directCommit(value)
+            return
+        }
+        // Direct-style Japanese Custards use ASCII as literal text rather than
+        // kana-kanji input. Commit it immediately so template/snippet keys never
+        // enter live conversion or become full-width candidates.
+        if (inputStyle == "direct" && value.all { it.code <= 0x7f }) {
+            directCommit(value, normalizePunctuation = false)
             return
         }
         if (
