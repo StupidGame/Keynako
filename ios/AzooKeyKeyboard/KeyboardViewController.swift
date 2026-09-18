@@ -1709,6 +1709,13 @@ final class KeyboardViewController: UIInputViewController {
             directCommit(value)
             return
         }
+        // Direct-style Japanese Custards use ASCII as literal text rather than
+        // kana-kanji input. Commit it immediately so template/snippet keys never
+        // enter live conversion or become full-width candidates.
+        if inputStyle == "direct", value.unicodeScalars.allSatisfy({ $0.value <= 0x7F }) {
+            directCommit(value)
+            return
+        }
         // Numeric Custard tabs use `input` for full-width and ASCII digits.
         // Keep those values out of kana-kanji conversion just like the built-in
         // symbols tab does, while leaving replacement-sequence markers composed.
@@ -1970,18 +1977,9 @@ final class KeyboardViewController: UIInputViewController {
         extensionContext?.open(url)
     }
 
-    private func shouldPreserveDirectCustardASCII(_ value: String) -> Bool {
-        guard !value.isEmpty,
-              value.unicodeScalars.allSatisfy({ $0.value <= 0x7F }),
-              let custard = activeCustard() else { return false }
-        return (custard["language"] as? String ?? "undefined") == "ja_JP" &&
-            (custard["input_style"] as? String ?? "direct") == "direct"
-    }
-
     private func buildCandidates() -> [String] {
         guard !composing.isEmpty else { return [] }
         if mode == "english" { return buildEnglishCandidates(composing) }
-        if shouldPreserveDirectCustardASCII(composing) { return [composing] }
         var result: [String] = []
         var prefixPredictions: [String] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
