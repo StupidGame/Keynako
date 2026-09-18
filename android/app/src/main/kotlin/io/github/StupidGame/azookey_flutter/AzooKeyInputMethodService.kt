@@ -2216,7 +2216,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (mode != "japanese" ||
             !settings.optBoolean("enable_zenzai", true) ||
             reading.isBlank() ||
-            shouldPreserveDirectCustardAscii(reading) ||
             shouldDirectCommitJapaneseInput(reading)
         ) return
         val effort = settings.optInt("zenzai_effort", 1).coerceIn(0, 2)
@@ -2263,18 +2262,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
-    private fun shouldPreserveDirectCustardAscii(value: String): Boolean {
-        if (value.isEmpty() || value.any { it.code > 0x7f }) return false
-        val custard = activeCustard() ?: return false
-        return custard.optString("language", "undefined") == "ja_JP" &&
-            custard.optString("input_style", "direct") == "direct"
-    }
-
     private fun buildCandidates(): List<String> {
         val reading = displayReading()
         if (reading.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(reading)
-        if (shouldPreserveDirectCustardAscii(reading)) return listOf(reading)
         if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
@@ -3081,6 +3072,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         if (closingDelimiterFor(value) != null) {
             mode = "japanese"
+            directCommit(value)
+            return
+        }
+        // Direct-style Japanese Custards use ASCII as literal text rather than
+        // kana-kanji input. Commit it immediately so template/snippet keys never
+        // enter live conversion or become full-width candidates.
+        if (inputStyle == "direct" && value.all { it.code <= 0x7f }) {
             directCommit(value)
             return
         }
