@@ -39,6 +39,7 @@ class CustomEnglishCompositionTest {
                 .put(custard("letters-two", "en_US"))
                 .put(custard("letters-three", "en_US"))
                 .put(custard("kana", "ja_JP"))
+                .put(custard("romaji", "ja_JP", "roman2kana"))
                 .put(custard("literal", "none")))
             .put("customTabs", JSONArray().put(JSONObject()
                 .put("id", "my-letters")
@@ -150,6 +151,27 @@ class CustomEnglishCompositionTest {
     }
 
     @Test
+    fun japaneseDirectCustardCommitsAsciiSyntaxVerbatim() {
+        moveTab("kana")
+        input("$[x2 ]")
+
+        assertEquals(listOf("$[x2 ]"), commits)
+        assertEquals("", ReflectionHelpers.getField<String>(service, "composing"))
+        assertEquals("", ReflectionHelpers.getField<String>(service, "rawRoman"))
+        assertEquals("", markedText)
+    }
+
+    @Test
+    fun japaneseRoman2KanaCustardStillConvertsAscii() {
+        moveTab("romaji")
+        input("ka")
+
+        assertEquals("ka", ReflectionHelpers.getField<String>(service, "rawRoman"))
+        assertEquals("か", ReflectionHelpers.getField<String>(service, "composing"))
+        assertTrue("Unexpected editor commits: $commits", commits.isEmpty())
+    }
+
+    @Test
     fun directInputTabStillCommitsAndMissingTabDoesNothing() {
         input("a")
         moveTab("missing-layout")
@@ -194,8 +216,12 @@ class CustomEnglishCompositionTest {
         ClassParameter.from(Boolean::class.javaPrimitiveType, false),
     )
 
-    private fun custard(id: String, language: String) = JSONObject()
-        .put("identifier", id).put("language", language).put("input_style", "direct")
+    private fun custard(
+        id: String,
+        language: String,
+        inputStyle: String = "direct",
+    ) = JSONObject()
+        .put("identifier", id).put("language", language).put("input_style", inputStyle)
         .put("interface", JSONObject().put("key_style", "pc_style")
             .put("key_layout", JSONObject().put("type", "grid_fit")
                 .put("row_count", 1).put("column_count", 1))
