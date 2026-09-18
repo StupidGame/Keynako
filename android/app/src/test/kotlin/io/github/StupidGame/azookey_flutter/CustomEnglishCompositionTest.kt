@@ -151,14 +151,19 @@ class CustomEnglishCompositionTest {
     }
 
     @Test
-    fun japaneseDirectCustardCommitsAsciiSyntaxVerbatim() {
+    fun japaneseDirectCustardKeepsAsciiSyntaxHalfWidthWhileComposing() {
         moveTab("kana")
         input("$[x2 ]")
 
-        assertEquals(listOf("$[x2 ]"), commits)
-        assertEquals("", ReflectionHelpers.getField<String>(service, "composing"))
+        assertEquals("$[x2 ]", ReflectionHelpers.getField<String>(service, "composing"))
         assertEquals("", ReflectionHelpers.getField<String>(service, "rawRoman"))
-        assertEquals("", markedText)
+        assertEquals("$[x2 ]", markedText)
+        assertTrue("Unexpected editor commits: $commits", commits.isEmpty())
+        val candidates = ReflectionHelpers.getField<List<String>>(service, "candidates")
+        assertEquals("$[x2 ]", candidates.first())
+
+        dispatch(JSONObject().put("type", "complete"))
+        assertEquals(listOf("$[x2 ]"), commits)
     }
 
     @Test
