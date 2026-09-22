@@ -633,6 +633,7 @@ public:
                                             static_cast<LONG>(text.size()));
                 }
                 if (SUCCEEDED(result)) {
+                    session_.learn_selected();
                     ITfComposition *ending = composition_;
                     composition_ = nullptr;
                     ending->EndComposition(edit_cookie);
@@ -646,6 +647,7 @@ public:
                         edit_cookie, TF_IAS_NO_DEFAULT_COMPOSITION, text.data(),
                         static_cast<LONG>(text.size()), &range);
                     insert_at_selection->Release();
+                    if (SUCCEEDED(result)) session_.learn_selected();
                 }
             }
             if (SUCCEEDED(result) && range) {
@@ -729,6 +731,9 @@ public:
         }
         if (SUCCEEDED(result) && commits) {
             range->Collapse(edit_cookie, TF_ANCHOR_END);
+            // EndComposition can synchronously clear the session through the
+            // composition sink. Learn the text after SetText succeeds first.
+            session_.learn_selected();
             ITfComposition *ending = composition_;
             composition_ = nullptr;
             ending->EndComposition(edit_cookie);

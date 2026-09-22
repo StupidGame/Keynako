@@ -1,3 +1,4 @@
+import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
 
@@ -365,16 +366,14 @@ class JapaneseConverter {
     // Recover selected words even when they came from Zenzai or a dictionary
     // that is no longer loaded. A longer learned reading is only a completion.
     if (options.learningEnabled) {
-      for (final entry in options.learning.entries) {
-        final separator = entry.key.indexOf('\t');
-        if (separator <= 0 || entry.value <= 0) continue;
-        final ruby = katakanaToHiragana(entry.key.substring(0, separator));
-        final text = entry.key.substring(separator + 1);
+      for (final entry in CandidateLearning.entries(options.learning)) {
+        final ruby = entry.reading;
+        final text = entry.text;
         if (text.trim().isEmpty || !ruby.startsWith(reading)) continue;
         final exact = ruby == reading;
         if (!exact && predictionLimit <= 0) continue;
         final scores = exact ? exactLearning : predictionLearning;
-        if (entry.value > (scores[text] ?? 0)) scores[text] = entry.value;
+        if (entry.score > (scores[text] ?? 0)) scores[text] = entry.score;
         (exact ? values : prefixPredictions).add(
           ConversionCandidate(
             text: text,

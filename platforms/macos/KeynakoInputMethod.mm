@@ -310,6 +310,7 @@ static NSString *PairedDelimiter(unichar value) {
 - (void)commitCurrent:(id)sender {
     NSString *text = FromUtf8(_session.selected_text());
     [sender insertText:text replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+    _session.learn_selected();
     _session.clear();
     _hasCompositionReplacementRange = NO;
     [gCandidates hide];

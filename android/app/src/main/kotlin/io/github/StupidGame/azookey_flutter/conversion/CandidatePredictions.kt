@@ -22,6 +22,7 @@ internal fun englishPredictionCandidates(
     input: String,
     preferredCandidates: Iterable<String> = emptyList(),
     limit: Int = 16,
+    learning: Map<String, Int> = emptyMap(),
 ): List<String> {
     if (input.isBlank() || limit <= 0) return emptyList()
     val prefix = input.lowercase(Locale.ROOT)
@@ -33,10 +34,17 @@ internal fun englishPredictionCandidates(
     }
 
     preferredCandidates.forEach(::addCandidate)
+    val scores = mutableMapOf<String, Int>()
+    for (entry in learnedCandidates(learning, english = true)) {
+        if (!entry.reading.startsWith(prefix) && !entry.text.lowercase(Locale.ROOT).startsWith(prefix)) continue
+        val word = matchEnglishCandidateCase(entry.text, input)
+        values.add(word)
+        scores[word] = maxOf(scores[word] ?: 0, entry.score)
+    }
     defaultEnglishPredictionWords.asSequence()
         .filter { it.length > prefix.length && it.startsWith(prefix) }
         .forEach(::addCandidate)
-    return values.take(limit)
+    return (listOf(input) + values.filter { it != input }.sortedByDescending { scores[it] ?: 0 }).take(limit)
 }
 
 /**
@@ -60,7 +68,8 @@ internal fun compositionCommitText(
     reading: String,
     candidates: List<String>,
     useCandidate: Boolean,
-): String = if (useCandidate) candidates.firstOrNull() ?: reading else reading
+    selectedIndex: Int = 0,
+): String = if (useCandidate) candidates.getOrNull(selectedIndex) ?: candidates.firstOrNull() ?: reading else reading
 
 /** Returns dictionary values whose reading extends the text currently being composed. */
 internal fun prefixPredictionValues(
@@ -111,11 +120,10 @@ internal fun rankJapaneseCandidates(
     val exactScores = mutableMapOf<String, Int>()
     val predictionScores = mutableMapOf<String, Int>()
     val remaining = mutableMapOf<String, Int>()
-    for ((key, count) in learning) {
-        val separator = key.indexOf('\t')
-        if (separator <= 0 || count <= 0) continue
-        val ruby = katakanaToHiragana(key.substring(0, separator))
-        val word = key.substring(separator + 1)
+    for (entry in learnedCandidates(learning)) {
+        val ruby = entry.reading
+        val word = entry.text
+        val count = entry.score
         if (word.isBlank() || !ruby.startsWith(normalized)) continue
         if (ruby == normalized) {
             exact.add(word)

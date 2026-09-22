@@ -10,6 +10,50 @@ int main() {
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
     assert(ImeSession::roman_to_hiragana("nani?") == "なに？");
     assert(ImeSession::roman_to_hiragana("nani!") == "なに！");
+    ImeSession learning;
+    for (int repeat = 0; repeat < 100; ++repeat) {
+        for (const char value : std::string("ai")) learning.append_ascii(value);
+        assert(learning.selected_text() == "愛");
+        learning.learn_selected();
+        learning.clear();
+    }
+    for (const char value : std::string("ai")) learning.append_ascii(value);
+    assert(learning.begin_conversion());
+    const auto indigo = std::find_if(learning.candidates().begin(), learning.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "藍"; });
+    assert(indigo != learning.candidates().end());
+    assert(learning.select_candidate(static_cast<std::size_t>(indigo - learning.candidates().begin())));
+    learning.insert_zenzai_candidate("愛");
+    assert(learning.selected_text() == "藍");
+    learning.learn_selected();
+    learning.clear();
+    for (const char value : std::string("ai")) learning.append_ascii(value);
+    assert(learning.selected_text() == "藍");
+    learning.insert_zenzai_candidate("愛");
+    assert(learning.selected_text() == "藍");
+
+    // A learned unconverted reading must still support the reading shortcut.
+    assert(learning.select_reading());
+    assert(learning.selected_text() == "あい");
+    learning.learn_selected();
+    learning.clear();
+    for (const char value : std::string("ai")) learning.append_ascii(value);
+    assert(learning.select_reading());
+    assert(learning.selected_text() == "あい");
+
+    ImeSession recalled;
+    for (const char value : std::string("kiinako")) recalled.append_ascii(value);
+    recalled.insert_zenzai_candidate("Keynako");
+    recalled.learn_selected();
+    recalled.clear();
+    for (const char value : std::string("kiinako")) recalled.append_ascii(value);
+    assert(recalled.selected_text() == "Keynako");
+    recalled.clear();
+    for (const char value : std::string("kii")) recalled.append_ascii(value);
+    assert(recalled.display_text() == "きい");
+    assert(std::any_of(recalled.candidates().begin(), recalled.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "Keynako"; }));
+
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},

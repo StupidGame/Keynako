@@ -16,6 +16,7 @@ final class KeyboardViewController: UIInputViewController {
     private var rawRoman = ""
     private var lastDisplayed = ""
     private var candidates: [String] = []
+    private var selectedCandidateText: String?
     private var mode = "japanese"
     private var layout = "flick"
     private var inputTraitSignature: String?
@@ -695,6 +696,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         let current = candidates.firstIndex(of: lastDisplayed) ?? -1
         let next = (current + 1) % candidates.count
+        selectedCandidateText = candidates[next]
         replaceDisplayed(with: candidates[next], commit: false)
         renderCandidates(showTabs: false)
     }
@@ -1073,6 +1075,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func updateComposition() {
+        selectedCandidateText = nil
         candidates = buildCandidates()
         let displayed: String
         if mode == "english" {
@@ -1106,9 +1109,8 @@ final class KeyboardViewController: UIInputViewController {
         let report = makeReport(selected: selected, index: index)
         let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
-        if let englishInput {
-            learnEnglishCandidate(input: englishInput, candidate: selected)
-        } else {
+        learnCandidate(input: composing, candidate: selected, english: englishInput != nil, explicitSelection: true)
+        if englishInput == nil {
             conversionEngine?.commit(
                 candidateText: selected,
                 learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
@@ -1121,12 +1123,14 @@ final class KeyboardViewController: UIInputViewController {
 
     private func commitComposition(useCandidate: Bool = true) {
         guard !composing.isEmpty || !rawRoman.isEmpty else { return }
-        let selected = useCandidate ? (buildCandidates().first ?? composing) : composing
+        let explicitSelection = selectedCandidateText != nil
+        let selected = useCandidate ? (selectedCandidateText ?? candidates.first ?? buildCandidates().first ?? composing) : composing
         let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
-        if useCandidate, let englishInput {
-            learnEnglishCandidate(input: englishInput, candidate: selected)
-        } else if useCandidate {
+        if useCandidate {
+            learnCandidate(input: composing, candidate: selected, english: englishInput != nil, explicitSelection: explicitSelection)
+        }
+        if useCandidate, englishInput == nil {
             conversionEngine?.commit(
                 candidateText: selected,
                 learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
@@ -1909,7 +1913,8 @@ final class KeyboardViewController: UIInputViewController {
         case "exact": index = (selection?["value"] as? NSNumber)?.intValue ?? 0
         default: index = 0
         }
-        replaceDisplayed(with: candidates[index.clamped(to: 0 ... candidates.count - 1)], commit: false)
+        selectedCandidateText = candidates[index.clamped(to: 0 ... candidates.count - 1)]
+        replaceDisplayed(with: selectedCandidateText!, commit: false)
         renderCandidates(showTabs: false)
     }
 
@@ -1982,7 +1987,10 @@ final class KeyboardViewController: UIInputViewController {
         if mode == "english" { return buildEnglishCandidates(composing) }
         let reading = katakanaToHiragana(composing)
         var result: [String] = []
-        var prefixPredictions: [String] = []
+        let learned = learnedCandidateEntries(learningScores(), english: false)
+            .filter { $0.reading.hasPrefix(reading) }
+            .sorted { $0.score > $1.score }
+        var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
             let ranked = dictionary.sorted {
                 let left = $0["importance"] as? Int ?? 3
@@ -2068,6 +2076,17 @@ final class KeyboardViewController: UIInputViewController {
         if layout == "qwerty", boolSetting("roman_english_candidate", fallback: true), !rawRoman.isEmpty {
             result.append(rawRoman)
         }
+        let exactLearning = learned.filter { $0.reading == reading }
+        var scores: [String: Int] = [:]
+        for entry in exactLearning {
+            scores[entry.text] = max(scores[entry.text] ?? 0, entry.score)
+        }
+        result.append(contentsOf: exactLearning.map(\.text))
+        result = result.enumerated().sorted {
+            let left = scores[$0.element] ?? 0
+            let right = scores[$1.element] ?? 0
+            return left == right ? $0.offset < $1.offset : left > right
+        }.map(\.element)
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
         let liveCandidate = boolSetting("live_conversion", fallback: true) ? result.first : nil
@@ -2103,17 +2122,10 @@ final class KeyboardViewController: UIInputViewController {
             preferred.append(contentsOf: values)
         }
 
-        let learned = (state["learning"] as? [String: Any] ?? [:]).compactMap { key, rawScore -> (Int, String)? in
-            guard let separator = key.firstIndex(of: "\t") else { return nil }
-            let reading = String(key[..<separator])
-            let candidate = String(key[key.index(after: separator)...])
-            guard reading.lowercased().hasPrefix(prefix) || candidate.lowercased().hasPrefix(prefix) else {
-                return nil
-            }
-            let score = (rawScore as? NSNumber)?.intValue ?? (rawScore as? Int ?? 0)
-            return (score, candidate)
-        }.sorted { $0.0 > $1.0 }
-        preferred.append(contentsOf: learned.map(\.1))
+        let learned = learnedCandidateEntries(learningScores(), english: true)
+            .filter { $0.reading.hasPrefix(prefix) || $0.text.lowercased().hasPrefix(prefix) }
+            .sorted { $0.score > $1.score }
+        preferred.insert(contentsOf: learned.map(\.text), at: 0)
 
         var result = [input]
         var seen = Set(result)
@@ -2139,13 +2151,17 @@ final class KeyboardViewController: UIInputViewController {
         return candidate
     }
 
-    private func learnEnglishCandidate(input: String, candidate: String) {
+    private func learningScores() -> [String: Any] {
+        guard intSetting("memory_learining_styple_setting", fallback: 0) != 2 else { return [:] }
+        return state["learning"] as? [String: Any] ?? [:]
+    }
+
+    private func learnCandidate(input: String, candidate: String, english: Bool, explicitSelection: Bool) {
         guard intSetting("memory_learining_styple_setting", fallback: 0) == 0 else { return }
-        var learning = state["learning"] as? [String: Any] ?? [:]
-        let key = "\(input)\t\(candidate)"
-        let current = (learning[key] as? NSNumber)?.intValue ?? (learning[key] as? Int ?? 0)
-        learning[key] = min(current + 1, 1_000_000)
-        state["learning"] = learning
+        state["learning"] = recordCandidateLearning(
+            learningScores(), reading: input, text: candidate,
+            english: english, explicitSelection: explicitSelection
+        )
         saveState()
     }
 
@@ -2333,6 +2349,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func resetComposition() {
+        selectedCandidateText = nil
         composing = ""
         rawRoman = ""
         lastDisplayed = ""
@@ -3712,3 +3729,57 @@ private let romanMap: [String: String] = [
     "kya": "きゃ", "kyu": "きゅ", "kyo": "きょ", "gya": "ぎゃ", "gyu": "ぎゅ", "gyo": "ぎょ", "sha": "しゃ", "shu": "しゅ", "sho": "しょ", "cha": "ちゃ", "chu": "ちゅ", "cho": "ちょ", "nya": "にゃ", "nyu": "にゅ", "nyo": "にょ", "hya": "ひゃ", "hyu": "ひゅ", "hyo": "ひょ", "mya": "みゃ", "myu": "みゅ", "myo": "みょ", "rya": "りゃ", "ryu": "りゅ", "ryo": "りょ", "fa": "ふぁ", "fi": "ふぃ", "fe": "ふぇ", "fo": "ふぉ", "shi": "し", "chi": "ち", "tsu": "つ",
     "ka": "か", "ki": "き", "ku": "く", "ke": "け", "ko": "こ", "ga": "が", "gi": "ぎ", "gu": "ぐ", "ge": "げ", "go": "ご", "sa": "さ", "si": "し", "su": "す", "se": "せ", "so": "そ", "za": "ざ", "zi": "じ", "ji": "じ", "zu": "ず", "ze": "ぜ", "zo": "ぞ", "ta": "た", "ti": "ち", "tu": "つ", "te": "て", "to": "と", "da": "だ", "di": "ぢ", "du": "づ", "de": "で", "do": "ど", "na": "な", "ni": "に", "nu": "ぬ", "ne": "ね", "no": "の", "ha": "は", "hi": "ひ", "hu": "ふ", "fu": "ふ", "he": "へ", "ho": "ほ", "ba": "ば", "bi": "び", "bu": "ぶ", "be": "べ", "bo": "ぼ", "pa": "ぱ", "pi": "ぴ", "pu": "ぷ", "pe": "ぺ", "po": "ぽ", "ma": "ま", "mi": "み", "mu": "む", "me": "め", "mo": "も", "ya": "や", "yu": "ゆ", "yo": "よ", "ra": "ら", "ri": "り", "ru": "る", "re": "れ", "ro": "ろ", "wa": "わ", "wo": "を", "nn": "ん", "ltu": "っ", "xtu": "っ", "a": "あ", "i": "い", "u": "う", "e": "え", "o": "お", "-": "ー", ",": "、", ".": "。",
 ]
+
+// Uses the same bounded correction scores as the Kotlin and Dart converters.
+private struct LearnedCandidateEntry {
+    let key: String
+    let reading: String
+    let text: String
+    let score: Int
+}
+
+private func learnedCandidateEntries(_ learning: [String: Any], english: Bool) -> [LearnedCandidateEntry] {
+    learning.compactMap { key, raw -> LearnedCandidateEntry? in
+        guard let separator = key.firstIndex(of: "\t") else { return nil }
+        var reading = String(key[..<separator])
+        let text = String(key[key.index(after: separator)...])
+        let count = (raw as? NSNumber)?.intValue ?? (raw as? Int ?? 0)
+        guard count > 0, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if reading.hasPrefix("english:") {
+            guard english else { return nil }
+            reading = String(reading.dropFirst("english:".count))
+        } else if english, reading.range(of: "^[a-zA-Z']+$", options: .regularExpression) == nil {
+            return nil
+        }
+        guard !reading.isEmpty else { return nil }
+        return LearnedCandidateEntry(
+            key: key, reading: english ? reading.lowercased() : katakanaToHiragana(reading),
+            text: text, score: min(count, 32)
+        )
+    }.sorted { $0.key < $1.key }
+}
+
+private func recordCandidateLearning(
+    _ learning: [String: Any], reading: String, text: String,
+    english: Bool, explicitSelection: Bool
+) -> [String: Any] {
+    guard !reading.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          !reading.contains("\t"), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return learning }
+    let normalized = english ? reading.lowercased() : katakanaToHiragana(reading)
+    var result = learning
+    var scores: [String: Int] = [:]
+    for entry in learnedCandidateEntries(learning, english: english) where entry.reading == normalized {
+        let word = english && entry.text.lowercased() == text.lowercased() ? text : entry.text
+        scores[word] = max(scores[word] ?? 0, entry.score)
+        result.removeValue(forKey: entry.key)
+    }
+    if explicitSelection {
+        for word in Array(scores.keys) where word != text { scores[word] = scores[word]! / 2 }
+        scores[text] = min((scores.values.max() ?? 0) + 4, 32)
+    } else {
+        scores[text] = min((scores[text] ?? 0) + 1, 32)
+    }
+    let prefix = english ? "english:\(normalized)" : normalized
+    for (word, score) in scores where score > 0 { result["\(prefix)\t\(word)"] = score }
+    return result
+}

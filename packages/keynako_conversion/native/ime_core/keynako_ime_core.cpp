@@ -327,6 +327,50 @@ void ImeSession::backspace_word() {
     rebuild_candidates();
 }
 void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; }
+
+std::string ImeSession::learning_key() const {
+    if (mode_ == InputMode::japanese) return reading_;
+    auto normalized = raw_input_;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    return "english:" + normalized;
+}
+
+void ImeSession::learn_selected() {
+    if (mode_ != InputMode::japanese || raw_input_.empty() || candidates_.empty()) return;
+    const auto key = learning_key();
+    const auto text = selected_text();
+    if (text.empty()) return;
+    auto &scores = learning_[key];
+    if (converting_ || selected_index_ != 0) {
+        int highest = 0;
+        for (auto &[word, score] : scores) {
+            if (word != text) score /= 2;
+            highest = std::max(highest, score);
+        }
+        scores[text] = std::min(32, highest + 4);
+    } else {
+        scores[text] = std::min(32, scores[text] + 1);
+    }
+    learning_order_.erase(std::remove(learning_order_.begin(), learning_order_.end(), key), learning_order_.end());
+    learning_order_.push_back(key);
+    if (learning_order_.size() > 4096) {
+        learning_.erase(learning_order_.front());
+        learning_order_.pop_front();
+    }
+}
+
+void ImeSession::prioritize_learning() {
+    const auto found = learning_.find(learning_key());
+    if (found == learning_.end()) return;
+    const auto score = [&](const Candidate &candidate) {
+        const auto entry = found->second.find(candidate.text);
+        return entry == found->second.end() ? 0 : entry->second;
+    };
+    std::stable_sort(candidates_.begin(), candidates_.end(), [&](const auto &left, const auto &right) {
+        return score(left) > score(right);
+    });
+}
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
     converting_ = true;
@@ -348,8 +392,8 @@ bool ImeSession::select_candidate(std::size_t index) {
 }
 bool ImeSession::select_reading() {
     if (raw_input_.empty()) return false;
-    const auto found = std::find_if(candidates_.begin(), candidates_.end(), [](const Candidate &candidate) {
-        return candidate.source == "reading" || candidate.source == "english";
+    const auto found = std::find_if(candidates_.begin(), candidates_.end(), [this](const Candidate &candidate) {
+        return candidate.text == reading_;
     });
     if (found == candidates_.end()) return false;
     converting_ = true;
@@ -385,11 +429,19 @@ void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ =
 
 void ImeSession::insert_zenzai_candidate(std::string value) {
     if (value.empty()) return;
+    const bool preserve_selection = converting_ || selected_index_ != 0;
+    const auto selected = selected_text();
     candidates_.erase(std::remove_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
         return candidate.text == value;
     }), candidates_.end());
     candidates_.insert(candidates_.begin(), {std::move(value), "zenzai"});
+    prioritize_learning();
     selected_index_ = 0;
+    if (preserve_selection) {
+        const auto found = std::find_if(candidates_.begin(), candidates_.end(),
+            [&](const auto &candidate) { return candidate.text == selected; });
+        if (found != candidates_.end()) selected_index_ = static_cast<std::size_t>(found - candidates_.begin());
+    }
 }
 
 std::string ImeSession::roman_to_hiragana(const std::string &input) {
@@ -468,6 +520,31 @@ void ImeSession::rebuild_candidates() {
         append_unique(prefix_predictions, prediction_seen, std::move(text), source);
     };
 
+    struct LearnedPrediction {
+        std::string text;
+        int score;
+        std::size_t remaining;
+    };
+    std::vector<LearnedPrediction> learned_predictions;
+    for (const auto &[ruby, scores] : learning_) {
+        if (ruby.rfind("english:", 0) == 0 || conversion_reading.empty()) continue;
+        if (ruby == reading_) {
+            for (const auto &[word, score] : scores) {
+                if (score > 0) append_unique(candidates_, seen, word, "learned");
+            }
+        } else if (ruby.size() > reading_.size() && ruby.rfind(reading_, 0) == 0) {
+            for (const auto &[word, score] : scores) {
+                if (score > 0) learned_predictions.push_back({word, score, ruby.size() - reading_.size()});
+            }
+        }
+    }
+    std::stable_sort(learned_predictions.begin(), learned_predictions.end(), [](const auto &left, const auto &right) {
+        return left.score == right.score ? left.remaining < right.remaining : left.score > right.score;
+    });
+    for (const auto &entry : learned_predictions) {
+        append_unique(prefix_predictions, prediction_seen, entry.text, "learned-prediction");
+    }
+
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == conversion_reading) {
             append_converted(entry.value, "shared");
@@ -529,6 +606,7 @@ void ImeSession::rebuild_candidates() {
         insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
         if (++inserted >= 32) break;
     }
+    prioritize_learning();
 }
 
 }  // namespace keynako

@@ -1,9 +1,65 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:keynako_desktop/input/desktop_input_controller.dart';
 import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
+  test('a correction overtakes many automatic confirmations', () {
+    final controller = DesktopInputController();
+    for (var i = 0; i < 100; i++) {
+      controller.updateRawInput('ai');
+      controller.commitSelected();
+    }
+    controller.updateRawInput('ai');
+    controller.selectCandidate(
+      controller.candidates.indexWhere((value) => value.text == '藍'),
+    );
+    controller.commitSelected();
+    controller.updateRawInput('ai');
+    expect(controller.displayedComposition, '藍');
+    controller.dispose();
+  });
+
+  test('Zenzai cannot override a learned correction', () async {
+    final controller = DesktopInputController(
+      zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),
+    );
+    controller.updateRawInput('nihongo');
+    controller.selectCandidate(
+      controller.candidates.indexWhere((value) => value.text == '日本語'),
+    );
+    controller.commitSelected();
+    await controller.setZenzaiModel(ZenzaiModel.xsmall);
+    controller.updateRawInput('nihongo');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(controller.candidates.first.text, '日本語');
+    controller.dispose();
+  });
+
+  test(
+    'a pending Zenzai result preserves the manual selection and commit',
+    () async {
+      final engine = _DelayedZenzaiEngine();
+      final controller = DesktopInputController(
+        zenzaiEngineFactory: (_) async => engine,
+      );
+      await controller.setZenzaiModel(ZenzaiModel.xsmall);
+      controller.updateRawInput('nihongo');
+      controller.selectCandidate(
+        controller.candidates.indexWhere((value) => value.text == 'ニホンゴ'),
+      );
+      await engine.started.future;
+      engine.result.complete('日本語入力');
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.displayedComposition, 'ニホンゴ');
+      controller.commitSelected();
+      expect(controller.committedText, 'ニホンゴ');
+      controller.dispose();
+    },
+  );
+
   test('places a Zenzai result before base Japanese candidates', () async {
     final engine = _FakeZenzaiEngine();
     final controller = DesktopInputController(
@@ -212,6 +268,23 @@ class _FakeZenzaiEngine implements ZenzaiEngine {
   Future<String?> generate(ZenzaiRequest request) async {
     lastRequest = request;
     return '日本語入力';
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
+class _DelayedZenzaiEngine implements ZenzaiEngine {
+  final started = Completer<void>();
+  final result = Completer<String?>();
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<String?> generate(ZenzaiRequest request) {
+    started.complete();
+    return result.future;
   }
 
   @override
