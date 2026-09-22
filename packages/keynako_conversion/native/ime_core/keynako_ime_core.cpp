@@ -48,7 +48,7 @@ const std::unordered_map<std::string, std::vector<std::string>> kDictionary = {
     {"よろしく", {"よろしく", "宜しく"}}, {"わたし", {"私"}},
 };
 
-std::string hiragana_to_katakana(const std::string &value) {
+std::string convert_kana(const std::string &value, bool katakana) {
     std::string result;
     for (std::size_t i = 0; i < value.size();) {
         const unsigned char first = static_cast<unsigned char>(value[i]);
@@ -57,7 +57,8 @@ std::string hiragana_to_katakana(const std::string &value) {
             int code = ((first & 0x0f) << 12) |
                        ((static_cast<unsigned char>(value[i + 1]) & 0x3f) << 6) |
                        (static_cast<unsigned char>(value[i + 2]) & 0x3f);
-            if (code >= 0x3041 && code <= 0x3096) code += 0x60;
+            if (katakana && code >= 0x3041 && code <= 0x3096) code += 0x60;
+            if (!katakana && code >= 0x30a1 && code <= 0x30f6) code -= 0x60;
             result.push_back(static_cast<char>(0xe0 | ((code >> 12) & 0x0f)));
             result.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3f)));
             result.push_back(static_cast<char>(0x80 | (code & 0x3f)));
@@ -67,6 +68,10 @@ std::string hiragana_to_katakana(const std::string &value) {
         result.push_back(value[i++]);
     }
     return result;
+}
+
+std::string hiragana_to_katakana(const std::string &value) {
+    return convert_kana(value, true);
 }
 
 void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> &seen,
@@ -352,9 +357,11 @@ bool ImeSession::select_reading() {
     return true;
 }
 void ImeSession::set_user_dictionary(std::vector<DictionaryEntry> entries) {
+    for (auto &entry : entries) entry.reading = convert_kana(entry.reading, false);
     std::stable_sort(entries.begin(), entries.end(), [](const DictionaryEntry &left, const DictionaryEntry &right) {
-        if (left.reading != right.reading) return left.reading < right.reading;
-        return left.importance > right.importance;
+        if (left.importance != right.importance) return left.importance > right.importance;
+        if (left.reading.size() != right.reading.size()) return left.reading.size() < right.reading.size();
+        return left.reading < right.reading;
     });
     user_dictionary_ = std::move(entries);
     if (!raw_input_.empty()) rebuild_candidates();
@@ -456,6 +463,7 @@ void ImeSession::rebuild_candidates() {
         append_unique(candidates_, seen, std::move(text), source);
     };
     const auto append_prediction = [&](std::string text, const char *source) {
+        if (conversion_reading.empty()) return;
         text += literal_suffix;
         append_unique(prefix_predictions, prediction_seen, std::move(text), source);
     };
@@ -490,7 +498,16 @@ void ImeSession::rebuild_candidates() {
             append_converted(value, "dictionary");
         }
     }
-    for (const auto &entry : kDictionary) {
+    static const auto fallback_predictions = [] {
+        std::vector<std::pair<std::string, std::vector<std::string>>> entries(
+            kDictionary.begin(), kDictionary.end());
+        std::sort(entries.begin(), entries.end(), [](const auto &left, const auto &right) {
+            if (left.first.size() != right.first.size()) return left.first.size() < right.first.size();
+            return left.first < right.first;
+        });
+        return entries;
+    }();
+    for (const auto &entry : fallback_predictions) {
         if (entry.first.size() <= conversion_reading.size() ||
             entry.first.rfind(conversion_reading, 0) != 0) {
             continue;
@@ -499,11 +516,13 @@ void ImeSession::rebuild_candidates() {
             append_prediction(value, "dictionary-prediction");
         }
     }
+    const auto conversion_count = candidates_.size();
     append_unique(candidates_, seen, reading_, "reading");
     append_converted(hiragana_to_katakana(conversion_reading), "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
-    auto insertion = candidates_.begin() +
-        static_cast<std::ptrdiff_t>(std::min<std::size_t>(2, candidates_.size()));
+    const auto insertion_index = std::min(candidates_.size(),
+        std::max<std::size_t>(2, std::min<std::size_t>(3, conversion_count)));
+    auto insertion = candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index);
     std::size_t inserted = 0;
     for (auto &prediction : prefix_predictions) {
         if (!seen.insert(prediction.text).second) continue;

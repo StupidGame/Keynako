@@ -36,6 +36,26 @@ void main() {
     controller.dispose();
   });
 
+  test('recalls a committed Zenzai word after the model is disabled', () async {
+    final controller = DesktopInputController(
+      zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),
+    );
+    await controller.setZenzaiModel(ZenzaiModel.xsmall);
+    controller.updateRawInput('nihongo');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    controller.commitSelected();
+    await controller.setZenzaiModel(ZenzaiModel.off);
+    controller.updateRawInput('nihongo');
+    expect(controller.candidates.first.text, '日本語入力');
+    controller.updateRawInput('niho');
+    expect(controller.displayedComposition, 'にほ');
+    expect(
+      controller.candidates.map((candidate) => candidate.text),
+      contains('日本語入力'),
+    );
+    controller.dispose();
+  });
+
   test('keeps composition and candidates when switching input mode', () {
     final controller = DesktopInputController();
     controller.updateRawInput('nihongo');

@@ -1980,15 +1980,23 @@ final class KeyboardViewController: UIInputViewController {
     private func buildCandidates() -> [String] {
         guard !composing.isEmpty else { return [] }
         if mode == "english" { return buildEnglishCandidates(composing) }
+        let reading = katakanaToHiragana(composing)
         var result: [String] = []
         var prefixPredictions: [String] = []
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
             let ranked = dictionary.sorted {
-                ($0["importance"] as? Int ?? 3) > ($1["importance"] as? Int ?? 3)
+                let left = $0["importance"] as? Int ?? 3
+                let right = $1["importance"] as? Int ?? 3
+                if left != right { return left > right }
+                let leftRuby = $0["ruby"] as? String ?? ""
+                let rightRuby = $1["ruby"] as? String ?? ""
+                if leftRuby.count != rightRuby.count { return leftRuby.count < rightRuby.count }
+                return leftRuby < rightRuby
             }
             for entry in ranked {
-                guard let ruby = entry["ruby"] as? String,
-                      ruby == composing || ruby.hasPrefix(composing) else { continue }
+                guard let rawRuby = entry["ruby"] as? String else { continue }
+                let ruby = katakanaToHiragana(rawRuby)
+                guard ruby.hasPrefix(reading) else { continue }
                 let value: String?
                 if entry["isTemplateMode"] as? Bool == true {
                     value = renderTemplate(entry["formatLiteral"] as? String ?? "")
@@ -1996,7 +2004,7 @@ final class KeyboardViewController: UIInputViewController {
                     value = entry["word"] as? String
                 }
                 guard let value, !value.isEmpty else { continue }
-                if ruby == composing {
+                if ruby == reading {
                     result.append(value)
                 } else {
                     prefixPredictions.append(value)
@@ -2018,17 +2026,36 @@ final class KeyboardViewController: UIInputViewController {
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
         ) ?? [])
         if boolSetting("use_OS_user_dict", fallback: true) {
-            result.append(contentsOf: osLexicon[composing] ?? [])
-            for (ruby, values) in osLexicon where ruby.count > composing.count && ruby.hasPrefix(composing) {
-                prefixPredictions.append(contentsOf: values)
+            for ruby in osLexicon.keys.sorted(by: {
+                $0.count == $1.count ? $0 < $1 : $0.count < $1.count
+            }) {
+                let normalized = katakanaToHiragana(ruby)
+                if normalized == reading {
+                    result.append(contentsOf: osLexicon[ruby] ?? [])
+                } else if normalized.hasPrefix(reading) {
+                    prefixPredictions.append(contentsOf: osLexicon[ruby] ?? [])
+                }
             }
         }
-        result.append(contentsOf: Self.systemDictionary[composing] ?? [])
-        for (ruby, values) in Self.systemDictionary
-            where ruby.count > composing.count && ruby.hasPrefix(composing) {
-            prefixPredictions.append(contentsOf: values)
+        result.append(contentsOf: Self.systemDictionary[reading] ?? [])
+        for ruby in Self.systemDictionary.keys.sorted(by: {
+            $0.count == $1.count ? $0 < $1 : $0.count < $1.count
+        }) where ruby.count > reading.count && ruby.hasPrefix(reading) {
+            prefixPredictions.append(contentsOf: Self.systemDictionary[ruby] ?? [])
         }
-        result.insert(contentsOf: prefixPredictions, at: min(2, result.count))
+        // A local completion must not displace an existing engine candidate or
+        // become a live conversion when no complete conversion is available.
+        var completeTexts = Set<String>()
+        result = result.filter { !$0.isEmpty && completeTexts.insert($0).inserted }
+        if result.isEmpty {
+            result = [reading, hiraganaToKatakana(reading)]
+            completeTexts = Set(result)
+        }
+        var predictionTexts = completeTexts
+        let predictions = prefixPredictions.filter {
+            !$0.isEmpty && predictionTexts.insert($0).inserted
+        }.prefix(32)
+        result.insert(contentsOf: predictions, at: min(3, result.count))
         result.append(composing)
         let katakana = hiraganaToKatakana(composing)
         if katakana != composing { result.append(katakana) }

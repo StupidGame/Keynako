@@ -17,6 +17,8 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
 - Windows TSF／macOS InputMethodKit／Linux IBusへ登録できる日本語・英語IME、ライブ変換、共有辞書、候補選択、Zenzai
 
+予測候補は、読みの一致、辞書の重要度、補完する長さを考慮して並べます。AndroidとPCの標準辞書では文頭・文末への接続スコアも使い、活用途中の語より自然な語を優先します。AndroidとFlutterの変換では、選択履歴から辞書にない語も再表示し、短い読みからの予測にも利用します。学習無効時は履歴を使いません。Flutterアプリの変換にも有効なKeynako共有辞書を反映します。
+
 Zenzaiモデルはリポジトリに同梱されています。AndroidはazooKey forkの`llama.cpp`をJNIから呼び出し、iOSは固定リビジョンの`AzooKeyKanaKanjiConverter`を`ZenzaiCPU` trait付きで利用します。PC版は同じ`llama.cpp`を静的リンクした常駐実行ファイルをFlutterから呼び出します。モデルの出所とハッシュは[assets/ZENZAI_MODELS.md](assets/ZENZAI_MODELS.md)にあります。
 
 ## 構成

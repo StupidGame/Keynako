@@ -69,8 +69,11 @@ internal fun prefixPredictionValues(
     limit: Int,
 ): List<String> {
     if (reading.isEmpty() || limit <= 0) return emptyList()
+    val normalized = katakanaToHiragana(reading)
     return entries.asSequence()
-        .filter { (ruby, _) -> ruby.length > reading.length && ruby.startsWith(reading) }
+        .map { (ruby, values) -> katakanaToHiragana(ruby) to values }
+        .filter { (ruby, _) -> ruby.length > normalized.length && ruby.startsWith(normalized) }
+        .sortedBy { (ruby, _) -> ruby.length }
         .flatMap { (_, values) -> values.asSequence() }
         .filter(String::isNotBlank)
         .distinct()
@@ -85,9 +88,48 @@ internal fun prioritizePrefixPredictions(
     insertIndex: Int = 2,
 ): List<String> {
     val insertion = insertIndex.coerceIn(0, conversions.size)
+    val exact = conversions.toSet()
     return buildList {
         addAll(conversions.take(insertion))
-        addAll(predictions)
+        addAll(predictions.filter { it !in exact })
         addAll(conversions.drop(insertion))
     }.distinct()
+}
+
+/** Recalls learned words before limiting completions, without auto-completing a longer reading. */
+internal fun rankJapaneseCandidates(
+    reading: String,
+    conversions: List<String>,
+    predictions: List<String>,
+    learning: Map<String, Int> = emptyMap(),
+    predictionLimit: Int = 32,
+): List<String> {
+    if (reading.isEmpty()) return emptyList()
+    val normalized = katakanaToHiragana(reading)
+    val exact = conversions.filter(String::isNotBlank).toMutableSet()
+    val completions = predictions.filter(String::isNotBlank).toMutableSet()
+    val exactScores = mutableMapOf<String, Int>()
+    val predictionScores = mutableMapOf<String, Int>()
+    val remaining = mutableMapOf<String, Int>()
+    for ((key, count) in learning) {
+        val separator = key.indexOf('\t')
+        if (separator <= 0 || count <= 0) continue
+        val ruby = katakanaToHiragana(key.substring(0, separator))
+        val word = key.substring(separator + 1)
+        if (word.isBlank() || !ruby.startsWith(normalized)) continue
+        if (ruby == normalized) {
+            exact.add(word)
+            exactScores[word] = maxOf(exactScores[word] ?: 0, count)
+        } else {
+            completions.add(word)
+            predictionScores[word] = maxOf(predictionScores[word] ?: 0, count)
+            remaining[word] = minOf(remaining[word] ?: Int.MAX_VALUE, ruby.length - normalized.length)
+        }
+    }
+    val ranked = exact.sortedByDescending { exactScores[it] ?: 0 }
+    val predicted = completions.filter { it !in exact }.sortedWith(
+        compareByDescending<String> { predictionScores[it] ?: 0 }
+            .thenBy { remaining[it] ?: Int.MAX_VALUE },
+    ).take(predictionLimit.coerceAtLeast(0))
+    return prioritizePrefixPredictions(ranked, predicted, insertIndex = 3)
 }

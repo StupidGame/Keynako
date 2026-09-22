@@ -56,7 +56,7 @@ import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionValues
-import io.github.StupidGame.azookey_flutter.conversion.prioritizePrefixPredictions
+import io.github.StupidGame.azookey_flutter.conversion.rankJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
@@ -2263,9 +2263,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun buildCandidates(): List<String> {
-        val reading = displayReading()
-        if (reading.isEmpty()) return emptyList()
-        if (mode == "english") return buildEnglishCandidates(reading)
+        val input = displayReading()
+        if (input.isEmpty()) return emptyList()
+        if (mode == "english") return buildEnglishCandidates(input)
+        val reading = katakanaToHiragana(input)
         if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
@@ -2275,9 +2276,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         // composing a word.
         val predictionLimit = PREDICTION_LIMIT
         val userEntries = (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
-            .sortedByDescending { it.optInt("importance", 3).coerceIn(1, 5) }
+            .sortedWith(
+                compareByDescending<JSONObject> { it.optInt("importance", 3).coerceIn(1, 5) }
+                    .thenBy { it.optString("ruby").length },
+            )
         for (entry in userEntries) {
-            val ruby = entry.optString("ruby")
+            val ruby = katakanaToHiragana(entry.optString("ruby"))
             val value = if (entry.optBoolean("isTemplateMode", false)) {
                 renderTemplate(entry.optString("formatLiteral", entry.optString("word")))
             } else {
@@ -2312,13 +2316,6 @@ class AzooKeyInputMethodService : InputMethodService() {
                 ),
             )
             predictedValues.addAll(officialCandidates.predictions)
-            val prioritized = prioritizePrefixPredictions(
-                conversions = values.toList(),
-                predictions = predictedValues.take(predictionLimit),
-                insertIndex = PREDICTION_INSERT_INDEX,
-            )
-            values.clear()
-            values.addAll(prioritized)
         }
         val katakana = hiraganaToKatakana(reading)
         if (katakana != reading) values.add(katakana)
@@ -2339,11 +2336,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
         val learningMode = settings.optInt("memory_learining_styple_setting", 0)
         val scores = state.optJSONObject("learning") ?: JSONObject()
-        val ranked = values.filter { it.isNotEmpty() }.withIndex().sortedWith(
-            compareByDescending<IndexedValue<String>> {
-                if (learningMode == 2) 0 else scores.optInt("$reading\t${it.value}", 0)
-            }.thenBy { it.index },
-        ).map { it.value }
+        val learning = if (learningMode == 2) emptyMap() else {
+            scores.keys().asSequence().associateWith { scores.optInt(it, 0) }
+        }
+        val ranked = rankJapaneseCandidates(
+            reading = reading,
+            conversions = values.toList(),
+            predictions = predictedValues.toList(),
+            learning = learning,
+            predictionLimit = predictionLimit,
+        )
         return pinJapaneseKanaCandidates(
             reading = reading,
             ranked = ranked,
@@ -3627,7 +3629,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         var activeInstance: AzooKeyInputMethodService? = null
 
         private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
-        private const val PREDICTION_INSERT_INDEX = 2
         private const val PREDICTION_LIMIT = 32
 
         internal fun withOpacity(color: Int, opacity: Double): Int {

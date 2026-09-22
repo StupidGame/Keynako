@@ -1,10 +1,50 @@
 package io.github.StupidGame.azookey_flutter.conversion
 
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AzooKeyDictionaryTest {
+    private fun entry(word: String, ruby: String, cid: Int = 100) =
+        AzooKeyHotfixDictionaryEntry(word, ruby, 0.0, cid, cid, 501)
+
+    private fun syntheticDictionary() = AzooKeyDictionary(DictionaryAssetSource { path ->
+        val score = when (path) {
+            "cb/0.binary" -> 0f
+            "cb/100.binary" -> -10f
+            "cb/200.binary" -> 0f
+            else -> error("No bundled entry in this fixture: $path")
+        }
+        ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(if (path == "cb/0.binary") -1 else 1316).putFloat(score).array()
+    })
+
+    @Test
+    fun ranksCompleteWordsUsingEndConnectionsAndCompletionLength() {
+        val dictionary = syntheticDictionary()
+        val entries = listOf(entry("弱い終端", "てすと", 100), entry("強い終端", "てすと", 200))
+        assertEquals("強い終端", dictionary.candidates("てすと", 0, additionalEntries = entries).conversions.first())
+        val predictions = dictionary.candidates("てす", 2, additionalEntries = listOf(
+            entry("長い補完", "てすとけーす", 200), entry("短い補完", "てすと", 200),
+        )).predictions
+        assertEquals(listOf("短い補完", "長い補完"), predictions)
+    }
+
+    @Test
+    fun cacheRespectsLimitsAndUnversionedDictionaryChanges() {
+        val dictionary = syntheticDictionary()
+        val entries = listOf(entry("旧候補", "てすと", 200), entry("別候補", "てすと", 100))
+        assertEquals(1, dictionary.candidates("てすと", 0, 1, entries).conversions.size)
+        assertTrue(dictionary.candidates("てすと", 0, 5, entries).conversions.size > 1)
+        assertTrue(dictionary.candidates("てすと", 0, 0, entries).conversions.isEmpty())
+        val updated = dictionary.candidates("てすと", 0, 5, listOf(entry("新候補", "てすと", 200))).conversions
+        assertEquals("新候補", updated.first())
+        assertTrue("旧候補" !in updated)
+    }
+
     private val dictionaryRoot: File by lazy {
         val workingDirectory = requireNotNull(System.getProperty("user.dir"))
         generateSequence(File(workingDirectory).absoluteFile) { it.parentFile }
@@ -43,6 +83,16 @@ class AzooKeyDictionaryTest {
             "predictions should extend the input: $predictions",
             predictions.any { it.length > "こんに".length },
         )
+    }
+
+    @Test
+    fun commonCompletionsOutrankUnfinishedInflections() {
+        for ((reading, expected) in listOf("よろ" to "よろしく", "にほ" to "日本", "こんに" to "こんにちは")) {
+            assertEquals(expected, dictionary.candidates(reading, predictionLimit = 1).predictions.first())
+        }
+        val requests = dictionary.candidates("おねが", predictionLimit = 3).predictions
+        assertTrue("お願いします" in requests)
+        assertTrue("お願いし" !in requests)
     }
 
     @Test
