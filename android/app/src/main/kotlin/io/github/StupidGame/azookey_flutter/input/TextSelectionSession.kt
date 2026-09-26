@@ -6,10 +6,13 @@ import android.view.inputmethod.InputConnection
 /** Replaces a non-collapsed editor selection before a new composition starts. */
 internal fun replaceCurrentSelection(connection: InputConnection?): Boolean {
     connection ?: return false
-    val extracted = connection.getExtractedText(ExtractedTextRequest(), 0) ?: return false
-    val start = extracted.selectionStart
-    val end = extracted.selectionEnd
-    if (start < 0 || end < 0 || start == end) return false
+    val selected = connection.getSelectedText(0)
+    if (selected.isNullOrEmpty()) {
+        val extracted = connection.getExtractedText(ExtractedTextRequest(), 0) ?: return false
+        val start = extracted.selectionStart
+        val end = extracted.selectionEnd
+        if (start < 0 || end < 0 || start == end) return false
+    }
     return connection.commitText("", 1)
 }
 

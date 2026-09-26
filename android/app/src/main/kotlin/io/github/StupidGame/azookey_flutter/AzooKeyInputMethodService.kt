@@ -51,12 +51,15 @@ import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
+import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionValues
-import io.github.StupidGame.azookey_flutter.conversion.prioritizePrefixPredictions
+import io.github.StupidGame.azookey_flutter.conversion.rankJapaneseCandidates
+import io.github.StupidGame.azookey_flutter.conversion.prioritizeLearnedJapaneseCandidates
+import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
@@ -106,6 +109,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var keyboardSurface: FrameLayout
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
+    private lateinit var candidateExpandButton: TextView
+    private lateinit var candidatePanel: ScrollView
+    private lateinit var candidatePanelContent: LinearLayout
     private lateinit var keyboardContainer: LinearLayout
     private var state = JSONObject()
     private var settings = JSONObject()
@@ -116,10 +122,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var shift = false
     private var capsLock = false
     private var selectedCandidate = 0
+    private var candidateSelectedExplicitly = false
     private var sensitiveInput = false
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
     private var candidates = mutableListOf<String>()
+    private var candidateExpanded = false
     private var pendingReport: WrongConversionReport? = null
     private var hotfixDictionaryEntries = emptyList<AzooKeyHotfixDictionaryEntry>()
     private var hotfixDictionaryVersion = "none"
@@ -204,10 +212,30 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             addView(candidateRow)
         }
-        root.addView(
-            candidateScroll,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(43)),
-        )
+        val candidateHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(candidateScroll, LinearLayout.LayoutParams(0, dp(43), 1f))
+            candidateExpandButton = TextView(context).apply {
+                gravity = Gravity.CENTER
+                textSize = 20f
+                background = roundedDrawable(palette.key, dp(6).toFloat())
+                setTextColor(palette.text)
+                setOnClickListener {
+                    candidateExpanded = !candidateExpanded
+                    renderCandidateValues()
+                }
+                visibility = View.GONE
+            }
+            addView(candidateExpandButton, LinearLayout.LayoutParams(dp(43), dp(43)))
+        }
+        root.addView(candidateHeader)
+        candidatePanelContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        candidatePanel = ScrollView(this).apply {
+            isFillViewport = true
+            addView(candidatePanelContent)
+            visibility = View.GONE
+        }
+        root.addView(candidatePanel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(176)))
         keyboardContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -230,6 +258,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
+        candidateSelectedExplicitly = false
         cursorBarVisible = false
         cursorBarView = null
         sensitiveInput = isSensitiveInputType(info?.inputType ?: InputType.TYPE_NULL)
@@ -1173,6 +1202,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "qwerty_space" -> createKey(if (composing.isEmpty()) "空白" else "次候補", false, scale) {
                 if (candidates.isEmpty()) space() else {
                     selectedCandidate = (selectedCandidate + 1) % candidates.size
+                    candidateSelectedExplicitly = true
                     currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
                     renderCandidateValues()
                 }
@@ -1184,6 +1214,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "next_candidate" -> createKey(if (composing.isEmpty()) "空白" else "次候補", true, scale) {
                 if (candidates.isEmpty()) space() else {
                     selectedCandidate = (selectedCandidate + 1) % candidates.size
+                    candidateSelectedExplicitly = true
                     currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
                     renderCandidateValues()
                 }
@@ -1885,10 +1916,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (!::candidateRow.isInitialized) return
         candidateRow.removeAllViews()
         if (showTabs) {
+            candidateExpanded = false
+            candidatePanel.visibility = View.GONE
+            candidateExpandButton.visibility = View.GONE
             cursorBarVisible = false
             cursorBarView = null
         }
         if (cursorBarVisible) {
+            candidatePanel.visibility = View.GONE
+            candidateExpandButton.visibility = View.GONE
             renderCursorBar()
             return
         }
@@ -1896,8 +1932,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (settings.optBoolean("display_tab_bar_button", true)) renderTabBar()
             return
         }
+        val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
         candidates = buildCandidates().toMutableList()
         if (candidates.isEmpty()) candidates.add(displayReading())
+        if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
+        selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0) ?: 0
         renderCandidateValues()
     }
 
@@ -1919,6 +1958,43 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
             }, candidateButtonLayoutParams())
+        }
+        val canExpand = candidates.size > 3
+        candidateExpandButton.background = roundedDrawable(palette.key, dp(6).toFloat())
+        candidateExpandButton.setTextColor(palette.text)
+        candidateExpandButton.visibility = if (canExpand) View.VISIBLE else View.GONE
+        if (!canExpand) candidateExpanded = false
+        candidateExpandButton.text = if (candidateExpanded) "⌃" else "⌄"
+        candidateExpandButton.contentDescription = if (candidateExpanded) "候補を閉じる" else "候補をさらに表示"
+        candidatePanel.visibility = if (candidateExpanded) View.VISIBLE else View.GONE
+        if (candidateExpanded) {
+            candidatePanelContent.removeAllViews()
+            for (start in candidates.indices step 3) {
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                for (index in start until minOf(start + 3, candidates.size)) {
+                    val candidate = candidates[index]
+                    row.addView(TextView(this).apply {
+                        text = candidate
+                        textLocale = Locale.JAPAN
+                        gravity = Gravity.CENTER
+                        setPadding(dp(4), 0, dp(4), 0)
+                        setTextColor(if (index == selectedCandidate) palette.accent else palette.text)
+                        textSize = if (candidateSize > 0) candidateSize.toFloat() else 16f
+                        background = roundedDrawable(palette.key, dp(6).toFloat())
+                        setOnClickListener { commitCandidate(index) }
+                        setOnLongClickListener {
+                            candidateExpanded = false
+                            candidatePanel.visibility = View.GONE
+                            showLegacyReportPrompt(candidate, index)
+                            true
+                        }
+                    }, LinearLayout.LayoutParams(0, dp(43), 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+                }
+                repeat(3 - row.childCount) {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, dp(43), 1f))
+                }
+                candidatePanelContent.addView(row)
+            }
         }
     }
 
@@ -1973,6 +2049,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun toggleCursorBar() {
         cursorBarVisible = !cursorBarVisible
         if (cursorBarVisible) {
+            candidateExpanded = false
+            candidatePanel.visibility = View.GONE
+            candidateExpandButton.visibility = View.GONE
             renderCursorBar()
             if (settings.optBoolean("display_cursor_bar_automatically", false)) {
                 cursorBarView?.scheduleAutoDismiss()
@@ -2197,6 +2276,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val reading = displayReading()
         if (mode != "english" && layout == "qwerty") composing = reading
         selectedCandidate = 0
+        candidateSelectedExplicitly = false
         candidates = buildCandidates().toMutableList()
         if (candidates.isEmpty() && reading.isNotEmpty()) candidates.add(reading)
         val live = settings.optBoolean("live_conversion", true)
@@ -2244,28 +2324,31 @@ class AzooKeyInputMethodService : InputMethodService() {
             maxTokens = maxTokens,
         ) { ranked ->
             if (displayReading() != reading || ranked.isEmpty()) return@rank
-            val liveCandidate = if (settings.optBoolean("live_conversion", true)) {
-                ranked.firstOrNull()
-            } else {
-                null
-            }
+            val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
+            val learning = learningScores()
+            val learned = exactLearnedJapaneseCandidates(reading, learning)
+            val personalized = prioritizeLearnedJapaneseCandidates(reading, ranked, learning)
+            val liveCandidate = personalized.firstOrNull { it !in learned && it != reading && it != hiraganaToKatakana(reading) }
             candidates = pinJapaneseKanaCandidates(
                 reading = reading,
-                ranked = ranked,
+                ranked = personalized,
                 liveCandidate = liveCandidate,
+                learnedCandidates = learned,
             ).toMutableList()
-            selectedCandidate = 0
-            if (settings.optBoolean("live_conversion", true)) {
-                currentInputConnection?.setComposingText(candidates.first(), 1)
+            if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
+            selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0) ?: 0
+            if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
+                currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
             }
             renderCandidateValues()
         }
     }
 
     private fun buildCandidates(): List<String> {
-        val reading = displayReading()
-        if (reading.isEmpty()) return emptyList()
-        if (mode == "english") return buildEnglishCandidates(reading)
+        val input = displayReading()
+        if (input.isEmpty()) return emptyList()
+        if (mode == "english") return buildEnglishCandidates(input)
+        val reading = katakanaToHiragana(input)
         if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
@@ -2275,9 +2358,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         // composing a word.
         val predictionLimit = PREDICTION_LIMIT
         val userEntries = (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
-            .sortedByDescending { it.optInt("importance", 3).coerceIn(1, 5) }
+            .sortedWith(
+                compareByDescending<JSONObject> { it.optInt("importance", 3).coerceIn(1, 5) }
+                    .thenBy { it.optString("ruby").length },
+            )
         for (entry in userEntries) {
-            val ruby = entry.optString("ruby")
+            val ruby = katakanaToHiragana(entry.optString("ruby"))
             val value = if (entry.optBoolean("isTemplateMode", false)) {
                 renderTemplate(entry.optString("formatLiteral", entry.optString("word")))
             } else {
@@ -2312,13 +2398,6 @@ class AzooKeyInputMethodService : InputMethodService() {
                 ),
             )
             predictedValues.addAll(officialCandidates.predictions)
-            val prioritized = prioritizePrefixPredictions(
-                conversions = values.toList(),
-                predictions = predictedValues.take(predictionLimit),
-                insertIndex = PREDICTION_INSERT_INDEX,
-            )
-            values.clear()
-            values.addAll(prioritized)
         }
         val katakana = hiraganaToKatakana(reading)
         if (katakana != reading) values.add(katakana)
@@ -2337,17 +2416,18 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("emoji_dictionary_enabled", true)) emojiDictionary[reading]?.let(values::addAll)
         if (settings.optBoolean("kaomoji_dictionary_enabled", false)) kaomojiDictionary[reading]?.let(values::addAll)
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
-        val learningMode = settings.optInt("memory_learining_styple_setting", 0)
-        val scores = state.optJSONObject("learning") ?: JSONObject()
-        val ranked = values.filter { it.isNotEmpty() }.withIndex().sortedWith(
-            compareByDescending<IndexedValue<String>> {
-                if (learningMode == 2) 0 else scores.optInt("$reading\t${it.value}", 0)
-            }.thenBy { it.index },
-        ).map { it.value }
+        val ranked = rankJapaneseCandidates(
+            reading = reading,
+            conversions = values.toList(),
+            predictions = predictedValues.toList(),
+            learning = learningScores(),
+            predictionLimit = predictionLimit,
+        )
+        val learned = exactLearnedJapaneseCandidates(reading, learningScores())
         return pinJapaneseKanaCandidates(
             reading = reading,
             ranked = ranked,
-            liveCandidate = if (settings.optBoolean("live_conversion", true)) ranked.firstOrNull() else null,
+            learnedCandidates = learned,
         )
     }
 
@@ -2370,23 +2450,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
 
-        val learned = mutableListOf<Pair<Int, String>>()
-        val scores = state.optJSONObject("learning") ?: JSONObject()
-        val keys = scores.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val separator = key.indexOf('\t')
-            if (separator <= 0 || separator == key.lastIndex) continue
-            val reading = key.substring(0, separator)
-            val candidate = key.substring(separator + 1)
-            if (reading.lowercase(Locale.ROOT).startsWith(prefix) ||
-                candidate.lowercase(Locale.ROOT).startsWith(prefix)
-            ) {
-                learned.add(scores.optInt(key) to candidate)
-            }
-        }
-        preferred.addAll(learned.sortedByDescending { it.first }.map { it.second })
-        return englishPredictionCandidates(input, preferred, PREDICTION_LIMIT)
+        return englishPredictionCandidates(input, preferred, PREDICTION_LIMIT, learningScores())
     }
 
     private fun commitCandidate(index: Int) {
@@ -2394,7 +2458,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         val selectedIndex = index.coerceIn(0, candidates.lastIndex)
         val candidate = candidates[selectedIndex]
-        learnCandidate(displayReading(), candidate)
         val report = WrongConversionReport(
             suggested = candidates.first(),
             selected = candidate,
@@ -2408,10 +2471,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             textContentType = currentInputEditorInfo?.inputType?.toString() ?: "nil",
             returnKeyType = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)?.toString() ?: "default",
         )
-        currentInputConnection?.commitText(candidate, 1)
+        if (currentInputConnection?.commitText(candidate, 1) != true) return
+        learnCandidate(displayReading(), candidate, explicitSelection = true)
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
+        candidateSelectedExplicitly = false
         renderCandidates()
         maybeOfferReport(report)
     }
@@ -2451,6 +2516,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun showLegacyReportPrompt(candidate: String, index: Int) {
+        candidateExpanded = false
+        candidatePanel.visibility = View.GONE
+        candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
         addCandidateButton("「$candidate」を誤変換として報告") {}
         addCandidateButton("送信") {
@@ -2519,11 +2587,17 @@ class AzooKeyInputMethodService : InputMethodService() {
         persistState()
     }
 
-    private fun learnCandidate(reading: String, candidate: String) {
-        if (settings.optInt("memory_learining_styple_setting", 0) != 0) return
-        val scores = state.optJSONObject("learning") ?: JSONObject().also { state.put("learning", it) }
-        val key = "$reading\t$candidate"
-        scores.put(key, (scores.optInt(key, 0) + 1).coerceAtMost(1_000_000))
+    private fun learningScores(): Map<String, Int> {
+        if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) == 2) return emptyMap()
+        val scores = state.optJSONObject("learning") ?: return emptyMap()
+        return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }
+    }
+
+    private fun learnCandidate(reading: String, candidate: String, explicitSelection: Boolean = false) {
+        if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) != 0) return
+        val scores = learningScores().toMutableMap()
+        recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
+        state.put("learning", JSONObject(scores))
         persistState()
     }
 
@@ -2537,12 +2611,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         val reading = displayReading()
         val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
-        val text = compositionCommitText(reading, availableCandidates, useCandidate)
-        if (useCandidate) learnCandidate(reading, text)
-        currentInputConnection?.commitText(text, 1)
+        val text = compositionCommitText(reading, availableCandidates, useCandidate, selectedCandidate)
+        if (currentInputConnection?.commitText(text, 1) != true) return
+        if (useCandidate) learnCandidate(reading, text, candidateSelectedExplicitly)
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
+        candidateSelectedExplicitly = false
         renderCandidates()
     }
 
@@ -2564,6 +2639,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         candidates.clear()
         selectedCandidate = 0
+        candidateSelectedExplicitly = false
         renderCandidates()
         cursorBarView?.post { cursorBarView?.refresh() }
     }
@@ -2573,6 +2649,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
+        candidateSelectedExplicitly = false
         candidates.clear()
         // finishComposingText() alone commits the visible composing candidate.
         // Replace it with an empty composition first so deletion is reflected
@@ -2583,6 +2660,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun delete() {
+        if (deleteSelectedText()) return
         when {
             layout == "qwerty" && rawRoman.isNotEmpty() -> {
                 rawRoman = rawRoman.dropLast(1)
@@ -2604,6 +2682,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
+    private fun deleteSelectedText(): Boolean {
+        if (!replaceCurrentSelection(currentInputConnection)) return false
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        pendingQuickWordDelete = null
+        composing = ""
+        rawRoman = ""
+        candidates.clear()
+        selectedCandidate = 0
+        candidateSelectedExplicitly = false
+        renderCandidates()
+        cursorBarView?.post { cursorBarView?.refresh() }
+        return true
+    }
+
     private fun deleteFromEditor(beforeCursor: Int, afterCursor: Int): Boolean {
         val rawInputTarget = currentInputEditorInfo?.inputType == InputType.TYPE_NULL
         return deleteEditorText(
@@ -2621,6 +2713,7 @@ class AzooKeyInputMethodService : InputMethodService() {
      * a one-character word such as a particle from consuming its neighbor.
      */
     private fun quickDelete() {
+        if (deleteSelectedText()) return
         val now = SystemClock.uptimeMillis()
         pendingQuickWordDelete?.let { pending ->
             val applied = if (now <= pending.deadlineMillis && pending.composition) {
@@ -2703,6 +2796,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun deleteForward() {
+        if (deleteSelectedText()) return
         // The local composition cursor is always at its trailing edge, matching
         // azooKey's behavior: a forward delete has nothing to remove until the
         // composition is committed or cleared.
@@ -2719,6 +2813,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             directCommit(" ")
         } else if (settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
             selectedCandidate = (selectedCandidate + 1) % candidates.size
+            candidateSelectedExplicitly = true
             currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
             renderCandidates(false)
         } else {
@@ -2738,6 +2833,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             return
         }
         selectedCandidate = (selectedCandidate + 1) % candidates.size
+        candidateSelectedExplicitly = true
         currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
         renderCandidateValues()
     }
@@ -2804,6 +2900,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "directInput" -> directCommit(value, normalizePunctuation = false)
             "direct_input" -> directCommit(action.optString("text"), normalizePunctuation = false)
             "delete" -> {
+                if (deleteSelectedText()) return
                 val count = if (action.has("count")) action.optInt("count", 1)
                 else value.toIntOrNull() ?: 1
                 val deletion = surroundingDeleteFor(count)
@@ -3149,6 +3246,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun smartDeleteDefault() {
+        if (deleteSelectedText()) return
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
             val count = backwardWordDeleteCount(composing)
             val remaining = composing.dropLast(count.coerceAtMost(composing.length))
@@ -3179,6 +3277,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun smartDelete(action: JSONObject) {
+        if (deleteSelectedText()) return
         val backward = action.optString("direction", "forward") == "backward"
         if (backward) {
             // Custard smart-delete is the layout-level word-delete gesture.
@@ -3232,6 +3331,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "exact" -> selection.optInt("value")
             else -> 0
         }.coerceIn(0, candidates.lastIndex)
+        candidateSelectedExplicitly = true
         currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
         renderCandidateValues()
     }
@@ -3627,7 +3727,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         var activeInstance: AzooKeyInputMethodService? = null
 
         private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
-        private const val PREDICTION_INSERT_INDEX = 2
         private const val PREDICTION_LIMIT = 32
 
         internal fun withOpacity(color: Int, opacity: Double): Int {

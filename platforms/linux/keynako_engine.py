@@ -33,6 +33,8 @@ class NativeSession:
         self.library.keynako_ime_backspace.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_backspace_word.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_clear.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_learn_selected.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_learn_selected.restype = None
         self.library.keynako_ime_begin_conversion.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_begin_conversion.restype = ctypes.c_int
         self.library.keynako_ime_cancel_conversion.argtypes = [ctypes.c_void_p]
@@ -91,6 +93,9 @@ class NativeSession:
 
     def clear(self) -> None:
         self.library.keynako_ime_clear(self.handle)
+
+    def learn_selected(self) -> None:
+        self.library.keynako_ime_learn_selected(self.handle)
 
     def begin_conversion(self) -> bool:
         return bool(self.library.keynako_ime_begin_conversion(self.handle))
@@ -349,6 +354,7 @@ class KeynakoEngine(IBus.Engine):
             return
         suffix = " " if self.mode == "en" else ""
         self.commit_text(IBus.Text.new_from_string(self.session.selected_text() + suffix))
+        self.session.learn_selected()
         self._clear()
 
     def _commit_paired_delimiter(self, opening: str, closing: str) -> None:

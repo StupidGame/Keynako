@@ -18,6 +18,7 @@ internal fun deleteEditorText(
     connection ?: return false
     val before = beforeCursor.coerceAtLeast(0)
     val after = afterCursor.coerceAtLeast(0)
+    if (replaceCurrentSelection(connection)) return true
     if (before == 0 && after == 0) return true
 
     if (preferKeyEvents && sendDeleteKeyEvents(connection, before, after)) {

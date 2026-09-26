@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -38,6 +40,7 @@ public:
     void backspace();
     void backspace_word();
     void clear();
+    void learn_selected();
     bool begin_conversion();
     bool cancel_conversion();
     bool select_candidate(std::size_t index);
@@ -65,6 +68,8 @@ private:
     void append_ascii_internal(char value, bool preserve_selection,
                                bool extend_literal_suffix);
     void rebuild_candidates();
+    std::string learning_key() const;
+    void prioritize_learning();
 
     InputMode mode_ = InputMode::japanese;
     bool live_conversion_ = true;
@@ -78,6 +83,9 @@ private:
     std::vector<DictionaryEntry> user_dictionary_;
     std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;
     std::size_t selected_index_ = 0;
+    // Session-local preferences are bounded and never include surrounding text.
+    std::map<std::string, std::map<std::string, int>> learning_;
+    std::deque<std::string> learning_order_;
 };
 
 }  // namespace keynako

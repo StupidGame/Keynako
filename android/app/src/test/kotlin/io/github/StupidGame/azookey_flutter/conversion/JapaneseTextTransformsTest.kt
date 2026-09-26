@@ -41,6 +41,24 @@ class JapaneseTextTransformsTest {
     }
 
     @Test
+    fun placesLearnedChoicesBeforeZenzaiAndKana() {
+        val learned = exactLearnedJapaneseCandidates(
+            "きょう",
+            mapOf("きょう\t京" to 3, "きょう\t今日" to 8, "きょうか\t強化" to 20),
+        )
+        assertEquals(listOf("今日", "京"), learned)
+        assertEquals(
+            listOf("今日", "京", "教", "きょう", "キョウ", "強化"),
+            pinJapaneseKanaCandidates(
+                reading = "きょう",
+                ranked = listOf("教", "強化", "今日", "京"),
+                liveCandidate = "教",
+                learnedCandidates = learned,
+            ),
+        )
+    }
+
+    @Test
     fun doesNotTreatRawKatakanaAsALiveConversion() {
         assertEquals(
             listOf("きょう", "キョウ", "今日"),

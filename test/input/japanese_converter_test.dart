@@ -1,5 +1,6 @@
 import 'package:azookey_flutter/input/japanese_converter.dart';
 import 'package:azookey_flutter/models/app_data.dart';
+import 'package:azookey_flutter/models/azookey_hotfix_dictionary.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -97,6 +98,48 @@ void main() {
     final value = converter.candidates(input: 'ひづけ', data: data).first.text;
     expect(value, matches(RegExp(r'^\d{4}/\d{2}/\d{2}$')));
   });
+
+  test(
+    'uses active shared dictionary entries for conversion and prediction',
+    () {
+      final data = AppData.defaults();
+      for (final status in ['active', 'disabled']) {
+        data.azooKeyHotfixDictionary = AzooKeyHotfixDictionary.fromJson({
+          'metadata': {
+            'status': status,
+            'name': 'test',
+            'description': 'test',
+            'version': '1',
+            'last_update': '2026-09-22',
+          },
+          'data': [
+            {
+              'word': 'Keynako共有',
+              'ruby': 'キーナコキョウユウ',
+              'word_weight': -5,
+              'lcid': 1285,
+              'rcid': 1285,
+              'mid': 501,
+              'date': '2026-09-22',
+              'author': 'test',
+              'importance': 5,
+            },
+          ],
+        });
+        for (final reading in ['きーなこきょうゆう', 'きーなこ']) {
+          final texts = converter
+              .candidates(input: reading, data: data)
+              .map((value) => value.text);
+          expect(
+            texts,
+            status == 'active'
+                ? contains('Keynako共有')
+                : isNot(contains('Keynako共有')),
+          );
+        }
+      }
+    },
+  );
 
   test('provides half-width kana and full-width roman candidates', () {
     final data = AppData.defaults();

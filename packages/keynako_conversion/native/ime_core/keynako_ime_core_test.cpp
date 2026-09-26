@@ -10,6 +10,50 @@ int main() {
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
     assert(ImeSession::roman_to_hiragana("nani?") == "なに？");
     assert(ImeSession::roman_to_hiragana("nani!") == "なに！");
+    ImeSession learning;
+    for (int repeat = 0; repeat < 100; ++repeat) {
+        for (const char value : std::string("ai")) learning.append_ascii(value);
+        assert(learning.selected_text() == "愛");
+        learning.learn_selected();
+        learning.clear();
+    }
+    for (const char value : std::string("ai")) learning.append_ascii(value);
+    assert(learning.begin_conversion());
+    const auto indigo = std::find_if(learning.candidates().begin(), learning.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "藍"; });
+    assert(indigo != learning.candidates().end());
+    assert(learning.select_candidate(static_cast<std::size_t>(indigo - learning.candidates().begin())));
+    learning.insert_zenzai_candidate("愛");
+    assert(learning.selected_text() == "藍");
+    learning.learn_selected();
+    learning.clear();
+    for (const char value : std::string("ai")) learning.append_ascii(value);
+    assert(learning.selected_text() == "藍");
+    learning.insert_zenzai_candidate("愛");
+    assert(learning.selected_text() == "藍");
+
+    // A learned unconverted reading must still support the reading shortcut.
+    assert(learning.select_reading());
+    assert(learning.selected_text() == "あい");
+    learning.learn_selected();
+    learning.clear();
+    for (const char value : std::string("ai")) learning.append_ascii(value);
+    assert(learning.select_reading());
+    assert(learning.selected_text() == "あい");
+
+    ImeSession recalled;
+    for (const char value : std::string("kiinako")) recalled.append_ascii(value);
+    recalled.insert_zenzai_candidate("Keynako");
+    recalled.learn_selected();
+    recalled.clear();
+    for (const char value : std::string("kiinako")) recalled.append_ascii(value);
+    assert(recalled.selected_text() == "Keynako");
+    recalled.clear();
+    for (const char value : std::string("kii")) recalled.append_ascii(value);
+    assert(recalled.display_text() == "きい");
+    assert(std::any_of(recalled.candidates().begin(), recalled.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "Keynako"; }));
+
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},
@@ -31,6 +75,20 @@ int main() {
     assert(prefix_prediction.candidates().size() >= 4);
     assert(prefix_prediction.candidates()[2].text == "日本");
     assert(prefix_prediction.candidates()[2].source == "shared-prediction");
+    ImeSession ranked_prediction;
+    ranked_prediction.set_user_dictionary({
+        {"テストケース", "長い補完", 3},
+        {"テスト", "短い補完", 3},
+        {"テストヨソク", "重要な補完", 5},
+    });
+    for (const char value : std::string("tesu")) ranked_prediction.append_ascii(value);
+    assert(ranked_prediction.display_text() == "てす");
+    assert(ranked_prediction.candidates()[2].text == "重要な補完");
+    assert(ranked_prediction.candidates()[3].text == "短い補完");
+    ranked_prediction.clear();
+    ranked_prediction.append_ascii('/');
+    assert(std::none_of(ranked_prediction.candidates().begin(), ranked_prediction.candidates().end(),
+        [](const keynako::Candidate &candidate) { return candidate.source.find("prediction") != std::string::npos; }));
     assert(session.begin_conversion());
     assert(session.is_converting());
     assert(session.selected_index() == 0);
@@ -152,6 +210,18 @@ int main() {
 
     const char *dictionary_path = std::getenv("KEYNAKO_TEST_AZOOKEY_DICTIONARY");
     assert(dictionary_path != nullptr);
+    keynako::AzooKeyDictionary dictionary(dictionary_path);
+    assert(dictionary.predictions("よろ", 1).front() == "よろしく");
+    assert(dictionary.predictions("にほ", 1).front() == "日本");
+    assert(dictionary.predictions("こんに", 1).front() == "こんにちは");
+    const auto requests = dictionary.predictions("おねが", 3);
+    assert(std::find(requests.begin(), requests.end(), "お願いします") != requests.end());
+    assert(std::find(requests.begin(), requests.end(), "お願いし") == requests.end());
+    const auto ranked_completions = dictionary.predictions("てす", 2, {
+        {"長い補完", "テストケース", 1285, 1285, 1000.0f},
+        {"短い補完", "テスト", 1285, 1285, 1000.0f},
+    });
+    assert(ranked_completions == std::vector<std::string>({"短い補完", "長い補完"}));
     ImeSession bundled;
     assert(bundled.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("nihongo")) bundled.append_ascii(value);

@@ -20,6 +20,7 @@ namespace {
 
 constexpr int kRootNode = 1;
 constexpr int kBosCid = 0;
+constexpr int kEosCid = 1316;
 constexpr int kGeneralNounCid = 1285;
 constexpr int kCidCount = 1319;
 constexpr int kShardShift = 11;
@@ -489,6 +490,10 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         }
     }
 
+    // A complete conversion must also connect to the end of the composition.
+    for (auto &path : beams.back()) {
+        path.score += impl_->connection_score(path.last_rcid, kEosCid);
+    }
     std::stable_sort(beams.back().begin(), beams.back().end(),
         [](const BeamPath &left, const BeamPath &right) { return left.score > right.score; });
     std::unordered_set<std::string> seen;
@@ -530,6 +535,13 @@ std::vector<std::string> AzooKeyDictionary::predictions(
                                       prefix_length;
                        }),
         entries.end());
+    for (auto &entry : entries) {
+        // A prefix may grow into a phrase; retain word frequency as the main
+        // signal while discouraging unfinished inflections and long completions.
+        entry.score += 0.5f * (impl_->connection_score(kBosCid, entry.lcid) +
+                       impl_->connection_score(entry.rcid, kEosCid)) -
+                       static_cast<float>(utf8_to_u32(entry.ruby).size() - prefix_length) * 0.5f;
+    }
     std::stable_sort(entries.begin(), entries.end(),
                      [](const Entry &left, const Entry &right) {
                          return left.score > right.score;

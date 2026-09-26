@@ -82,4 +82,37 @@ class CandidatePredictionsTest {
 
         assertEquals(listOf("仮面", "画面", "仮面ライダー", "かめん"), values)
     }
+
+    @Test
+    fun normalizesAndPrefersShorterCompletions() {
+        assertEquals(listOf("テスト", "テストケース"), prefixPredictionValues(
+            "てす", listOf("テストケース" to listOf("テストケース"), "テスト" to listOf("テスト")), 2,
+        ))
+    }
+
+    @Test
+    fun predictionsDoNotPromoteDuplicateConversions() {
+        assertEquals(listOf("一", "二", "予測", "三", "四"), prioritizePrefixPredictions(
+            listOf("一", "二", "三", "四"), listOf("四", "予測"),
+        ))
+    }
+
+    @Test
+    fun recallsLearnedWordsAndKeepsLongerReadingsAsPredictions() {
+        val learning = mapOf("キーナコ\tKeynako" to 4)
+        assertEquals("Keynako", rankJapaneseCandidates("きーなこ", listOf("きーなこ"), emptyList(), learning).first())
+        assertEquals(listOf("きー", "キー", "Keynako"), rankJapaneseCandidates(
+            "きー", listOf("きー", "キー"), emptyList(), learning,
+        ))
+        assertEquals(listOf("きー"), rankJapaneseCandidates("きー", listOf("きー"), emptyList(), learning, 0))
+        assertEquals(listOf("ほか"), rankJapaneseCandidates("ほか", listOf("ほか"), emptyList(), learning))
+    }
+
+    @Test
+    fun learningAndDeduplicationAreAppliedBeforePredictionLimit() {
+        assertEquals(listOf("てす", "テストケース"), rankJapaneseCandidates(
+            "てす", listOf("てす"), listOf("てす", "テスト", "テスト"),
+            mapOf("てすとけーす\tテストケース" to 5, "てすと\t" to 99), 1,
+        ))
+    }
 }

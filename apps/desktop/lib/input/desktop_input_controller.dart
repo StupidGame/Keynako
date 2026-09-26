@@ -315,10 +315,13 @@ class DesktopInputController extends ChangeNotifier {
         ? composingText
         : _candidates[_selectedIndex].text;
     if (candidate.isEmpty) return;
-    final learningKey = _mode == InputMode.japanese
-        ? '$composingText\t$candidate'
-        : 'english:${_rawInput.toLowerCase()}\t$candidate';
-    _learning[learningKey] = (_learning[learningKey] ?? 0) + 1;
+    CandidateLearning.record(
+      _learning,
+      reading: composingText,
+      text: candidate,
+      english: _mode == InputMode.english,
+      explicitSelection: _converting,
+    );
     final committedCandidate = _mode == InputMode.english
         ? '$candidate '
         : candidate;
@@ -416,6 +419,9 @@ class DesktopInputController extends ChangeNotifier {
         ),
       );
       if (sequence != _requestSequence || generated == null) return;
+      final selectedText = _converting && _candidates.isNotEmpty
+          ? _candidates[_selectedIndex].text
+          : null;
       _candidates = [
         ConversionCandidate(
           text: generated,
@@ -425,7 +431,19 @@ class DesktopInputController extends ChangeNotifier {
         ),
         ..._candidates.where((candidate) => candidate.text != generated),
       ];
-      _selectedIndex = 0;
+      final learned = CandidateLearning.exactScores(_learning, reading);
+      final ranked = _candidates.indexed.toList()
+        ..sort((left, right) {
+          final score = (learned[right.$2.text] ?? 0).compareTo(
+            learned[left.$2.text] ?? 0,
+          );
+          return score != 0 ? score : left.$1.compareTo(right.$1);
+        });
+      _candidates = ranked.map((entry) => entry.$2).toList();
+      _selectedIndex = selectedText == null
+          ? 0
+          : _candidates.indexWhere((value) => value.text == selectedText);
+      if (_selectedIndex < 0) _selectedIndex = 0;
       _zenzaiStatus = '待機中';
     } catch (_) {
       if (sequence != _requestSequence) return;

@@ -1,3 +1,4 @@
+import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
 
@@ -359,9 +360,34 @@ class JapaneseConverter {
       ConversionCandidate(text: reading, reading: reading, score: 100),
     ];
     final prefixPredictions = <ConversionCandidate>[];
+    final exactLearning = <String, int>{};
+    final predictionLearning = <String, int>{};
+
+    // Recover selected words even when they came from Zenzai or a dictionary
+    // that is no longer loaded. A longer learned reading is only a completion.
+    if (options.learningEnabled) {
+      for (final entry in CandidateLearning.entries(options.learning)) {
+        final ruby = entry.reading;
+        final text = entry.text;
+        if (text.trim().isEmpty || !ruby.startsWith(reading)) continue;
+        final exact = ruby == reading;
+        if (!exact && predictionLimit <= 0) continue;
+        final scores = exact ? exactLearning : predictionLearning;
+        if (entry.score > (scores[text] ?? 0)) scores[text] = entry.score;
+        (exact ? values : prefixPredictions).add(
+          ConversionCandidate(
+            text: text,
+            reading: reading,
+            source: exact ? 'learned' : 'learned-prediction',
+            score: exact ? 250 : 180 - (ruby.length - reading.length) * 4,
+          ),
+        );
+      }
+    }
 
     for (final entry in options.userDictionary) {
-      if (entry.reading == reading) {
+      final ruby = katakanaToHiragana(entry.reading);
+      if (ruby == reading) {
         values.add(
           ConversionCandidate(
             text: entry.template ? _renderTemplate(entry) : entry.value,
@@ -371,14 +397,17 @@ class JapaneseConverter {
           ),
         );
       } else if (predictionLimit > 0 &&
-          entry.reading.length > reading.length &&
-          entry.reading.startsWith(reading)) {
+          ruby.length > reading.length &&
+          ruby.startsWith(reading)) {
         prefixPredictions.add(
           ConversionCandidate(
             text: entry.template ? _renderTemplate(entry) : entry.value,
             reading: reading,
             source: 'user-prediction',
-            score: 220 + entry.importance.clamp(1, 5).toInt() * 20,
+            score:
+                220 +
+                entry.importance.clamp(1, 5).toInt() * 20 -
+                (ruby.length - reading.length) * 4,
           ),
         );
       }
@@ -400,7 +429,7 @@ class JapaneseConverter {
               text: value,
               reading: reading,
               source: 'dictionary-prediction',
-              score: 180,
+              score: 180 - (entry.key.length - reading.length) * 4,
             ),
           );
         }
@@ -488,30 +517,26 @@ class JapaneseConverter {
 
     final unique = <String, ConversionCandidate>{};
     for (final candidate in values) {
-      final learned = options.learningEnabled
-          ? options.learning['$reading\t${candidate.text}'] ?? 0
-          : 0;
+      if (candidate.text.trim().isEmpty) continue;
+      final learned = (exactLearning[candidate.text] ?? 0).clamp(0, 1000);
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = unique[candidate.text];
       if (previous == null || scored.score > previous.score) {
         unique[candidate.text] = scored;
       }
     }
-    final result = unique.values.toList()
-      ..sort((left, right) => right.score.compareTo(left.score));
+    final result = _rank(unique.values);
     final uniquePredictions = <String, ConversionCandidate>{};
     for (final candidate in prefixPredictions) {
-      final learned = options.learningEnabled
-          ? options.learning['$reading\t${candidate.text}'] ?? 0
-          : 0;
+      if (candidate.text.trim().isEmpty) continue;
+      final learned = (predictionLearning[candidate.text] ?? 0).clamp(0, 1000);
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = uniquePredictions[candidate.text];
       if (previous == null || scored.score > previous.score) {
         uniquePredictions[candidate.text] = scored;
       }
     }
-    final predictions = uniquePredictions.values.toList()
-      ..sort((left, right) => right.score.compareTo(left.score));
+    final predictions = _rank(uniquePredictions.values);
     final liveCandidate =
         options.liveConversion && sourceReading == reading && result.isNotEmpty
         ? result.first
@@ -547,14 +572,34 @@ class JapaneseConverter {
         .where((candidate) => !baseTexts.contains(candidate.text))
         .take(predictionLimit < 0 ? 0 : predictionLimit)
         .toList(growable: false);
-    final predictionInsertIndex = baseCandidates.length < 2
-        ? baseCandidates.length
-        : 2;
+    // Keep complete conversions ahead of completions, including when live
+    // conversion is off. Kana shortcuts retain their established positions.
+    final conversions = baseCandidates
+        .where(
+          (candidate) =>
+              pinnedTexts.contains(candidate.text) ||
+              const {'user', 'system', 'learned'}.contains(candidate.source),
+        )
+        .toList();
+    final conversionTexts = conversions
+        .map((candidate) => candidate.text)
+        .toSet();
     return [
-      ...baseCandidates.take(predictionInsertIndex),
+      ...conversions,
       ...visiblePredictions,
-      ...baseCandidates.skip(predictionInsertIndex),
+      ...baseCandidates.where(
+        (candidate) => !conversionTexts.contains(candidate.text),
+      ),
     ];
+  }
+
+  List<ConversionCandidate> _rank(Iterable<ConversionCandidate> candidates) {
+    final indexed = candidates.indexed.toList()
+      ..sort((left, right) {
+        final score = right.$2.score.compareTo(left.$2.score);
+        return score != 0 ? score : left.$1.compareTo(right.$1);
+      });
+    return indexed.map((entry) => entry.$2).toList();
   }
 
   String _renderTemplate(ConversionDictionaryEntry entry) {

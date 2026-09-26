@@ -39,6 +39,7 @@ void keynako_ime_append_ascii(keynako_ime_session session, int value) {
 void keynako_ime_backspace(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace(); }
 void keynako_ime_backspace_word(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace_word(); }
 void keynako_ime_clear(keynako_ime_session session) { if (auto *value = cast(session)) value->clear(); }
+void keynako_ime_learn_selected(keynako_ime_session session) { if (auto *value = cast(session)) value->learn_selected(); }
 int keynako_ime_begin_conversion(keynako_ime_session session) {
     return session && cast(session)->begin_conversion() ? 1 : 0;
 }

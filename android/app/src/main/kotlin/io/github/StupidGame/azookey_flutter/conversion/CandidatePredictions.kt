@@ -22,6 +22,7 @@ internal fun englishPredictionCandidates(
     input: String,
     preferredCandidates: Iterable<String> = emptyList(),
     limit: Int = 16,
+    learning: Map<String, Int> = emptyMap(),
 ): List<String> {
     if (input.isBlank() || limit <= 0) return emptyList()
     val prefix = input.lowercase(Locale.ROOT)
@@ -33,10 +34,17 @@ internal fun englishPredictionCandidates(
     }
 
     preferredCandidates.forEach(::addCandidate)
+    val scores = mutableMapOf<String, Int>()
+    for (entry in learnedCandidates(learning, english = true)) {
+        if (!entry.reading.startsWith(prefix) && !entry.text.lowercase(Locale.ROOT).startsWith(prefix)) continue
+        val word = matchEnglishCandidateCase(entry.text, input)
+        values.add(word)
+        scores[word] = maxOf(scores[word] ?: 0, entry.score)
+    }
     defaultEnglishPredictionWords.asSequence()
         .filter { it.length > prefix.length && it.startsWith(prefix) }
         .forEach(::addCandidate)
-    return values.take(limit)
+    return (listOf(input) + values.filter { it != input }.sortedByDescending { scores[it] ?: 0 }).take(limit)
 }
 
 /**
@@ -60,7 +68,8 @@ internal fun compositionCommitText(
     reading: String,
     candidates: List<String>,
     useCandidate: Boolean,
-): String = if (useCandidate) candidates.firstOrNull() ?: reading else reading
+    selectedIndex: Int = 0,
+): String = if (useCandidate) candidates.getOrNull(selectedIndex) ?: candidates.firstOrNull() ?: reading else reading
 
 /** Returns dictionary values whose reading extends the text currently being composed. */
 internal fun prefixPredictionValues(
@@ -69,8 +78,11 @@ internal fun prefixPredictionValues(
     limit: Int,
 ): List<String> {
     if (reading.isEmpty() || limit <= 0) return emptyList()
+    val normalized = katakanaToHiragana(reading)
     return entries.asSequence()
-        .filter { (ruby, _) -> ruby.length > reading.length && ruby.startsWith(reading) }
+        .map { (ruby, values) -> katakanaToHiragana(ruby) to values }
+        .filter { (ruby, _) -> ruby.length > normalized.length && ruby.startsWith(normalized) }
+        .sortedBy { (ruby, _) -> ruby.length }
         .flatMap { (_, values) -> values.asSequence() }
         .filter(String::isNotBlank)
         .distinct()
@@ -85,9 +97,47 @@ internal fun prioritizePrefixPredictions(
     insertIndex: Int = 2,
 ): List<String> {
     val insertion = insertIndex.coerceIn(0, conversions.size)
+    val exact = conversions.toSet()
     return buildList {
         addAll(conversions.take(insertion))
-        addAll(predictions)
+        addAll(predictions.filter { it !in exact })
         addAll(conversions.drop(insertion))
     }.distinct()
+}
+
+/** Recalls learned words before limiting completions, without auto-completing a longer reading. */
+internal fun rankJapaneseCandidates(
+    reading: String,
+    conversions: List<String>,
+    predictions: List<String>,
+    learning: Map<String, Int> = emptyMap(),
+    predictionLimit: Int = 32,
+): List<String> {
+    if (reading.isEmpty()) return emptyList()
+    val normalized = katakanaToHiragana(reading)
+    val exact = conversions.filter(String::isNotBlank).toMutableSet()
+    val completions = predictions.filter(String::isNotBlank).toMutableSet()
+    val exactScores = mutableMapOf<String, Int>()
+    val predictionScores = mutableMapOf<String, Int>()
+    val remaining = mutableMapOf<String, Int>()
+    for (entry in learnedCandidates(learning)) {
+        val ruby = entry.reading
+        val word = entry.text
+        val count = entry.score
+        if (word.isBlank() || !ruby.startsWith(normalized)) continue
+        if (ruby == normalized) {
+            exact.add(word)
+            exactScores[word] = maxOf(exactScores[word] ?: 0, count)
+        } else {
+            completions.add(word)
+            predictionScores[word] = maxOf(predictionScores[word] ?: 0, count)
+            remaining[word] = minOf(remaining[word] ?: Int.MAX_VALUE, ruby.length - normalized.length)
+        }
+    }
+    val ranked = exact.sortedByDescending { exactScores[it] ?: 0 }
+    val predicted = completions.filter { it !in exact }.sortedWith(
+        compareByDescending<String> { predictionScores[it] ?: 0 }
+            .thenBy { remaining[it] ?: Int.MAX_VALUE },
+    ).take(predictionLimit.coerceAtLeast(0))
+    return prioritizePrefixPredictions(ranked, predicted, insertIndex = 3)
 }

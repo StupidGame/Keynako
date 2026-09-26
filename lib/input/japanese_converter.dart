@@ -32,17 +32,28 @@ class JapaneseConverter {
       input: input,
       romanInput: romanInput,
       options: conversion.ConversionOptions(
-        userDictionary: data.userDictionary
-            .map(
+        userDictionary: [
+          ...data.userDictionary.map(
+            (entry) => conversion.ConversionDictionaryEntry(
+              reading: entry.ruby,
+              value: entry.word,
+              template: entry.isTemplateMode,
+              format: entry.formatLiteral,
+              importance: entry.importance,
+            ),
+          ),
+          if (data.azooKeyHotfixDictionary?.metadata.isActive == true)
+            ...data.azooKeyHotfixDictionary!.entries.map(
               (entry) => conversion.ConversionDictionaryEntry(
                 reading: entry.ruby,
                 value: entry.word,
-                template: entry.isTemplateMode,
-                format: entry.formatLiteral,
                 importance: entry.importance,
+                wordWeight: entry.wordWeight,
+                leftContextId: entry.lcid,
+                rightContextId: entry.rcid,
               ),
-            )
-            .toList(growable: false),
+            ),
+        ],
         learning: data.learning,
         learningEnabled: data.settings['memory_learining_styple_setting'] != 2,
         halfWidthKanaCandidate: data.settings['half_kana_candidate'] == true,

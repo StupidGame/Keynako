@@ -61,8 +61,10 @@ internal class AzooKeyDictionary(
     private val connectionLines = mutableMapOf<Int, ConnectionLine>()
     private data class ConversionCacheKey(
         val reading: String,
+        val limit: Int,
         val additionalDictionaryVersion: String,
     )
+    private var cachedAdditionalEntries: List<Entry> = emptyList()
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, List<String>>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, List<String>>): Boolean =
@@ -88,8 +90,14 @@ internal class AzooKeyDictionary(
                 score = it.wordWeight.toFloat(),
             )
         }
-        val cacheKey = ConversionCacheKey(katakana, additionalDictionaryVersion)
-        val conversions = conversionCache[cacheKey] ?: convert(
+        // Callers may update entries without supplying a version. Never reuse
+        // a result from a different dynamic dictionary or candidate limit.
+        if (cachedAdditionalEntries != dynamicEntries) {
+            conversionCache.clear()
+            cachedAdditionalEntries = dynamicEntries
+        }
+        val cacheKey = ConversionCacheKey(katakana, conversionLimit, additionalDictionaryVersion)
+        val conversions = if (conversionLimit <= 0) emptyList() else conversionCache[cacheKey] ?: convert(
             katakana,
             conversionLimit,
             dynamicEntries,
@@ -155,7 +163,9 @@ internal class AzooKeyDictionary(
         }
 
         val result = LinkedHashSet<String>()
-        for (path in beams.last().sortedByDescending(Path::score)) {
+        for (path in beams.last().sortedByDescending {
+            it.score + connectionScore(it.lastRcid, EOS_CID)
+        }) {
             if (path.text.isNotBlank()) result.add(path.text)
             if (result.size >= limit) break
         }
@@ -201,7 +211,13 @@ internal class AzooKeyDictionary(
         return entries
             .asSequence()
             .filter { it.ruby.length > reading.length }
-            .sortedByDescending(Entry::score)
+            .sortedByDescending {
+                // Prefixes can still grow into a phrase. Boundary scores help
+                // reject unfinished inflections without drowning word frequency.
+                it.score + 0.5f * (connectionScore(BOS_CID, it.lcid) +
+                    connectionScore(it.rcid, EOS_CID)) -
+                    (it.ruby.length - reading.length) * 0.5f
+            }
             .map(Entry::word)
             .filter(String::isNotBlank)
             .distinct()
@@ -395,6 +411,7 @@ internal class AzooKeyDictionary(
     companion object {
         private const val ROOT_NODE = 1
         private const val BOS_CID = 0
+        private const val EOS_CID = 1316
         private const val GENERAL_NOUN_CID = 1285
         private const val CID_COUNT = 1319
         private const val SHARD_SHIFT = 11

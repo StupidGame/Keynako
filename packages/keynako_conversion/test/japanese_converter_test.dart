@@ -120,6 +120,115 @@ void main() {
     );
   });
 
+  test('keeps complete matches ahead of longer, high importance words', () {
+    for (final live in [true, false]) {
+      final texts = converter
+          .candidates(
+            input: 'あい',
+            options: ConversionOptions(
+              liveConversion: live,
+              userDictionary: const [
+                ConversionDictionaryEntry(
+                  reading: 'あいさつ',
+                  value: '挨拶',
+                  importance: 5,
+                ),
+              ],
+            ),
+          )
+          .map((value) => value.text)
+          .toList();
+      expect(texts.indexOf('藍'), lessThan(texts.indexOf('挨拶')));
+      expect(texts.indexOf('相'), lessThan(texts.indexOf('挨拶')));
+    }
+  });
+
+  test('ranks equally weighted predictions by remaining reading length', () {
+    final texts = converter
+        .candidates(
+          input: 'てす',
+          options: const ConversionOptions(
+            userDictionary: [
+              ConversionDictionaryEntry(reading: 'テストケース', value: 'テストケース'),
+              ConversionDictionaryEntry(reading: 'テスト', value: 'テスト'),
+            ],
+          ),
+        )
+        .map((value) => value.text)
+        .toList();
+    expect(texts.indexOf('テスト'), lessThan(texts.indexOf('テストケース')));
+    expect(texts.first, 'てす');
+  });
+
+  test('recalls learned words and predicts them from a shorter reading', () {
+    const options = ConversionOptions(learning: {'キーナコ\tKeynako': 4});
+    expect(
+      converter.candidates(input: 'きーなこ', options: options).first.text,
+      'Keynako',
+    );
+    final partial = converter.candidates(
+      input: 'きー',
+      predictionLimit: 1,
+      options: options,
+    );
+    expect(partial.first.text, 'きー');
+    expect(partial[2].text, 'Keynako');
+    expect(
+      converter
+          .candidates(input: 'きー', predictionLimit: 0, options: options)
+          .map((value) => value.text),
+      isNot(contains('Keynako')),
+    );
+  });
+
+  test('does not recall disabled, invalid or unrelated learning', () {
+    const learning = {'きーなこ\tKeynako': 4, 'きーなこ\t': 99, 'missing separator': 9};
+    for (final input in ['きーなこ', 'きー']) {
+      final texts = converter
+          .candidates(
+            input: input,
+            options: const ConversionOptions(
+              learning: learning,
+              learningEnabled: false,
+            ),
+          )
+          .map((value) => value.text);
+      expect(texts, isNot(contains('Keynako')));
+      expect(texts, isNot(contains('')));
+    }
+    expect(
+      converter
+          .candidates(
+            input: 'ほか',
+            options: const ConversionOptions(learning: learning),
+          )
+          .map((value) => value.text),
+      isNot(contains('Keynako')),
+    );
+  });
+
+  test(
+    'ranks and deduplicates learned predictions before applying the limit',
+    () {
+      final predictions = converter
+          .candidates(
+            input: 'てす',
+            predictionLimit: 1,
+            options: const ConversionOptions(
+              userDictionary: [
+                ConversionDictionaryEntry(reading: 'てすと', value: 'テスト'),
+                ConversionDictionaryEntry(reading: 'てすと', value: 'テスト'),
+                ConversionDictionaryEntry(reading: 'てすとけーす', value: 'テストケース'),
+              ],
+              learning: {'てすとけーす\tテストケース': 5},
+            ),
+          )
+          .where((value) => value.source.endsWith('prediction'))
+          .toList();
+      expect(predictions.map((value) => value.text), ['テストケース']);
+    },
+  );
+
   test('applies learning while preserving pinned kana order', () {
     final values = converter.candidates(
       input: 'にほんご',

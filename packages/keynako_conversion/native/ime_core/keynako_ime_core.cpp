@@ -48,7 +48,7 @@ const std::unordered_map<std::string, std::vector<std::string>> kDictionary = {
     {"よろしく", {"よろしく", "宜しく"}}, {"わたし", {"私"}},
 };
 
-std::string hiragana_to_katakana(const std::string &value) {
+std::string convert_kana(const std::string &value, bool katakana) {
     std::string result;
     for (std::size_t i = 0; i < value.size();) {
         const unsigned char first = static_cast<unsigned char>(value[i]);
@@ -57,7 +57,8 @@ std::string hiragana_to_katakana(const std::string &value) {
             int code = ((first & 0x0f) << 12) |
                        ((static_cast<unsigned char>(value[i + 1]) & 0x3f) << 6) |
                        (static_cast<unsigned char>(value[i + 2]) & 0x3f);
-            if (code >= 0x3041 && code <= 0x3096) code += 0x60;
+            if (katakana && code >= 0x3041 && code <= 0x3096) code += 0x60;
+            if (!katakana && code >= 0x30a1 && code <= 0x30f6) code -= 0x60;
             result.push_back(static_cast<char>(0xe0 | ((code >> 12) & 0x0f)));
             result.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3f)));
             result.push_back(static_cast<char>(0x80 | (code & 0x3f)));
@@ -67,6 +68,10 @@ std::string hiragana_to_katakana(const std::string &value) {
         result.push_back(value[i++]);
     }
     return result;
+}
+
+std::string hiragana_to_katakana(const std::string &value) {
+    return convert_kana(value, true);
 }
 
 void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> &seen,
@@ -322,6 +327,50 @@ void ImeSession::backspace_word() {
     rebuild_candidates();
 }
 void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; }
+
+std::string ImeSession::learning_key() const {
+    if (mode_ == InputMode::japanese) return reading_;
+    auto normalized = raw_input_;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    return "english:" + normalized;
+}
+
+void ImeSession::learn_selected() {
+    if (mode_ != InputMode::japanese || raw_input_.empty() || candidates_.empty()) return;
+    const auto key = learning_key();
+    const auto text = selected_text();
+    if (text.empty()) return;
+    auto &scores = learning_[key];
+    if (converting_ || selected_index_ != 0) {
+        int highest = 0;
+        for (auto &[word, score] : scores) {
+            if (word != text) score /= 2;
+            highest = std::max(highest, score);
+        }
+        scores[text] = std::min(32, highest + 4);
+    } else {
+        scores[text] = std::min(32, scores[text] + 1);
+    }
+    learning_order_.erase(std::remove(learning_order_.begin(), learning_order_.end(), key), learning_order_.end());
+    learning_order_.push_back(key);
+    if (learning_order_.size() > 4096) {
+        learning_.erase(learning_order_.front());
+        learning_order_.pop_front();
+    }
+}
+
+void ImeSession::prioritize_learning() {
+    const auto found = learning_.find(learning_key());
+    if (found == learning_.end()) return;
+    const auto score = [&](const Candidate &candidate) {
+        const auto entry = found->second.find(candidate.text);
+        return entry == found->second.end() ? 0 : entry->second;
+    };
+    std::stable_sort(candidates_.begin(), candidates_.end(), [&](const auto &left, const auto &right) {
+        return score(left) > score(right);
+    });
+}
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
     converting_ = true;
@@ -343,8 +392,8 @@ bool ImeSession::select_candidate(std::size_t index) {
 }
 bool ImeSession::select_reading() {
     if (raw_input_.empty()) return false;
-    const auto found = std::find_if(candidates_.begin(), candidates_.end(), [](const Candidate &candidate) {
-        return candidate.source == "reading" || candidate.source == "english";
+    const auto found = std::find_if(candidates_.begin(), candidates_.end(), [this](const Candidate &candidate) {
+        return candidate.text == reading_;
     });
     if (found == candidates_.end()) return false;
     converting_ = true;
@@ -352,9 +401,11 @@ bool ImeSession::select_reading() {
     return true;
 }
 void ImeSession::set_user_dictionary(std::vector<DictionaryEntry> entries) {
+    for (auto &entry : entries) entry.reading = convert_kana(entry.reading, false);
     std::stable_sort(entries.begin(), entries.end(), [](const DictionaryEntry &left, const DictionaryEntry &right) {
-        if (left.reading != right.reading) return left.reading < right.reading;
-        return left.importance > right.importance;
+        if (left.importance != right.importance) return left.importance > right.importance;
+        if (left.reading.size() != right.reading.size()) return left.reading.size() < right.reading.size();
+        return left.reading < right.reading;
     });
     user_dictionary_ = std::move(entries);
     if (!raw_input_.empty()) rebuild_candidates();
@@ -378,11 +429,19 @@ void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ =
 
 void ImeSession::insert_zenzai_candidate(std::string value) {
     if (value.empty()) return;
+    const bool preserve_selection = converting_ || selected_index_ != 0;
+    const auto selected = selected_text();
     candidates_.erase(std::remove_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
         return candidate.text == value;
     }), candidates_.end());
     candidates_.insert(candidates_.begin(), {std::move(value), "zenzai"});
+    prioritize_learning();
     selected_index_ = 0;
+    if (preserve_selection) {
+        const auto found = std::find_if(candidates_.begin(), candidates_.end(),
+            [&](const auto &candidate) { return candidate.text == selected; });
+        if (found != candidates_.end()) selected_index_ = static_cast<std::size_t>(found - candidates_.begin());
+    }
 }
 
 std::string ImeSession::roman_to_hiragana(const std::string &input) {
@@ -456,9 +515,35 @@ void ImeSession::rebuild_candidates() {
         append_unique(candidates_, seen, std::move(text), source);
     };
     const auto append_prediction = [&](std::string text, const char *source) {
+        if (conversion_reading.empty()) return;
         text += literal_suffix;
         append_unique(prefix_predictions, prediction_seen, std::move(text), source);
     };
+
+    struct LearnedPrediction {
+        std::string text;
+        int score;
+        std::size_t remaining;
+    };
+    std::vector<LearnedPrediction> learned_predictions;
+    for (const auto &[ruby, scores] : learning_) {
+        if (ruby.rfind("english:", 0) == 0 || conversion_reading.empty()) continue;
+        if (ruby == reading_) {
+            for (const auto &[word, score] : scores) {
+                if (score > 0) append_unique(candidates_, seen, word, "learned");
+            }
+        } else if (ruby.size() > reading_.size() && ruby.rfind(reading_, 0) == 0) {
+            for (const auto &[word, score] : scores) {
+                if (score > 0) learned_predictions.push_back({word, score, ruby.size() - reading_.size()});
+            }
+        }
+    }
+    std::stable_sort(learned_predictions.begin(), learned_predictions.end(), [](const auto &left, const auto &right) {
+        return left.score == right.score ? left.remaining < right.remaining : left.score > right.score;
+    });
+    for (const auto &entry : learned_predictions) {
+        append_unique(prefix_predictions, prediction_seen, entry.text, "learned-prediction");
+    }
 
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == conversion_reading) {
@@ -490,7 +575,16 @@ void ImeSession::rebuild_candidates() {
             append_converted(value, "dictionary");
         }
     }
-    for (const auto &entry : kDictionary) {
+    static const auto fallback_predictions = [] {
+        std::vector<std::pair<std::string, std::vector<std::string>>> entries(
+            kDictionary.begin(), kDictionary.end());
+        std::sort(entries.begin(), entries.end(), [](const auto &left, const auto &right) {
+            if (left.first.size() != right.first.size()) return left.first.size() < right.first.size();
+            return left.first < right.first;
+        });
+        return entries;
+    }();
+    for (const auto &entry : fallback_predictions) {
         if (entry.first.size() <= conversion_reading.size() ||
             entry.first.rfind(conversion_reading, 0) != 0) {
             continue;
@@ -499,17 +593,20 @@ void ImeSession::rebuild_candidates() {
             append_prediction(value, "dictionary-prediction");
         }
     }
+    const auto conversion_count = candidates_.size();
     append_unique(candidates_, seen, reading_, "reading");
     append_converted(hiragana_to_katakana(conversion_reading), "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
-    auto insertion = candidates_.begin() +
-        static_cast<std::ptrdiff_t>(std::min<std::size_t>(2, candidates_.size()));
+    const auto insertion_index = std::min(candidates_.size(),
+        std::max<std::size_t>(2, std::min<std::size_t>(3, conversion_count)));
+    auto insertion = candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index);
     std::size_t inserted = 0;
     for (auto &prediction : prefix_predictions) {
         if (!seen.insert(prediction.text).second) continue;
         insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
         if (++inserted >= 32) break;
     }
+    prioritize_learning();
 }
 
 }  // namespace keynako

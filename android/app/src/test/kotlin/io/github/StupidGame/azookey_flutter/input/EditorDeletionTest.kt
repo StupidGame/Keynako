@@ -45,6 +45,43 @@ class EditorDeletionTest {
         assertEquals(2, events.size)
     }
 
+    @Test
+    fun selectedRangeIsRemovedBeforeSurroundingTextOrKeyEvents() {
+        val commits = mutableListOf<String>()
+        val deletions = mutableListOf<Pair<Int, Int>>()
+        val events = mutableListOf<KeyEvent>()
+        val connection = Proxy.newProxyInstance(
+            InputConnection::class.java.classLoader,
+            arrayOf(InputConnection::class.java),
+        ) { _, method, arguments ->
+            when (method.name) {
+                "getSelectedText" -> "選択した範囲"
+                "commitText" -> {
+                    commits += arguments[0].toString()
+                    true
+                }
+                "deleteSurroundingText" -> {
+                    deletions += (arguments[0] as Int) to (arguments[1] as Int)
+                    true
+                }
+                "sendKeyEvent" -> {
+                    events += arguments[0] as KeyEvent
+                    true
+                }
+                else -> when (method.returnType) {
+                    Boolean::class.javaPrimitiveType -> false
+                    Int::class.javaPrimitiveType -> 0
+                    else -> null
+                }
+            }
+        } as InputConnection
+
+        assertTrue(deleteEditorText(connection, 1, 0, preferKeyEvents = true))
+        assertEquals(listOf(""), commits)
+        assertTrue(deletions.isEmpty())
+        assertTrue(events.isEmpty())
+    }
+
     private fun inputConnection(
         surroundingDeleteResult: Boolean,
         deletions: MutableList<Pair<Int, Int>>,
