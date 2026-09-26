@@ -6,8 +6,12 @@ final class KeyboardViewController: UIInputViewController {
     private let rootStack = UIStackView()
     private let candidateScroll = UIScrollView()
     private let candidateStack = UIStackView()
+    private let candidateExpandButton = UIButton(type: .system)
+    private let candidatePanelScroll = UIScrollView()
+    private let candidateGrid = UIStackView()
     private let keyboardStack = UIStackView()
     private var heightConstraint: NSLayoutConstraint?
+    private var candidatePanelHeightConstraint: NSLayoutConstraint?
 
     private var state: [String: Any] = [:]
     private var settings: [String: Any] = [:]
@@ -16,6 +20,7 @@ final class KeyboardViewController: UIInputViewController {
     private var rawRoman = ""
     private var lastDisplayed = ""
     private var candidates: [String] = []
+    private var candidateExpanded = false
     private var selectedCandidateText: String?
     private var mode = "japanese"
     private var layout = "flick"
@@ -106,7 +111,36 @@ final class KeyboardViewController: UIInputViewController {
             candidateStack.heightAnchor.constraint(equalTo: candidateScroll.frameLayoutGuide.heightAnchor),
             candidateScroll.heightAnchor.constraint(equalToConstant: 42),
         ])
-        rootStack.addArrangedSubview(candidateScroll)
+        let candidateHeader = UIStackView(arrangedSubviews: [candidateScroll, candidateExpandButton])
+        candidateHeader.axis = .horizontal
+        candidateHeader.spacing = 2
+        candidateExpandButton.setTitle("⌄", for: .normal)
+        candidateExpandButton.setTitleColor(palette.text, for: .normal)
+        candidateExpandButton.backgroundColor = palette.key
+        candidateExpandButton.layer.cornerRadius = 6
+        candidateExpandButton.accessibilityLabel = "候補をさらに表示"
+        candidateExpandButton.addTarget(self, action: #selector(toggleCandidatePanel), for: .touchUpInside)
+        let expandWidth = candidateExpandButton.widthAnchor.constraint(equalToConstant: 42)
+        expandWidth.priority = .defaultHigh
+        expandWidth.isActive = true
+        candidateExpandButton.isHidden = true
+        rootStack.addArrangedSubview(candidateHeader)
+
+        candidateGrid.axis = .vertical
+        candidateGrid.spacing = 2
+        candidateGrid.translatesAutoresizingMaskIntoConstraints = false
+        candidatePanelScroll.addSubview(candidateGrid)
+        candidatePanelHeightConstraint = candidatePanelScroll.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            candidateGrid.leadingAnchor.constraint(equalTo: candidatePanelScroll.contentLayoutGuide.leadingAnchor),
+            candidateGrid.trailingAnchor.constraint(equalTo: candidatePanelScroll.contentLayoutGuide.trailingAnchor),
+            candidateGrid.topAnchor.constraint(equalTo: candidatePanelScroll.contentLayoutGuide.topAnchor),
+            candidateGrid.bottomAnchor.constraint(equalTo: candidatePanelScroll.contentLayoutGuide.bottomAnchor),
+            candidateGrid.widthAnchor.constraint(equalTo: candidatePanelScroll.frameLayoutGuide.widthAnchor),
+            candidatePanelHeightConstraint!,
+        ])
+        rootStack.addArrangedSubview(candidatePanelScroll)
+        candidatePanelScroll.isHidden = true
 
         keyboardStack.axis = .vertical
         keyboardStack.distribution = .fillEqually
@@ -921,14 +955,20 @@ final class KeyboardViewController: UIInputViewController {
     private func renderCandidates(showTabs: Bool? = nil) {
         candidateStack.removeAllArrangedSubviews()
         if showTabs == true {
+            setCandidateExpanded(false)
+            candidateExpandButton.isHidden = true
             cursorBarVisible = false
             cursorBarView = nil
         }
         if cursorBarVisible {
+            setCandidateExpanded(false)
+            candidateExpandButton.isHidden = true
             renderCursorBar()
             return
         }
         if showTabs ?? composing.isEmpty && rawRoman.isEmpty {
+            setCandidateExpanded(false)
+            candidateExpandButton.isHidden = true
             if boolSetting("display_tab_bar_button", fallback: true) {
                 renderTabBar()
             }
@@ -941,11 +981,55 @@ final class KeyboardViewController: UIInputViewController {
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
             candidateStack.addArrangedSubview(button)
         }
+        candidateExpandButton.isHidden = candidates.count <= 3
+        candidateExpandButton.backgroundColor = palette.key
+        candidateExpandButton.setTitleColor(palette.text, for: .normal)
+        if candidates.count <= 3 { setCandidateExpanded(false) }
+        if candidateExpanded { renderCandidateGrid() }
+    }
+
+    @objc private func toggleCandidatePanel() {
+        setCandidateExpanded(!candidateExpanded)
+        if candidateExpanded { renderCandidateGrid() }
+    }
+
+    private func setCandidateExpanded(_ expanded: Bool) {
+        candidateExpanded = expanded
+        candidatePanelScroll.isHidden = !expanded
+        candidatePanelHeightConstraint?.constant = expanded ? 176 : 0
+        heightConstraint?.constant = expanded ? 434 : 258
+        candidateExpandButton.setTitle(expanded ? "⌃" : "⌄", for: .normal)
+        candidateExpandButton.accessibilityLabel = expanded ? "候補を閉じる" : "候補をさらに表示"
+    }
+
+    private func renderCandidateGrid() {
+        candidateGrid.removeAllArrangedSubviews()
+        for start in stride(from: 0, to: candidates.count, by: 3) {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.distribution = .fillEqually
+            row.spacing = 2
+            row.heightAnchor.constraint(equalToConstant: 42).isActive = true
+            for index in start ..< min(start + 3, candidates.count) {
+                let candidate = candidates[index]
+                let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
+                button.longPressAction = { [weak self] in
+                    self?.setCandidateExpanded(false)
+                    self?.showLegacyReportPrompt(candidate, index: index)
+                }
+                button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
+                row.addArrangedSubview(button)
+            }
+            for _ in row.arrangedSubviews.count ..< 3 { row.addArrangedSubview(UIView()) }
+            candidateGrid.addArrangedSubview(row)
+        }
     }
 
     private func toggleCursorBar() {
         cursorBarVisible.toggle()
         if cursorBarVisible {
+            setCandidateExpanded(false)
+            candidateExpandButton.isHidden = true
             renderCursorBar()
             if boolSetting("display_cursor_bar_automatically", fallback: false) {
                 cursorBarView?.scheduleAutoDismiss { [weak self] in
@@ -1155,6 +1239,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func delete() {
+        if deleteSelectedText() { return }
         if layout == "qwerty", !rawRoman.isEmpty {
             rawRoman.removeLast()
             composing = romanToHiragana(rawRoman)
@@ -1174,9 +1259,20 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private func deleteSelectedText() -> Bool {
+        guard let selected = textDocumentProxy.selectedText, !selected.isEmpty else { return false }
+        textDocumentProxy.insertText("")
+        pendingQuickWordDelete = nil
+        resetComposition()
+        renderCandidates()
+        refreshCursorBar()
+        return true
+    }
+
     /// The first press remains immediate. A second quick press completes the
     /// one word that was under the cursor before that first character moved.
     private func quickDelete() {
+        if deleteSelectedText() { return }
         let now = CACurrentMediaTime()
         if let pending = pendingQuickWordDelete, now <= pending.deadline {
             let applied: Bool
@@ -1250,6 +1346,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func deleteForward() {
+        if deleteSelectedText() { return }
         guard composing.isEmpty, rawRoman.isEmpty,
               !(textDocumentProxy.documentContextAfterInput ?? "").isEmpty else { return }
         textDocumentProxy.adjustTextPosition(byCharacterOffset: 1)
@@ -1361,6 +1458,7 @@ final class KeyboardViewController: UIInputViewController {
         case "directInput": directCommit(value, normalizePunctuation: false)
         case "direct_input": directCommit(action["text"] as? String ?? "", normalizePunctuation: false)
         case "delete":
+            if deleteSelectedText() { return }
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
             let boundedCount = min(100, max(-100, count))
             if allowQuickWordDelete, boundedCount == 1 {
@@ -1815,6 +1913,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDeleteDefault() {
+        if deleteSelectedText() { return }
         if !composing.isEmpty || !rawRoman.isEmpty {
             let count = backwardWordDeleteCount(in: composing)
             let remaining = String(composing.dropLast(min(count, composing.count)))
@@ -1854,6 +1953,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDelete(_ action: [String: Any]) {
+        if deleteSelectedText() { return }
         let backward = action["direction"] as? String == "backward"
         if backward {
             // Custard smart-delete is the layout-level word-delete gesture.
@@ -2020,7 +2120,7 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
         let zenzai = zenzaiConfiguration()
-        result.append(contentsOf: conversionEngine?.candidates(
+        let engineCandidates = conversionEngine?.candidates(
             reading: composing,
             rawRoman: layout == "qwerty" ? rawRoman : nil,
             leftContext: textDocumentProxy.documentContextBeforeInput,
@@ -2032,7 +2132,8 @@ final class KeyboardViewController: UIInputViewController {
             halfWidthKanaCandidate: boolSetting("half_kana_candidate", fallback: true),
             unicodeCandidate: boolSetting("unicode_candidate", fallback: true),
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
-        ) ?? [])
+        ) ?? []
+        result.append(contentsOf: engineCandidates)
         if boolSetting("use_OS_user_dict", fallback: true) {
             for ruby in osLexicon.keys.sorted(by: {
                 $0.count == $1.count ? $0 < $1 : $0.count < $1.count
@@ -2089,13 +2190,18 @@ final class KeyboardViewController: UIInputViewController {
         }.map(\.element)
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
-        let liveCandidate = boolSetting("live_conversion", fallback: true) ? result.first : nil
-        var prioritized: [String] = []
-        if let liveCandidate,
-           liveCandidate != hiragana,
-           liveCandidate != fullKatakana {
-            prioritized.append(liveCandidate)
+        let learnedTexts = exactLearning.map(\.text)
+        let engineCandidate: String?
+        if zenzai != nil {
+            engineCandidate = engineCandidates.first {
+                !learnedTexts.contains($0) && $0 != hiragana && $0 != fullKatakana
+            }
+        } else {
+            engineCandidate = nil
         }
+        var prioritized: [String] = []
+        prioritized.append(contentsOf: learnedTexts)
+        if let engineCandidate { prioritized.append(engineCandidate) }
         prioritized.append(contentsOf: [hiragana, fullKatakana])
         prioritized.append(contentsOf: result)
         var seen = Set<String>()
@@ -2239,6 +2345,8 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func showLegacyReportPrompt(_ candidate: String, index: Int) {
+        setCandidateExpanded(false)
+        candidateExpandButton.isHidden = true
         let ruby = composing
         candidateStack.removeAllArrangedSubviews()
         candidateStack.addArrangedSubview(makeCandidateButton("「\(candidate)」を誤変換として報告", action: {}))

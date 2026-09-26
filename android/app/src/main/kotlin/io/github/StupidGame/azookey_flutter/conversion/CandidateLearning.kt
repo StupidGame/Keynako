@@ -73,3 +73,10 @@ internal fun prioritizeLearnedJapaneseCandidates(
     }
     return candidates.sortedByDescending { scores[it] ?: 0 }
 }
+
+internal fun exactLearnedJapaneseCandidates(reading: String, learning: Map<String, Int>): List<String> =
+    learnedCandidates(learning)
+        .filter { it.reading == katakanaToHiragana(reading) }
+        .sortedByDescending { it.score }
+        .map { it.text }
+        .distinct()
