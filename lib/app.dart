@@ -19,6 +19,8 @@ class AzooKeyApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         locale: const Locale('ja', 'JP'),
         supportedLocales: const [Locale('ja', 'JP')],
+        // Keep localization compatible with Flutter SDKs before material_ui.
+        // ignore: deprecated_member_use
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
         themeMode: ThemeMode.system,
         theme: _theme(Brightness.light),
