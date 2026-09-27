@@ -27,10 +27,12 @@ class AzooKeyDictionaryTest {
         val dictionary = syntheticDictionary()
         val entries = listOf(entry("弱い終端", "てすと", 100), entry("強い終端", "てすと", 200))
         assertEquals("強い終端", dictionary.candidates("てすと", 0, additionalEntries = entries).conversions.first())
-        val predictions = dictionary.candidates("てす", 2, additionalEntries = listOf(
+        val result = dictionary.candidates("てす", 2, additionalEntries = listOf(
             entry("長い補完", "てすとけーす", 200), entry("短い補完", "てすと", 200),
-        )).predictions
-        assertEquals(listOf("短い補完", "長い補完"), predictions)
+        ))
+        assertEquals(listOf("短い補完", "長い補完"), result.predictions)
+        assertEquals("てすと", result.predictionReadings["短い補完"])
+        assertEquals("てすとけーす", result.predictionReadings["長い補完"])
     }
 
     @Test

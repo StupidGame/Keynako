@@ -311,13 +311,12 @@ class DesktopInputController extends ChangeNotifier {
 
   void commitSelected({int? replaceStart, int? replaceEnd}) {
     if (_rawInput.isEmpty) return;
-    final candidate = _candidates.isEmpty
-        ? composingText
-        : _candidates[_selectedIndex].text;
+    final selected = _candidates.isEmpty ? null : _candidates[_selectedIndex];
+    final candidate = selected?.text ?? composingText;
     if (candidate.isEmpty) return;
     CandidateLearning.record(
       _learning,
-      reading: composingText,
+      reading: selected?.reading ?? composingText,
       text: candidate,
       english: _mode == InputMode.english,
       explicitSelection: _converting,

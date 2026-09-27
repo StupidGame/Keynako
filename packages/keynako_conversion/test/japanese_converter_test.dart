@@ -109,6 +109,21 @@ void main() {
     expect(candidates[2].text, '日本語入力');
     expect(candidates.map((candidate) => candidate.text), contains('日本'));
     expect(candidates[2].source, 'user-prediction');
+    expect(candidates[2].reading, 'にほんご');
+  });
+
+  test('prediction candidates retain their complete readings', () {
+    final values = converter.candidates(
+      input: 'にほ',
+      options: const ConversionOptions(learning: {'にほんご\t日本語入力': 4}),
+    );
+    expect(
+      values
+          .firstWhere((value) => value.source == 'learned-prediction')
+          .reading,
+      'にほんご',
+    );
+    expect(values.firstWhere((value) => value.text == '日本').reading, 'にほん');
   });
 
   test('can disable Japanese prefix predictions', () {

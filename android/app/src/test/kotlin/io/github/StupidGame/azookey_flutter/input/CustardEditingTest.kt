@@ -62,9 +62,21 @@ class CustardEditingTest {
     }
 
     @Test
+    fun kanaInsideAWordIsNotTreatedAsAParticle() {
+        assertEquals("きもの".length, backwardWordDeleteCount("きもの"))
+        assertEquals("たまのこし".length, backwardWordDeleteCount("たまのこし"))
+    }
+
+    @Test
     fun wordDeleteUsesTheLastScriptRunAndAuxiliary() {
         assertEquals("ます".length, backwardWordDeleteCount("入力します"))
         assertEquals("OpenAI".length, backwardWordDeleteCount("日本語OpenAI"))
+    }
+
+    @Test
+    fun singleDeleteKeepsSupplementaryCharactersIntact() {
+        assertEquals(2, backwardCharacterDeleteCount("文字🙂"))
+        assertEquals("文字", "文字🙂".dropLast(backwardCharacterDeleteCount("文字🙂")))
     }
 
     @Test

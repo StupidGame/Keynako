@@ -100,6 +100,15 @@ internal fun backwardWordDeleteCount(
     return text.length - previous
 }
 
+/** UTF-16 units in the final user-visible character; never split a surrogate pair. */
+internal fun backwardCharacterDeleteCount(text: String): Int {
+    if (text.isEmpty()) return 0
+    val boundary = BreakIterator.getCharacterInstance(Locale.ROOT).apply {
+        setText(text)
+    }.preceding(text.length)
+    return text.length - (if (boundary == BreakIterator.DONE) 0 else boundary)
+}
+
 private enum class JapaneseCharacterClass {
     HIRAGANA,
     KATAKANA,
@@ -108,11 +117,6 @@ private enum class JapaneseCharacterClass {
     DIGIT,
     OTHER,
 }
-
-private val japaneseParticles = listOf(
-    "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
-    "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
-)
 
 private val japaneseAuxiliaries = listOf(
     "ませんでした", "ましょう", "ました", "ません", "ます",
@@ -155,18 +159,12 @@ private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
 
     japaneseAuxiliaries.firstOrNull { segment.length > it.length && segment.endsWith(it) }
         ?.let { return end - it.length }
-    japaneseParticles.firstOrNull { segment.length > it.length && segment.endsWith(it) }
-        ?.let { return end - it.length }
-
-    for (particle in japaneseParticles) {
-        val index = segment.lastIndexOf(particle)
-        val boundary = index + particle.length
-        // Require a lexical-looking span on both sides. Particle priority is
-        // intentional: an unambiguous を must win over a later に that begins
-        // a word such as にゅうりょく.
-        if (index >= 2 && segment.length - boundary >= 2) {
-            return start + boundary
-        }
+    // In an all-kana run, は/の/に and similar syllables can also be part of a
+    // word (きもの, たまのこし). を is a much safer boundary without a tokenizer.
+    if (segment.length > 1 && segment.endsWith("を")) return end - 1
+    val objectMarker = segment.lastIndexOf("を")
+    if (objectMarker >= 2 && segment.length - objectMarker - 1 >= 2) {
+        return start + objectMarker + 1
     }
     return start
 }

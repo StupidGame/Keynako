@@ -46,6 +46,31 @@ class EditorDeletionTest {
     }
 
     @Test
+    fun aSupplementaryCharacterUsesOneFallbackKeyEvent() {
+        val events = mutableListOf<KeyEvent>()
+        val connection = Proxy.newProxyInstance(
+            InputConnection::class.java.classLoader,
+            arrayOf(InputConnection::class.java),
+        ) { _, method, arguments ->
+            when (method.name) {
+                "getTextBeforeCursor" -> "🙂"
+                "sendKeyEvent" -> {
+                    events += arguments[0] as KeyEvent
+                    true
+                }
+                else -> when (method.returnType) {
+                    Boolean::class.javaPrimitiveType -> false
+                    Int::class.javaPrimitiveType -> 0
+                    else -> null
+                }
+            }
+        } as InputConnection
+
+        assertTrue(deleteEditorText(connection, 2, 0, preferKeyEvents = true))
+        assertEquals(2, events.size)
+    }
+
+    @Test
     fun selectedRangeIsRemovedBeforeSurroundingTextOrKeyEvents() {
         val commits = mutableListOf<String>()
         val deletions = mutableListOf<Pair<Int, Int>>()

@@ -36,8 +36,20 @@ private fun sendDeleteKeyEvents(
     beforeCursor: Int,
     afterCursor: Int,
 ): Boolean {
+    // InputConnection counts UTF-16 units, while a DEL key event removes a
+    // character. Count code points only when the key-event path is needed.
+    val beforeText = if (beforeCursor > 0) {
+        runCatching { connection.getTextBeforeCursor(beforeCursor, 0)?.toString() }.getOrNull()
+    } else null
+    val afterText = if (afterCursor > 0) {
+        runCatching { connection.getTextAfterCursor(afterCursor, 0)?.toString() }.getOrNull()
+    } else null
+    val beforeEvents = beforeText?.takeIf { it.length == beforeCursor }
+        ?.let { it.codePointCount(0, it.length) } ?: beforeCursor
+    val afterEvents = afterText?.takeIf { it.length == afterCursor }
+        ?.let { it.codePointCount(0, it.length) } ?: afterCursor
     var accepted = false
-    for (keyCode in deleteKeyCodes(beforeCursor, afterCursor)) {
+    for (keyCode in deleteKeyCodes(beforeEvents, afterEvents)) {
         val down = connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
         val up = connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
         accepted = accepted || down || up

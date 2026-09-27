@@ -34,6 +34,7 @@ public final class AzooKeyConversionEngine {
     private let sharedContainerURL: URL
     private let memoryDirectoryURL: URL
     private var lastCandidates: [String: Candidate] = [:]
+    public private(set) var predictionTexts = Set<String>()
     private var hotfixDictionaryVersion: String?
 
     public init(sharedContainerURL: URL) {
@@ -66,6 +67,7 @@ public final class AzooKeyConversionEngine {
         })
         hotfixDictionaryVersion = version
         lastCandidates = [:]
+        predictionTexts = []
     }
 
     public func candidates(
@@ -83,6 +85,7 @@ public final class AzooKeyConversionEngine {
     ) -> [String] {
         guard !reading.isEmpty else {
             lastCandidates = [:]
+            predictionTexts = []
             return []
         }
 
@@ -143,6 +146,8 @@ public final class AzooKeyConversionEngine {
             metadata: .init(versionString: "Keynako \(appVersion)")
         )
         let result = converter.requestCandidates(composingText, options: options)
+        let mainTexts = Set(result.mainResults.map(\.text))
+        predictionTexts = Set(result.predictionResults.map(\.text)).subtracting(mainTexts)
         let values = result.mainResults + result.predictionResults
         lastCandidates = [:]
         var texts: [String] = []
@@ -161,16 +166,19 @@ public final class AzooKeyConversionEngine {
         }
         converter.stopComposition()
         lastCandidates = [:]
+        predictionTexts = []
     }
 
     public func stopComposition() {
         converter.stopComposition()
         lastCandidates = [:]
+        predictionTexts = []
     }
 
     public func resetLearning() {
         converter.resetMemory()
         lastCandidates = [:]
+        predictionTexts = []
     }
 
     private static func toKatakana(_ value: String) -> String {

@@ -88,6 +88,20 @@ class CandidatePredictionsTest {
         assertEquals(listOf("テスト", "テストケース"), prefixPredictionValues(
             "てす", listOf("テストケース" to listOf("テストケース"), "テスト" to listOf("テスト")), 2,
         ))
+        assertEquals("てすと", prefixPredictionEntries(
+            "てす", listOf("テスト" to listOf("テスト")), 1,
+        ).single().reading)
+    }
+
+    @Test
+    fun aNearbyUserCompletionCanOutrankAMuchLongerOne() {
+        assertEquals(
+            listOf("近い", "遠い"),
+            rankUserPrefixPredictions("てす", listOf(
+                ReadingPrediction("てすとけーすながいよそく", "遠い", 5),
+                ReadingPrediction("てすと", "近い", 4),
+            ), 2).map { it.text },
+        )
     }
 
     @Test

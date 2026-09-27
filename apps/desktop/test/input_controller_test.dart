@@ -256,6 +256,38 @@ void main() {
       controller.dispose();
     },
   );
+
+  test('learns and shares a prediction with its completed reading', () async {
+    final submitter = _FakeDictionarySubmitter();
+    final repository = _FakeSharedDictionaryRepository();
+    final controller = DesktopInputController(
+      sharedDictionaryRepository: repository,
+      sharedDictionarySubmitter: submitter,
+    );
+    await controller.importSharedDictionary();
+    controller.updateRawInput('ki-');
+    final index = controller.candidates.indexWhere(
+      (candidate) => candidate.text == 'Keynako共有',
+    );
+    expect(index, greaterThanOrEqualTo(0));
+    expect(controller.candidates[index].reading, 'きーなこ');
+    expect(await controller.shareCandidate(index), isTrue);
+    expect(submitter.ruby, 'きーなこ');
+
+    controller.selectCandidate(index);
+    controller.commitSelected();
+    repository.snapshot = const SharedDictionarySnapshot(
+      revision: 'empty',
+      version: '1.1',
+      lastUpdate: 'today',
+      entries: [],
+    );
+    await controller.importSharedDictionary();
+    controller.updateRawInput('ki-nako');
+    expect(controller.candidates.first.text, 'Keynako共有');
+    expect(controller.candidates.first.source, 'learned');
+    controller.dispose();
+  });
 }
 
 class _FakeZenzaiEngine implements ZenzaiEngine {
@@ -294,7 +326,7 @@ class _DelayedZenzaiEngine implements ZenzaiEngine {
 class _FakeSharedDictionaryRepository implements SharedDictionaryRepository {
   var refreshCount = 0;
 
-  static const snapshot = SharedDictionarySnapshot(
+  SharedDictionarySnapshot snapshot = const SharedDictionarySnapshot(
     revision: 'test',
     version: '1.1',
     lastUpdate: 'today',

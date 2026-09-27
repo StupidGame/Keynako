@@ -46,6 +46,7 @@ import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEn
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
+import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
@@ -55,8 +56,10 @@ import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandi
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
+import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
-import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionValues
+import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
+import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.rankJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prioritizeLearnedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
@@ -88,6 +91,7 @@ import io.github.StupidGame.azookey_flutter.input.requestedKeyboardMode
 import io.github.StupidGame.azookey_flutter.input.requestedKeyboardSelection
 import io.github.StupidGame.azookey_flutter.input.RequestedKeyboardMode
 import io.github.StupidGame.azookey_flutter.input.smartDeleteCount
+import io.github.StupidGame.azookey_flutter.input.backwardCharacterDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
 import io.github.StupidGame.azookey_flutter.input.shiftedInputLabel
@@ -127,6 +131,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
     private var candidates = mutableListOf<String>()
+    private var candidatePredictionReadings = emptyMap<String, String>()
     private var candidateExpanded = false
     private var pendingReport: WrongConversionReport? = null
     private var hotfixDictionaryEntries = emptyList<AzooKeyHotfixDictionaryEntry>()
@@ -2346,6 +2351,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun buildCandidates(): List<String> {
         val input = displayReading()
+        candidatePredictionReadings = emptyMap()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
@@ -2353,6 +2359,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
+        val predictionReadings = mutableMapOf<String, String>()
+        val userPredictions = mutableListOf<ReadingPrediction>()
         // Prefix predictions are independent from automatic commit strength.
         // A user who disables automatic commit must still see completions while
         // composing a word.
@@ -2370,7 +2378,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                 entry.optString("word")
             }
             if (ruby == reading) values.add(value)
-            else if (predictionLimit > 0 && ruby.startsWith(reading)) predictedValues.add(value)
+            else if (predictionLimit > 0 && ruby.startsWith(reading)) {
+                userPredictions.add(ReadingPrediction(ruby, value, entry.optInt("importance", 3)))
+            }
+        }
+        for (prediction in rankUserPrefixPredictions(reading, userPredictions, predictionLimit)) {
+            predictedValues.add(prediction.text)
+            predictionReadings.getOrPut(prediction.text) { prediction.reading }
         }
         val officialCandidates = runCatching {
             azooKeyDictionary.candidates(
@@ -2390,14 +2404,18 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         values.add(reading)
         if (predictionLimit > 0) {
-            predictedValues.addAll(
-                prefixPredictionValues(
-                    reading,
-                    systemDictionary.map { (ruby, predictions) -> ruby to predictions },
-                    predictionLimit,
-                ),
-            )
+            for (prediction in prefixPredictionEntries(
+                reading,
+                systemDictionary.map { (ruby, predictions) -> ruby to predictions },
+                predictionLimit,
+            )) {
+                predictedValues.add(prediction.text)
+                predictionReadings.getOrPut(prediction.text) { prediction.reading }
+            }
             predictedValues.addAll(officialCandidates.predictions)
+            for ((text, ruby) in officialCandidates.predictionReadings) {
+                predictionReadings.getOrPut(text) { ruby }
+            }
         }
         val katakana = hiraganaToKatakana(reading)
         if (katakana != reading) values.add(katakana)
@@ -2416,14 +2434,22 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("emoji_dictionary_enabled", true)) emojiDictionary[reading]?.let(values::addAll)
         if (settings.optBoolean("kaomoji_dictionary_enabled", false)) kaomojiDictionary[reading]?.let(values::addAll)
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
+        val learning = learningScores()
+        val learned = exactLearnedJapaneseCandidates(reading, learning)
+        val exactTexts = values.toSet() + learned
+        for (entry in learnedCandidates(learning)) {
+            if (entry.reading.length > reading.length && entry.reading.startsWith(reading) && entry.text !in exactTexts) {
+                predictionReadings.getOrPut(entry.text) { entry.reading }
+            }
+        }
+        candidatePredictionReadings = predictionReadings.filterKeys { it !in exactTexts }
         val ranked = rankJapaneseCandidates(
             reading = reading,
             conversions = values.toList(),
             predictions = predictedValues.toList(),
-            learning = learningScores(),
+            learning = learning,
             predictionLimit = predictionLimit,
         )
-        val learned = exactLearnedJapaneseCandidates(reading, learningScores())
         return pinJapaneseKanaCandidates(
             reading = reading,
             ranked = ranked,
@@ -2472,7 +2498,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             returnKeyType = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)?.toString() ?: "default",
         )
         if (currentInputConnection?.commitText(candidate, 1) != true) return
-        learnCandidate(displayReading(), candidate, explicitSelection = true)
+        learnSelectedCandidate(displayReading(), candidate, explicitSelection = true)
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
@@ -2601,6 +2627,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         persistState()
     }
 
+    private fun learnSelectedCandidate(reading: String, candidate: String, explicitSelection: Boolean) {
+        learnCandidate(candidatePredictionReadings[candidate] ?: reading, candidate, explicitSelection)
+    }
+
     private fun persistState() {
         getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .edit().putString(MainActivity.STATE_KEY, state.toString()).apply()
@@ -2613,7 +2643,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
         val text = compositionCommitText(reading, availableCandidates, useCandidate, selectedCandidate)
         if (currentInputConnection?.commitText(text, 1) != true) return
-        if (useCandidate) learnCandidate(reading, text, candidateSelectedExplicitly)
+        if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly)
         composing = ""
         rawRoman = ""
         selectedCandidate = 0
@@ -2670,13 +2700,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                 } else updateComposition()
             }
             composing.isNotEmpty() -> {
-                composing = composing.dropLast(1)
+                composing = composing.dropLast(backwardCharacterDeleteCount(composing))
                 if (composing.isEmpty()) {
                     clearComposition()
                 } else updateComposition()
             }
             else -> {
-                deleteFromEditor(1, 0)
+                val context = runCatching {
+                    currentInputConnection?.getTextBeforeCursor(16, 0)?.toString()
+                }.getOrNull().orEmpty()
+                deleteFromEditor(backwardCharacterDeleteCount(context).coerceAtLeast(1), 0)
                 cursorBarView?.post { cursorBarView?.refresh() }
             }
         }
@@ -2786,12 +2819,13 @@ class AzooKeyInputMethodService : InputMethodService() {
             return
         }
         val count = backwardWordDeleteCount(originalContext)
+        val firstDeleteCount = backwardCharacterDeleteCount(originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(
             deadlineMillis = now + QUICK_WORD_DELETE_INTERVAL_MILLIS,
             composition = false,
-            expectedContext = originalContext.dropLast(1),
-            remainingContextCount = (count - 1).coerceAtLeast(0),
+            expectedContext = originalContext.dropLast(firstDeleteCount),
+            remainingContextCount = (count - firstDeleteCount).coerceAtLeast(0),
         )
     }
 

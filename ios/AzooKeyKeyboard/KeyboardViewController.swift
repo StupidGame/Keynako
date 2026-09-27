@@ -20,6 +20,8 @@ final class KeyboardViewController: UIInputViewController {
     private var rawRoman = ""
     private var lastDisplayed = ""
     private var candidates: [String] = []
+    private var candidatePredictionReadings: [String: String] = [:]
+    private var unknownPredictionTexts = Set<String>()
     private var candidateExpanded = false
     private var selectedCandidateText: String?
     private var mode = "japanese"
@@ -1585,11 +1587,6 @@ final class KeyboardViewController: UIInputViewController {
         case hiragana, katakana, han, latin, digit, other
     }
 
-    private static let japaneseParticles = [
-        "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
-        "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
-    ]
-
     private static let japaneseAuxiliaries = [
         "ませんでした", "ましょう", "ました", "ません", "ます",
         "でした", "でしょう", "です", "だった", "だろう", "ない", "たい",
@@ -1632,22 +1629,18 @@ final class KeyboardViewController: UIInputViewController {
 
         if let suffix = Self.japaneseAuxiliaries.first(where: {
             segment.count > $0.count && segment.hasSuffix($0)
-        }) ?? Self.japaneseParticles.first(where: {
-            segment.count > $0.count && segment.hasSuffix($0)
         }) {
             return text.index(end, offsetBy: -suffix.count)
         }
-
-        for particle in Self.japaneseParticles {
-            guard let range = text.range(
-                of: particle,
-                options: .backwards,
-                range: start ..< end
-            ), text.distance(from: start, to: range.lowerBound) >= 2,
-              text.distance(from: range.upperBound, to: end) >= 2 else { continue }
-            // Particle priority is intentional: を must win over a later に
-            // that begins a word such as にゅうりょく.
-            return range.upperBound
+        // In an all-kana run, は/の/に may be part of the word itself.
+        // を is a safer boundary without a morphological tokenizer.
+        if segment.count > 1, segment.hasSuffix("を") {
+            return text.index(before: end)
+        }
+        if let marker = text.range(of: "を", options: .backwards, range: start ..< end),
+           text.distance(from: start, to: marker.lowerBound) >= 2,
+           text.distance(from: marker.upperBound, to: end) >= 2 {
+            return marker.upperBound
         }
         return start
     }
@@ -2083,6 +2076,8 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func buildCandidates() -> [String] {
+        candidatePredictionReadings = [:]
+        unknownPredictionTexts = []
         guard !composing.isEmpty else { return [] }
         if mode == "english" { return buildEnglishCandidates(composing) }
         let reading = katakanaToHiragana(composing)
@@ -2091,13 +2086,21 @@ final class KeyboardViewController: UIInputViewController {
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
         var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
+        var predictionReadings: [String: String] = [:]
+        for entry in learned where entry.reading != reading {
+            if predictionReadings[entry.text] == nil { predictionReadings[entry.text] = entry.reading }
+        }
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
             let ranked = dictionary.sorted {
                 let left = $0["importance"] as? Int ?? 3
                 let right = $1["importance"] as? Int ?? 3
-                if left != right { return left > right }
                 let leftRuby = $0["ruby"] as? String ?? ""
                 let rightRuby = $1["ruby"] as? String ?? ""
+                let leftRemaining = max(0, katakanaToHiragana(leftRuby).count - reading.count)
+                let rightRemaining = max(0, katakanaToHiragana(rightRuby).count - reading.count)
+                let leftScore = min(5, max(1, left)) * 20 - min(1000, leftRemaining) * 4
+                let rightScore = min(5, max(1, right)) * 20 - min(1000, rightRemaining) * 4
+                if leftScore != rightScore { return leftScore > rightScore }
                 if leftRuby.count != rightRuby.count { return leftRuby.count < rightRuby.count }
                 return leftRuby < rightRuby
             }
@@ -2116,6 +2119,7 @@ final class KeyboardViewController: UIInputViewController {
                     result.append(value)
                 } else {
                     prefixPredictions.append(value)
+                    if predictionReadings[value] == nil { predictionReadings[value] = ruby }
                 }
             }
         }
@@ -2133,7 +2137,9 @@ final class KeyboardViewController: UIInputViewController {
             unicodeCandidate: boolSetting("unicode_candidate", fallback: true),
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
         ) ?? []
-        result.append(contentsOf: engineCandidates)
+        let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
+        result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
+        prefixPredictions.append(contentsOf: engineCandidates.filter { enginePredictionTexts.contains($0) })
         if boolSetting("use_OS_user_dict", fallback: true) {
             for ruby in osLexicon.keys.sorted(by: {
                 $0.count == $1.count ? $0 < $1 : $0.count < $1.count
@@ -2142,7 +2148,10 @@ final class KeyboardViewController: UIInputViewController {
                 if normalized == reading {
                     result.append(contentsOf: osLexicon[ruby] ?? [])
                 } else if normalized.hasPrefix(reading) {
-                    prefixPredictions.append(contentsOf: osLexicon[ruby] ?? [])
+                    for value in osLexicon[ruby] ?? [] {
+                        prefixPredictions.append(value)
+                        if predictionReadings[value] == nil { predictionReadings[value] = normalized }
+                    }
                 }
             }
         }
@@ -2150,7 +2159,10 @@ final class KeyboardViewController: UIInputViewController {
         for ruby in Self.systemDictionary.keys.sorted(by: {
             $0.count == $1.count ? $0 < $1 : $0.count < $1.count
         }) where ruby.count > reading.count && ruby.hasPrefix(reading) {
-            prefixPredictions.append(contentsOf: Self.systemDictionary[ruby] ?? [])
+            for value in Self.systemDictionary[ruby] ?? [] {
+                prefixPredictions.append(value)
+                if predictionReadings[value] == nil { predictionReadings[value] = ruby }
+            }
         }
         // A local completion must not displace an existing engine candidate or
         // become a live conversion when no complete conversion is available.
@@ -2178,6 +2190,10 @@ final class KeyboardViewController: UIInputViewController {
             result.append(rawRoman)
         }
         let exactLearning = learned.filter { $0.reading == reading }
+        let exactTexts = completeTexts.union(exactLearning.map(\.text))
+        candidatePredictionReadings = predictionReadings.filter { !exactTexts.contains($0.key) }
+        unknownPredictionTexts = enginePredictionTexts.subtracting(exactTexts)
+            .subtracting(Set(candidatePredictionReadings.keys))
         var scores: [String: Int] = [:]
         for entry in exactLearning {
             scores[entry.text] = max(scores[entry.text] ?? 0, entry.score)
@@ -2194,7 +2210,8 @@ final class KeyboardViewController: UIInputViewController {
         let engineCandidate: String?
         if zenzai != nil {
             engineCandidate = engineCandidates.first {
-                !learnedTexts.contains($0) && $0 != hiragana && $0 != fullKatakana
+                !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                    && $0 != hiragana && $0 != fullKatakana
             }
         } else {
             engineCandidate = nil
@@ -2264,8 +2281,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func learnCandidate(input: String, candidate: String, english: Bool, explicitSelection: Bool) {
         guard intSetting("memory_learining_styple_setting", fallback: 0) == 0 else { return }
+        if !english, unknownPredictionTexts.contains(candidate) { return }
+        let learningReading = english ? input : (candidatePredictionReadings[candidate] ?? input)
         state["learning"] = recordCandidateLearning(
-            learningScores(), reading: input, text: candidate,
+            learningScores(), reading: learningReading, text: candidate,
             english: english, explicitSelection: explicitSelection
         )
         saveState()

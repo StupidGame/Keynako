@@ -85,6 +85,13 @@ int main() {
     assert(ranked_prediction.display_text() == "てす");
     assert(ranked_prediction.candidates()[2].text == "重要な補完");
     assert(ranked_prediction.candidates()[3].text == "短い補完");
+    ImeSession closer_prediction;
+    closer_prediction.set_user_dictionary({
+        {"テストケースナガイヨソク", "遠い高重要度", 5},
+        {"テスト", "近い補完", 4},
+    });
+    for (const char value : std::string("tesu")) closer_prediction.append_ascii(value);
+    assert(closer_prediction.candidates()[2].text == "近い補完");
     ranked_prediction.clear();
     ranked_prediction.append_ascii('/');
     assert(std::none_of(ranked_prediction.candidates().begin(), ranked_prediction.candidates().end(),
@@ -125,6 +132,16 @@ int main() {
     assert(japanese_phrase_word_delete.raw_input() == "watashihanihongow");
     japanese_phrase_word_delete.backspace_word();
     assert(japanese_phrase_word_delete.raw_input() == "watashihanihongo");
+    japanese_phrase_word_delete.backspace_word();
+    assert(japanese_phrase_word_delete.raw_input() == "watashiha");
+
+    ImeSession lexical_word_delete;
+    for (const char value : std::string("kimono")) lexical_word_delete.append_ascii(value);
+    lexical_word_delete.backspace_word();
+    assert(lexical_word_delete.raw_input().empty());
+    for (const char value : std::string("tamanokoshi")) lexical_word_delete.append_ascii(value);
+    lexical_word_delete.backspace_word();
+    assert(lexical_word_delete.raw_input().empty());
 
     ImeSession literal_word_delete;
     for (const char value : std::string("nihongo")) literal_word_delete.append_ascii(value);
