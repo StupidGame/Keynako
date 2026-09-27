@@ -1,5 +1,17 @@
 import Foundation
 
+private final class NoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 struct WrongConversionReport {
     let suggested: String
     let selected: String
@@ -15,6 +27,12 @@ struct WrongConversionReport {
 }
 
 enum ReportClient {
+    private static let sharedSubmissionSession = URLSession(
+        configuration: .ephemeral,
+        delegate: NoRedirectSessionDelegate(),
+        delegateQueue: nil
+    )
+
     private static let legacyWrongConversionEndpoint = URL(
         string: "https://docs.google.com/forms/d/e/1FAIpQLSfpYQqbX8u5SgGVfXjNzCPtKAH_5Mp7PCkUiCiUceEaevb8pQ/formResponse"
     )!
@@ -52,7 +70,7 @@ enum ReportClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Keynako \(appVersion)", forHTTPHeaderField: "User-Agent")
         request.httpBody = payloadData
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        sharedSubmissionSession.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             completion(
                 error == nil &&

@@ -43,7 +43,8 @@ object ReportClient {
                         connectTimeout = 15_000
                         readTimeout = 30_000
                         doOutput = true
-                        instanceFollowRedirects = true
+                        // A redirected POST may become a GET and appear successful.
+                        instanceFollowRedirects = false
                         setRequestProperty("Content-Type", "application/json; charset=utf-8")
                         setRequestProperty("Accept", "application/json")
                         setRequestProperty("User-Agent", "Keynako $appVersion")
@@ -94,10 +95,12 @@ object ReportClient {
                         setRequestProperty("mode", "no-cors")
                         setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
                     }
-                    connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
-                    val status = connection.responseCode
-                    connection.disconnect()
-                    status in 200..399
+                    try {
+                        connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+                        connection.responseCode in 200..399
+                    } finally {
+                        connection.disconnect()
+                    }
                 } catch (_: Exception) {
                     false
                 },

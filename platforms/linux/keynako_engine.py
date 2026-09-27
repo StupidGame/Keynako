@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import binascii
 import ctypes
 import os
 from pathlib import Path
@@ -12,6 +11,7 @@ import sys
 import time
 
 import gi
+from zenzai_process import Zenzai
 
 gi.require_version("IBus", "1.0")
 from gi.repository import GLib, IBus  # noqa: E402
@@ -141,57 +141,6 @@ class NativeSession:
 
     def insert_zenzai(self, value: str) -> None:
         self.library.keynako_ime_insert_zenzai(self.handle, value.encode())
-
-
-class Zenzai:
-    def __init__(self) -> None:
-        self.process: subprocess.Popen[bytes] | None = None
-
-    def _start(self) -> bool:
-        if self.process is not None:
-            return True
-        root = Path(__file__).resolve().parent
-        executable = Path(os.environ.get("KEYNAKO_ZENZAI_BIN", root / "keynako_zenzai"))
-        model = Path(os.environ.get(
-            "KEYNAKO_ZENZAI_MODEL",
-            root / "zenzai" / "zenz-v3.2-xsmall-gguf" / "ggml-model-Q5_K_M.gguf",
-        ))
-        if not executable.is_file() or not model.is_file():
-            return False
-        self.process = subprocess.Popen(
-            [str(executable), str(model)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if self.process.stdout is not None and self.process.stdout.readline().strip() == b"READY":
-            return True
-        self.close()
-        return False
-
-    def generate(self, reading: str) -> str | None:
-        if not self._start() or self.process is None or self.process.stdin is None or self.process.stdout is None:
-            return None
-        prompt = "\uee00" + reading + "\uee01"
-        try:
-            self.process.stdin.write(b"24\t" + binascii.hexlify(prompt.encode()) + b"\n")
-            self.process.stdin.flush()
-            response = self.process.stdout.readline().strip()
-            if not response or response.startswith(b"ERROR"):
-                return None
-            value = binascii.unhexlify(response).decode("utf-8", "replace")
-            for marker in range(0xEE00, 0xEE08):
-                value = value.split(chr(marker), 1)[0]
-            return value.strip() or None
-        except (BrokenPipeError, OSError, ValueError):
-            return None
-
-    def close(self) -> None:
-        if self.process is None:
-            return
-        try:
-            self.process.communicate(b"QUIT\n", timeout=1)
-        except (OSError, subprocess.TimeoutExpired):
-            self.process.kill()
-        self.process = None
 
 
 class KeynakoEngine(IBus.Engine):
