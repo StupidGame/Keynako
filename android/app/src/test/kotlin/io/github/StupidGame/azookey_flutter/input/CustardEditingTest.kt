@@ -68,6 +68,15 @@ class CustardEditingTest {
     }
 
     @Test
+    fun knownKanaWordsStillProvideReliableParticleBoundaries() {
+        val known = setOf("わたし", "にほんご", "もの")
+        val phrase = "わたしはにほんご"
+        assertEquals("にほんご".length, backwardWordDeleteCount(phrase, knownReadings = known))
+        assertEquals("は".length, backwardWordDeleteCount("わたしは", knownReadings = known))
+        assertEquals("きもの".length, backwardWordDeleteCount("きもの", knownReadings = known))
+    }
+
+    @Test
     fun wordDeleteUsesTheLastScriptRunAndAuxiliary() {
         assertEquals("ます".length, backwardWordDeleteCount("入力します"))
         assertEquals("OpenAI".length, backwardWordDeleteCount("日本語OpenAI"))

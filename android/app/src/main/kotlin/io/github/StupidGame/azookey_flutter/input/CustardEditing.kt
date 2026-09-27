@@ -63,6 +63,7 @@ internal fun smartDeleteCount(
 internal fun backwardWordDeleteCount(
     text: String,
     locale: Locale = Locale.JAPANESE,
+    knownReadings: Set<String> = emptySet(),
 ): Int {
     if (text.isEmpty()) return 0
 
@@ -91,7 +92,7 @@ internal fun backwardWordDeleteCount(
     }
 
     if (lastWordEnd == contentEnd) {
-        return text.length - refinedJapaneseWordStart(text, lastWordStart, lastWordEnd)
+        return text.length - refinedJapaneseWordStart(text, lastWordStart, lastWordEnd, knownReadings)
     }
     if (lastWordEnd >= 0) return text.length - lastWordEnd
 
@@ -118,6 +119,11 @@ private enum class JapaneseCharacterClass {
     OTHER,
 }
 
+private val japaneseParticles = listOf(
+    "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
+    "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
+)
+
 private val japaneseAuxiliaries = listOf(
     "ませんでした", "ましょう", "ました", "ません", "ます",
     "でした", "でしょう", "です", "だった", "だろう", "ない", "たい",
@@ -128,7 +134,7 @@ private val indivisibleKanaWords = setOf(
 )
 
 /** Refines one platform word without ever extending its deletion range. */
-private fun refinedJapaneseWordStart(text: String, start: Int, end: Int): Int {
+private fun refinedJapaneseWordStart(text: String, start: Int, end: Int, knownReadings: Set<String>): Int {
     if (start >= end) return start
 
     val finalClass = japaneseCharacterClass(Character.codePointBefore(text, end))
@@ -143,15 +149,15 @@ private fun refinedJapaneseWordStart(text: String, start: Int, end: Int): Int {
 
     // A script change is a stable boundary even when a platform iterator has
     // returned a mixed Japanese/Latin token as one word.
-    if (runStart > start) return refineKanaGrammarBoundary(text, runStart, end)
-    return refineKanaGrammarBoundary(text, start, end)
+    if (runStart > start) return refineKanaGrammarBoundary(text, runStart, end, knownReadings)
+    return refineKanaGrammarBoundary(text, start, end, knownReadings)
 }
 
-private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
+private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int, knownReadings: Set<String>): Int {
     if (start >= end) return start
     val segment = text.substring(start, end)
     if (
-        segment in indivisibleKanaWords ||
+        segment in indivisibleKanaWords || segment in knownReadings ||
         segment.codePoints().anyMatch { japaneseCharacterClass(it) != JapaneseCharacterClass.HIRAGANA }
     ) {
         return start
@@ -165,6 +171,23 @@ private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
     val objectMarker = segment.lastIndexOf("を")
     if (objectMarker >= 2 && segment.length - objectMarker - 1 >= 2) {
         return start + objectMarker + 1
+    }
+    for (particle in japaneseParticles) {
+        if (segment.length > particle.length && segment.endsWith(particle) &&
+            segment.dropLast(particle.length) in knownReadings
+        ) {
+            return end - particle.length
+        }
+    }
+    for (particle in japaneseParticles) {
+        val index = segment.lastIndexOf(particle)
+        val suffixStart = index + particle.length
+        if (index >= 2 && segment.length - suffixStart >= 2 &&
+            segment.substring(0, index) in knownReadings &&
+            segment.substring(suffixStart) in knownReadings
+        ) {
+            return start + suffixStart
+        }
     }
     return start
 }

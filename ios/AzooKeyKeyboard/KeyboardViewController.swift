@@ -1587,6 +1587,11 @@ final class KeyboardViewController: UIInputViewController {
         case hiragana, katakana, han, latin, digit, other
     }
 
+    private static let japaneseParticles = [
+        "から", "まで", "より", "ので", "のに", "では", "には", "とは", "って",
+        "を", "が", "は", "も", "の", "に", "へ", "で", "と", "や",
+    ]
+
     private static let japaneseAuxiliaries = [
         "ませんでした", "ましょう", "ました", "ません", "ます",
         "でした", "でしょう", "です", "だった", "だろう", "ない", "たい",
@@ -1622,7 +1627,7 @@ final class KeyboardViewController: UIInputViewController {
     ) -> String.Index {
         guard start < end else { return start }
         let segment = String(text[start ..< end])
-        guard !Self.indivisibleKanaWords.contains(segment),
+        guard !Self.indivisibleKanaWords.contains(segment), Self.systemDictionary[segment] == nil,
               segment.allSatisfy({ japaneseCharacterClass($0) == .hiragana }) else {
             return start
         }
@@ -1641,6 +1646,20 @@ final class KeyboardViewController: UIInputViewController {
            text.distance(from: start, to: marker.lowerBound) >= 2,
            text.distance(from: marker.upperBound, to: end) >= 2 {
             return marker.upperBound
+        }
+        for particle in Self.japaneseParticles where segment.count > particle.count && segment.hasSuffix(particle) {
+            if Self.systemDictionary[String(segment.dropLast(particle.count))] != nil {
+                return text.index(end, offsetBy: -particle.count)
+            }
+        }
+        for particle in Self.japaneseParticles {
+            guard let range = text.range(of: particle, options: .backwards, range: start ..< end) else { continue }
+            let prefix = String(text[start ..< range.lowerBound])
+            let suffix = String(text[range.upperBound ..< end])
+            if prefix.count >= 2, suffix.count >= 2,
+               Self.systemDictionary[prefix] != nil, Self.systemDictionary[suffix] != nil {
+                return range.upperBound
+            }
         }
         return start
     }

@@ -2785,7 +2785,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
             val originalComposing = composing
-            val count = backwardWordDeleteCount(originalComposing)
+            val count = backwardWordDeleteCount(originalComposing, knownReadings = systemDictionary.keys)
             if (count <= 0) return
             val targetComposing = originalComposing.dropLast(
                 count.coerceAtMost(originalComposing.length),
@@ -2818,7 +2818,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             delete()
             return
         }
-        val count = backwardWordDeleteCount(originalContext)
+        val count = backwardWordDeleteCount(originalContext, knownReadings = systemDictionary.keys)
         val firstDeleteCount = backwardCharacterDeleteCount(originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(
@@ -3282,7 +3282,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun smartDeleteDefault() {
         if (deleteSelectedText()) return
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
-            val count = backwardWordDeleteCount(composing)
+            val count = backwardWordDeleteCount(composing, knownReadings = systemDictionary.keys)
             val remaining = composing.dropLast(count.coerceAtMost(composing.length))
             if (rawRoman.isNotEmpty()) {
                 val remainingRaw = rawRomanPrefixForComposition(remaining)
@@ -3297,7 +3297,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             return
         }
         val text = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString().orEmpty()
-        val count = backwardWordDeleteCount(text)
+        val count = backwardWordDeleteCount(text, knownReadings = systemDictionary.keys)
         if (count > 0) deleteFromEditor(count, 0)
         cursorBarView?.post { cursorBarView?.refresh() }
     }
