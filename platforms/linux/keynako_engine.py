@@ -11,7 +11,7 @@ import sys
 import time
 
 import gi
-from zenzai_process import Zenzai
+from zenzai_process import AsyncZenzai
 
 gi.require_version("IBus", "1.0")
 from gi.repository import GLib, IBus  # noqa: E402
@@ -150,7 +150,10 @@ class KeynakoEngine(IBus.Engine):
         self.raw = ""
         self.mode = "ja"
         self.lookup = IBus.LookupTable.new(9, 0, True, True)
-        self.zenzai = Zenzai()
+        self.zenzai = AsyncZenzai(GLib.idle_add)
+        self._conversion_revision = 0
+        self._selection_revision = 0
+        self._destroyed = False
         self.dictionary_path: Path | None = None
         self.dictionary_mtime_ns = -1
         self.last_dictionary_check = 0.0
@@ -279,8 +282,27 @@ class KeynakoEngine(IBus.Engine):
         self.update_lookup_table(self.lookup, True)
 
     def _clear(self) -> None:
+        self._conversion_revision += 1
         self.raw = ""
         self.session.clear()
+        self._render()
+
+    def _receive_zenzai(
+        self, revision: int, selection_revision: int, reading: str, value: str | None,
+    ) -> None:
+        if (
+            not value
+            or self._destroyed
+            or revision != self._conversion_revision
+            or not self.raw
+            or self.mode != "ja"
+            or not self.session.is_converting()
+            or self.session.reading() != reading
+        ):
+            return
+        self.session.insert_zenzai(value)
+        if selection_revision == self._selection_revision:
+            self.session.select(0)
         self._render()
 
     def _replace_selection_before_input(self) -> None:
@@ -326,6 +348,7 @@ class KeynakoEngine(IBus.Engine):
         self._request_shared_dictionary_refresh()
         control = bool(state & IBus.ModifierType.CONTROL_MASK)
         if control and keyval == IBus.KEY_space:
+            self._conversion_revision += 1
             self.mode = "en" if self.mode == "ja" else "ja"
             self.session.set_mode(self.mode == "en")
             self.raw = self.session.raw_input()
@@ -337,6 +360,7 @@ class KeynakoEngine(IBus.Engine):
         if keyval == IBus.KEY_BackSpace:
             if not self.raw:
                 return False
+            self._conversion_revision += 1
             if self.session.cancel_conversion():
                 self.last_backspace_press = None
             else:
@@ -363,6 +387,7 @@ class KeynakoEngine(IBus.Engine):
             if not self.raw:
                 return False
             if self.session.cancel_conversion():
+                self._conversion_revision += 1
                 self._render()
             else:
                 self._clear()
@@ -384,18 +409,27 @@ class KeynakoEngine(IBus.Engine):
                 return False
             self._reload_shared_dictionary()
             if not self.session.is_converting():
-                if keyval in (
+                request_zenzai = keyval in (
                     IBus.KEY_space,
                     getattr(IBus, "KEY_Henkan", -1),
                     getattr(IBus, "KEY_Henkan_Mode", -1),
-                ) and self.mode == "ja":
-                    generated = self.zenzai.generate(self.session.reading())
-                    if generated:
-                        self.session.insert_zenzai(generated)
-                self.session.begin_conversion()
+                ) and self.mode == "ja"
+                reading = self.session.reading()
+                if self.session.begin_conversion() and request_zenzai:
+                    self._conversion_revision += 1
+                    revision = self._conversion_revision
+                    selection_revision = self._selection_revision
+                    self.zenzai.submit(
+                        reading,
+                        lambda value: self._receive_zenzai(
+                            revision, selection_revision, reading, value,
+                        ),
+                    )
                 if keyval == IBus.KEY_Up:
+                    self._selection_revision += 1
                     self.session.select_previous()
             else:
+                self._selection_revision += 1
                 if keyval == IBus.KEY_Up:
                     self.session.select_previous()
                 else:
@@ -428,6 +462,7 @@ class KeynakoEngine(IBus.Engine):
             value = chr(scalar)
             self._reload_shared_dictionary()
             self._replace_selection_before_input()
+            self._conversion_revision += 1
             self.raw += value
             self.session.append(value)
             self._render()
@@ -437,6 +472,7 @@ class KeynakoEngine(IBus.Engine):
     def do_candidate_clicked(self, index: int, button: int, state: int) -> None:
         del button, state
         if 0 <= index < len(self.session.candidates()):
+            self._selection_revision += 1
             self.session.select(index)
             self._commit()
 
@@ -447,6 +483,7 @@ class KeynakoEngine(IBus.Engine):
             return
         if prop_name != "InputMode":
             return
+        self._conversion_revision += 1
         self.mode = "en" if self.mode == "ja" else "ja"
         self.session.set_mode(self.mode == "en")
         self.raw = self.session.raw_input()
@@ -456,6 +493,7 @@ class KeynakoEngine(IBus.Engine):
     def do_cursor_up(self) -> bool:
         if not self.raw:
             return False
+        self._selection_revision += 1
         self.session.select_previous()
         self._render()
         return True
@@ -463,6 +501,7 @@ class KeynakoEngine(IBus.Engine):
     def do_cursor_down(self) -> bool:
         if not self.raw:
             return False
+        self._selection_revision += 1
         self.session.select_next()
         self._render()
         return True
@@ -477,6 +516,8 @@ class KeynakoEngine(IBus.Engine):
         super().do_focus_out()
 
     def do_destroy(self) -> None:
+        self._destroyed = True
+        self._conversion_revision += 1
         self.zenzai.close()
         self.session.close()
         super().do_destroy()

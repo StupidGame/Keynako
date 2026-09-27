@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <sstream>
 #include <utility>
@@ -11,6 +12,7 @@
 #else
 #include <cerrno>
 #include <csignal>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -69,21 +71,24 @@ std::string sanitize(std::string value) {
 
 class ZenzaiClient::Impl {
 public:
-    Impl(std::string executable, std::string model) {
+    Impl(std::string executable, std::string model, std::chrono::milliseconds timeout)
+        : timeout_(timeout) {
         if (!executable.empty() && !model.empty()) start(std::move(executable), std::move(model));
     }
     ~Impl() { stop(); }
     bool available() const { return ready_; }
 
     std::string generate(const std::string &reading, const std::string &left_context, int max_tokens) {
-        if (!ready_ || reading.empty()) return {};
+        if (!ready_ || reading.empty() || reading.size() + left_context.size() > 1024) return {};
         std::ostringstream request;
         request << std::clamp(max_tokens, 1, 128) << '\t'
                 << hex_encode(prompt(reading, left_context)) << '\n';
         if (!write_all(request.str())) { stop(); return {}; }
         const auto response = read_line();
-        if (response.empty() || response.rfind("ERROR", 0) == 0) return {};
-        return sanitize(hex_decode(response));
+        if (response.empty() || response.rfind("ERROR", 0) == 0) { stop(); return {}; }
+        const auto decoded = hex_decode(response);
+        if (decoded.empty()) { stop(); return {}; }
+        return sanitize(decoded);
     }
 
 private:
@@ -97,14 +102,20 @@ private:
     int output_ = -1;
 #endif
     bool ready_ = false;
+    std::chrono::milliseconds timeout_;
 
     void start(std::string executable, std::string model) {
 #ifdef _WIN32
         SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
         HANDLE child_stdin_read = nullptr;
         HANDLE child_stdout_write = nullptr;
-        if (!CreatePipe(&child_stdin_read, &input_, &security, 0) ||
-            !CreatePipe(&output_, &child_stdout_write, &security, 0)) return;
+        if (!CreatePipe(&child_stdin_read, &input_, &security, 0)) return;
+        if (!CreatePipe(&output_, &child_stdout_write, &security, 0)) {
+            CloseHandle(child_stdin_read);
+            CloseHandle(input_);
+            input_ = nullptr;
+            return;
+        }
         SetHandleInformation(input_, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(output_, HANDLE_FLAG_INHERIT, 0);
         STARTUPINFOW startup{};
@@ -134,8 +145,17 @@ private:
 #else
         int stdin_pipe[2];
         int stdout_pipe[2];
-        if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0) return;
+        if (pipe(stdin_pipe) != 0) return;
+        if (pipe(stdout_pipe) != 0) {
+            close(stdin_pipe[0]); close(stdin_pipe[1]);
+            return;
+        }
         process_ = fork();
+        if (process_ < 0) {
+            close(stdin_pipe[0]); close(stdin_pipe[1]);
+            close(stdout_pipe[0]); close(stdout_pipe[1]);
+            return;
+        }
         if (process_ == 0) {
             dup2(stdin_pipe[0], STDIN_FILENO);
             dup2(stdout_pipe[1], STDOUT_FILENO);
@@ -177,17 +197,32 @@ private:
     std::string read_line() {
         std::string line;
         char value = 0;
-        while (line.size() < 1024 * 1024) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout_;
+        while (line.size() < 64 * 1024) {
 #ifdef _WIN32
+            DWORD available = 0;
+            if (!output_ || !PeekNamedPipe(output_, nullptr, 0, nullptr, &available, nullptr)) return {};
+            if (available == 0) {
+                if (std::chrono::steady_clock::now() >= deadline) return {};
+                Sleep(10);
+                continue;
+            }
             DWORD read_count = 0;
             if (!output_ || !ReadFile(output_, &value, 1, &read_count, nullptr) || read_count != 1) return {};
 #else
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now()).count();
+            if (remaining <= 0) return {};
+            pollfd descriptor{output_, POLLIN, 0};
+            const int ready = poll(&descriptor, 1, static_cast<int>(remaining));
+            if (ready < 0 && errno == EINTR) continue;
+            if (ready <= 0) return {};
             if (output_ < 0 || read(output_, &value, 1) != 1) return {};
 #endif
-            if (value == '\n') break;
+            if (value == '\n') return line;
             if (value != '\r') line.push_back(value);
         }
-        return line;
+        return {};
     }
 
     void stop() {
@@ -205,16 +240,29 @@ private:
         if (output_ >= 0) { close(output_); output_ = -1; }
         if (process_ > 0) {
             int status = 0;
-            for (int attempt = 0; attempt < 15 && waitpid(process_, &status, WNOHANG) == 0; ++attempt) usleep(100000);
-            if (waitpid(process_, &status, WNOHANG) == 0) { kill(process_, SIGTERM); waitpid(process_, &status, 0); }
+            auto wait_bounded = [&](int attempts) {
+                for (int attempt = 0; attempt < attempts; ++attempt) {
+                    if (waitpid(process_, &status, WNOHANG) != 0) return true;
+                    usleep(100000);
+                }
+                return waitpid(process_, &status, WNOHANG) != 0;
+            };
+            if (!wait_bounded(15)) {
+                kill(process_, SIGTERM);
+                if (!wait_bounded(10)) {
+                    kill(process_, SIGKILL);
+                    waitpid(process_, &status, 0);
+                }
+            }
             process_ = -1;
         }
 #endif
     }
 };
 
-ZenzaiClient::ZenzaiClient(std::string executable_path, std::string model_path)
-    : impl_(std::make_unique<Impl>(std::move(executable_path), std::move(model_path))) {}
+ZenzaiClient::ZenzaiClient(std::string executable_path, std::string model_path,
+                           std::chrono::milliseconds timeout)
+    : impl_(std::make_unique<Impl>(std::move(executable_path), std::move(model_path), timeout)) {}
 ZenzaiClient::~ZenzaiClient() = default;
 bool ZenzaiClient::available() const { return impl_->available(); }
 std::string ZenzaiClient::generate(const std::string &reading, const std::string &left_context, int max_tokens) {

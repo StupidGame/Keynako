@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import select
 import subprocess
+import threading
 import time
+from typing import Callable
 
 
 class Zenzai:
@@ -78,6 +80,8 @@ class Zenzai:
         return False
 
     def generate(self, reading: str) -> str | None:
+        if not reading or len(reading.encode("utf-8")) > 1024:
+            return None
         if not self._start() or self.process is None or self.process.stdin is None:
             return None
         prompt = "\uee00" + reading + "\uee01"
@@ -132,3 +136,69 @@ class Zenzai:
                         pipe.close()
                     except OSError:
                         pass
+
+
+class AsyncZenzai:
+    """Run inference off the IBus thread and dispatch results on its event loop."""
+
+    def __init__(
+        self,
+        dispatch: Callable[[Callable[[], bool]], object],
+        engine_factory: Callable[[], Zenzai] = Zenzai,
+    ) -> None:
+        self._dispatch = dispatch
+        self._engine_factory = engine_factory
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._pending: tuple[str, Callable[[str | None], None]] | None = None
+        self._thread: threading.Thread | None = None
+        self._closed = False
+
+    def submit(self, reading: str, callback: Callable[[str | None], None]) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            # Keep only the newest request while a previous inference is running.
+            self._pending = (reading, callback)
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+            self._wake.set()
+
+    def _run(self) -> None:
+        engine = self._engine_factory()
+        try:
+            while True:
+                self._wake.wait()
+                with self._lock:
+                    if self._closed:
+                        return
+                    request = self._pending
+                    self._pending = None
+                    self._wake.clear()
+                if request is None:
+                    continue
+                reading, callback = request
+                try:
+                    result = engine.generate(reading)
+                except Exception:
+                    result = None
+                with self._lock:
+                    stale = self._closed or self._pending is not None
+                if not stale:
+                    self._dispatch(lambda: self._deliver(callback, result))
+        finally:
+            engine.close()
+
+    def _deliver(self, callback: Callable[[str | None], None], result: str | None) -> bool:
+        with self._lock:
+            closed = self._closed
+        if not closed:
+            callback(result)
+        return False
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._pending = None
+            self._wake.set()
