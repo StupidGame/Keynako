@@ -40,9 +40,10 @@ class CandidateLearning {
     if (ruby.startsWith('english:')) {
       if (!english) return null;
       ruby = ruby.substring('english:'.length);
-    } else if (english && !_legacyEnglishReading.hasMatch(ruby)) {
+    } else {
+      final legacyEnglish = _legacyEnglishReading.hasMatch(ruby);
       // Older mobile versions stored English readings without a namespace.
-      return null;
+      if (english != legacyEnglish) return null;
     }
     if (ruby.isEmpty) return null;
     return LearnedCandidate(

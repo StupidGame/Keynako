@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
 import 'package:azookey_flutter/input/azookey_hotfix_sync.dart';
@@ -13,6 +15,22 @@ class _MemoryStorage implements StateStorage {
 
   @override
   Future<void> save(String state) async {
+    value = state;
+  }
+}
+
+class _DelayedStorage implements StateStorage {
+  final firstSave = Completer<void>();
+  final writes = <String>[];
+  String? value;
+
+  @override
+  Future<String?> load() async => value;
+
+  @override
+  Future<void> save(String state) async {
+    writes.add(state);
+    if (writes.length == 1) await firstSave.future;
     value = state;
   }
 }
@@ -130,6 +148,36 @@ void main() {
 
     expect(AppData.decode(storage.value!).lightThemeId, 'azuki');
     controller.dispose();
+  });
+
+  test('serializes overlapping saves so the newest state wins', () async {
+    final storage = _DelayedStorage();
+    final controller = AppController(storage: storage);
+
+    controller.setSetting('test', 'old');
+    final first = controller.flush();
+    await Future<void>.delayed(Duration.zero);
+    controller.setSetting('test', 'new');
+    final second = controller.flush();
+    expect(storage.writes, hasLength(1));
+
+    storage.firstSave.complete();
+    await Future.wait([first, second]);
+
+    expect(storage.writes, hasLength(2));
+    expect(AppData.decode(storage.value!).settings['test'], 'new');
+    controller.dispose();
+  });
+
+  test('persists a pending debounced edit on dispose', () async {
+    final storage = _MemoryStorage();
+    final controller = AppController(storage: storage);
+
+    controller.setSetting('test', 'pending');
+    controller.dispose();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(AppData.decode(storage.value!).settings['test'], 'pending');
   });
 
   test('imports a custom array and exposes it as a selectable tab', () {

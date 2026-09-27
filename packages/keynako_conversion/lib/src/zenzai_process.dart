@@ -40,12 +40,18 @@ class ZenzaiProcessEngine implements ZenzaiEngine {
   Process? _process;
   StreamIterator<String>? _lines;
   StreamSubscription<String>? _stderr;
+  Future<void>? _initializing;
   Future<void> _queue = Future.value();
   bool _closing = false;
 
   @override
-  Future<void> initialize() async {
-    if (_process != null) return;
+  Future<void> initialize() {
+    if (_closing) return Future.error(StateError('Zenzai engine is closed'));
+    if (_process != null) return Future.value();
+    return _initializing ??= _start().whenComplete(() => _initializing = null);
+  }
+
+  Future<void> _start() async {
     if (!File(executablePath).existsSync()) {
       throw StateError('Zenzai helper was not found: $executablePath');
     }
@@ -57,24 +63,37 @@ class ZenzaiProcessEngine implements ZenzaiEngine {
     final lines = StreamIterator(
       process.stdout.transform(utf8.decoder).transform(const LineSplitter()),
     );
-    _stderr = process.stderr
+    final stderr = process.stderr
         .transform(utf8.decoder)
         .listen((_) {}, cancelOnError: false);
-
-    if (!await lines.moveNext().timeout(requestTimeout) ||
-        lines.current != 'READY') {
+    try {
+      if (!await lines.moveNext().timeout(requestTimeout) ||
+          lines.current != 'READY') {
+        throw StateError('Zenzai helper did not become ready');
+      }
+      if (_closing) throw StateError('Zenzai engine is closed');
+      _process = process;
+      _lines = lines;
+      _stderr = stderr;
+    } catch (_) {
       process.kill();
-      throw StateError('Zenzai helper did not become ready');
+      await lines.cancel();
+      await stderr.cancel();
+      await _waitForExit(process);
+      rethrow;
     }
-    _process = process;
-    _lines = lines;
   }
 
   @override
   Future<String?> generate(ZenzaiRequest request) {
+    if (_closing) return Future.value(null);
     final result = Completer<String?>();
     _queue = _queue.then((_) async {
       try {
+        if (_closing) {
+          result.complete(null);
+          return;
+        }
         await initialize();
         if (_closing) {
           result.complete(null);
@@ -96,6 +115,11 @@ class ZenzaiProcessEngine implements ZenzaiEngine {
         final value = _sanitize(_hexDecode(response));
         result.complete(value.isEmpty ? null : value);
       } catch (error, stackTrace) {
+        try {
+          await _stopProcess();
+        } on Object {
+          // Keep the request queue usable even if process cleanup fails.
+        }
         if (!result.isCompleted) result.completeError(error, stackTrace);
       }
     });
@@ -106,21 +130,43 @@ class ZenzaiProcessEngine implements ZenzaiEngine {
   Future<void> close() async {
     _closing = true;
     await _queue;
+    await _stopProcess(graceful: true);
+  }
+
+  Future<void> _stopProcess({bool graceful = false}) async {
     final process = _process;
-    if (process != null) {
-      process.stdin.writeln('QUIT');
-      await process.stdin.flush();
-      await process.exitCode.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () {
-          process.kill();
-          return -1;
-        },
-      );
-    }
-    await _stderr?.cancel();
+    final lines = _lines;
+    final stderr = _stderr;
     _process = null;
     _lines = null;
+    _stderr = null;
+    if (process == null) return;
+    if (graceful) {
+      try {
+        process.stdin.writeln('QUIT');
+        await process.stdin.flush();
+        await process.exitCode.timeout(const Duration(seconds: 2));
+      } on Object {
+        process.kill();
+      }
+    } else {
+      process.kill();
+    }
+    await lines?.cancel();
+    await stderr?.cancel();
+    await _waitForExit(process);
+  }
+
+  Future<void> _waitForExit(Process process) async {
+    await process.exitCode.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {
+        process.kill(
+          Platform.isWindows ? ProcessSignal.sigterm : ProcessSignal.sigkill,
+        );
+        return -1;
+      },
+    );
   }
 
   String _buildPrompt(ZenzaiRequest request) {

@@ -121,6 +121,22 @@ void main() {
     );
   });
 
+  test('legacy English learning does not enter Japanese candidates', () {
+    const learning = {'hello\tHello': 10, 'へろー\t日本語': 4};
+
+    expect(
+      CandidateLearning.entries(learning).map((candidate) => candidate.text),
+      ['日本語'],
+    );
+    expect(
+      CandidateLearning.entries(
+        learning,
+        english: true,
+      ).map((candidate) => candidate.text),
+      ['Hello'],
+    );
+  });
+
   test('invalid learning does not affect valid candidates', () {
     final learning = <String, int>{};
     CandidateLearning.record(learning, reading: '', text: '語');

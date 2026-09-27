@@ -1,17 +1,14 @@
 #import <Cocoa/Cocoa.h>
 #import <InputMethodKit/InputMethodKit.h>
 
-#include <algorithm>
 #include <chrono>
-#include <exception>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "keynako_ime_core.h"
+#include "shared_dictionary_cache.h"
 #include "zenzai_client.h"
 
 static IMKServer *gServer;
@@ -420,52 +417,9 @@ static NSString *PairedDelimiter(unichar value) {
         if (error) continue;
         if (path == _sharedDictionaryPath && writeTime == _sharedDictionaryWriteTime) return;
 
-        std::ifstream stream(path, std::ios::binary);
-        if (!stream) continue;
-        std::vector<keynako::DictionaryEntry> entries;
-        std::string line;
-        bool validHeader = false;
-        while (std::getline(stream, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.rfind("# keynako-shared-dictionary-v1", 0) == 0) {
-                validHeader = true;
-                continue;
-            }
-            if (line.empty() || line.front() == '#') continue;
-            const auto firstTab = line.find('\t');
-            const auto secondTab = firstTab == std::string::npos
-                ? std::string::npos
-                : line.find('\t', firstTab + 1);
-            if (firstTab == std::string::npos || secondTab == std::string::npos) continue;
-            try {
-                const int importance = std::clamp(std::stoi(line.substr(0, firstTab)), 1, 5);
-                std::string reading = line.substr(firstTab + 1, secondTab - firstTab - 1);
-                const auto thirdTab = line.find('\t', secondTab + 1);
-                std::string value = thirdTab == std::string::npos
-                    ? line.substr(secondTab + 1)
-                    : line.substr(secondTab + 1, thirdTab - secondTab - 1);
-                if (!reading.empty() && !value.empty()) {
-                    keynako::DictionaryEntry entry{std::move(reading), std::move(value), importance};
-                    if (thirdTab != std::string::npos) {
-                        const auto fourthTab = line.find('\t', thirdTab + 1);
-                        const auto fifthTab = fourthTab == std::string::npos
-                            ? std::string::npos
-                            : line.find('\t', fourthTab + 1);
-                        if (fourthTab != std::string::npos && fifthTab != std::string::npos) {
-                            entry.word_weight = std::stof(line.substr(thirdTab + 1, fourthTab - thirdTab - 1));
-                            entry.lcid = std::stoi(line.substr(fourthTab + 1, fifthTab - fourthTab - 1));
-                            entry.rcid = std::stoi(line.substr(fifthTab + 1));
-                            entry.has_word_weight = true;
-                        }
-                    }
-                    entries.push_back(std::move(entry));
-                }
-            } catch (const std::exception &) {
-                continue;
-            }
-        }
-        if (!validHeader || entries.empty()) continue;
-        _session.set_user_dictionary(std::move(entries));
+        auto entries = keynako::load_shared_dictionary_cache(path);
+        if (!entries) continue;
+        _session.set_user_dictionary(std::move(*entries));
         _sharedDictionaryPath = path;
         _sharedDictionaryWriteTime = writeTime;
         return;

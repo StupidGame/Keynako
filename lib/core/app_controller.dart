@@ -40,6 +40,7 @@ class AppController extends ChangeNotifier {
   bool azooKeyHotfixSyncing = false;
   Object? azooKeyHotfixSyncError;
   Timer? _saveTimer;
+  Future<void> _saveQueue = Future<void>.value();
   Future<bool>? _azooKeyHotfixSyncTask;
 
   Future<void> initialize() async {
@@ -264,7 +265,7 @@ class AppController extends ChangeNotifier {
         throw const FormatException('Custardファイルが10MBを超えています。');
       }
       final bytes = <int>[];
-      await for (final chunk in response) {
+      await for (final chunk in response.timeout(const Duration(seconds: 30))) {
         bytes.addAll(chunk);
         if (bytes.length > maximumBytes) {
           throw const FormatException('Custardファイルが10MBを超えています。');
@@ -353,20 +354,36 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     _saveTimer?.cancel();
     if (immediate) {
-      unawaited(flush());
+      unawaited(_saveAutomatically());
     } else {
-      _saveTimer = Timer(const Duration(milliseconds: 180), flush);
+      _saveTimer = Timer(
+        const Duration(milliseconds: 180),
+        () => unawaited(_saveAutomatically()),
+      );
+    }
+  }
+
+  Future<void> _saveAutomatically() async {
+    try {
+      await flush();
+    } on Object {
+      // Platform storage can fail independently of an edit. An explicit flush
+      // still reports its error to the caller.
     }
   }
 
   Future<void> flush() async {
     _saveTimer?.cancel();
     _saveTimer = null;
-    await _storage.save(data.encode());
+    final snapshot = data.encode();
+    final save = _saveQueue.then((_) => _storage.save(snapshot));
+    _saveQueue = save.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    await save;
   }
 
   @override
   void dispose() {
+    if (_saveTimer != null) unawaited(_saveAutomatically());
     _saveTimer?.cancel();
     super.dispose();
   }

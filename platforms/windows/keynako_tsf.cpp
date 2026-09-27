@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iterator>
 #include <memory>
 #include <new>
@@ -29,6 +28,7 @@
 #include "keynako_ime_core.h"
 #include "keynako_shortcut_policy.h"
 #include "keynako_submission_payload.h"
+#include "shared_dictionary_cache.h"
 #include "zenzai_client.h"
 
 #ifndef KEYNAKO_DICTIONARY_SUBMISSION_URL
@@ -972,52 +972,9 @@ private:
             }
             if (file == shared_dictionary_path_ && write_time == shared_dictionary_write_time_) return;
 
-            std::ifstream stream(file, std::ios::binary);
-            if (!stream) continue;
-            std::vector<keynako::DictionaryEntry> entries;
-            std::string line;
-            bool valid_header = false;
-            while (std::getline(stream, line)) {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.rfind("# keynako-shared-dictionary-v1", 0) == 0) {
-                    valid_header = true;
-                    continue;
-                }
-                if (line.empty() || line.front() == '#') continue;
-                const auto first_tab = line.find('\t');
-                const auto second_tab = first_tab == std::string::npos
-                    ? std::string::npos
-                    : line.find('\t', first_tab + 1);
-                if (first_tab == std::string::npos || second_tab == std::string::npos) continue;
-                try {
-                    const int importance = std::clamp(std::stoi(line.substr(0, first_tab)), 1, 5);
-                    std::string reading = line.substr(first_tab + 1, second_tab - first_tab - 1);
-                    const auto third_tab = line.find('\t', second_tab + 1);
-                    std::string value = third_tab == std::string::npos
-                        ? line.substr(second_tab + 1)
-                        : line.substr(second_tab + 1, third_tab - second_tab - 1);
-                    if (!reading.empty() && !value.empty()) {
-                        keynako::DictionaryEntry entry{std::move(reading), std::move(value), importance};
-                        if (third_tab != std::string::npos) {
-                            const auto fourth_tab = line.find('\t', third_tab + 1);
-                            const auto fifth_tab = fourth_tab == std::string::npos
-                                ? std::string::npos
-                                : line.find('\t', fourth_tab + 1);
-                            if (fourth_tab != std::string::npos && fifth_tab != std::string::npos) {
-                                entry.word_weight = std::stof(line.substr(third_tab + 1, fourth_tab - third_tab - 1));
-                                entry.lcid = std::stoi(line.substr(fourth_tab + 1, fifth_tab - fourth_tab - 1));
-                                entry.rcid = std::stoi(line.substr(fifth_tab + 1));
-                                entry.has_word_weight = true;
-                            }
-                        }
-                        entries.push_back(std::move(entry));
-                    }
-                } catch (const std::exception &) {
-                    continue;
-                }
-            }
-            if (!valid_header || entries.empty()) continue;
-            session_.set_user_dictionary(std::move(entries));
+            auto entries = keynako::load_shared_dictionary_cache(file);
+            if (!entries) continue;
+            session_.set_user_dictionary(std::move(*entries));
             shared_dictionary_path_ = file;
             shared_dictionary_write_time_ = write_time;
             return;
