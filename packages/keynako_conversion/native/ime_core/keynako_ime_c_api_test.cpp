@@ -1,4 +1,5 @@
 #include "keynako_ime_c_api.h"
+#include "shared_dictionary_cache.h"
 
 #include <cassert>
 #include <chrono>
@@ -87,6 +88,10 @@ int main() {
         output << "# keynako-shared-dictionary-v1\tlocal\t1\ttoday\n"
                   "5\tかきくけこ\t個人語\n";
     }
+    const auto combined = keynako::load_combined_dictionary_caches(cache, personal);
+    assert(combined && combined->size() == 2);
+    assert((*combined)[0].source == "personal");
+    assert((*combined)[1].source == "shared");
     assert(keynako_ime_load_combined_dictionary(session, cache.u8string().c_str(), personal.c_str()) == 1);
     assert(std::strcmp(keynako_ime_candidate_at(session, 0), "個人語") == 0);
     std::filesystem::remove(personal);

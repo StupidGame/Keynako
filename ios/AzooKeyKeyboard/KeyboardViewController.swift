@@ -33,6 +33,7 @@ final class KeyboardViewController: UIInputViewController {
     private var candidatePredictionReadings: [String: String] = [:]
     private var unknownPredictionTexts = Set<String>()
     private var candidateExpanded = false
+    private var candidateBarShowsTabs = true
     private var selectedCandidateText: String?
     private var mode = "japanese"
     private var layout = "flick"
@@ -967,6 +968,11 @@ final class KeyboardViewController: UIInputViewController {
 
     private func renderCandidates(showTabs: Bool? = nil) {
         if dictionaryMode != .closed { return }
+        let tabsVisible = showTabs ?? (composing.isEmpty && rawRoman.isEmpty)
+        if tabsVisible != candidateBarShowsTabs {
+            candidateScroll.setContentOffset(.zero, animated: false)
+        }
+        candidateBarShowsTabs = tabsVisible
         candidateStack.removeAllArrangedSubviews()
         if showTabs == true {
             setCandidateExpanded(false)
@@ -980,7 +986,7 @@ final class KeyboardViewController: UIInputViewController {
             renderCursorBar()
             return
         }
-        if showTabs ?? composing.isEmpty && rawRoman.isEmpty {
+        if tabsVisible {
             setCandidateExpanded(false)
             candidateExpandButton.isHidden = true
             if boolSetting("display_tab_bar_button", fallback: true) {
@@ -989,16 +995,28 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         candidates = buildCandidates()
-        candidateStack.addArrangedSubview(makeCandidateButton("＋辞書") { [weak self] in
+        let dictionaryShortcut = makeCandidateButton("＋辞書") { [weak self] in
             guard let self else { return }
             let word = self.selectedCandidateText ?? self.candidates.first ?? ""
             self.showDictionaryEditor(reading: self.candidatePredictionReadings[word] ?? self.composing, word: word)
-        })
+        }
+        candidateStack.addArrangedSubview(dictionaryShortcut)
         for (index, candidate) in candidates.enumerated() {
             let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
             button.longPressAction = { [weak self] in self?.showLegacyReportPrompt(candidate, index: index) }
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
             candidateStack.addArrangedSubview(button)
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.dictionaryMode == .closed, !self.candidateBarShowsTabs,
+                  self.candidateStack.arrangedSubviews.first === dictionaryShortcut,
+                  !self.candidates.isEmpty else { return }
+            let index = self.selectedCandidateText.flatMap { self.candidates.firstIndex(of: $0) } ?? 0
+            guard self.candidateStack.arrangedSubviews.count > index + 1 else { return }
+            self.candidateScroll.layoutIfNeeded()
+            let selectedView = self.candidateStack.arrangedSubviews[index + 1]
+            let frame = self.candidateStack.convert(selectedView.frame, to: self.candidateScroll)
+            self.candidateScroll.scrollRectToVisible(frame, animated: false)
         }
         candidateExpandButton.isHidden = candidates.count <= 3
         candidateExpandButton.backgroundColor = palette.key
@@ -1093,6 +1111,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderTabBar() {
+        candidateStack.addArrangedSubview(makeTabButton("辞書", action: showDictionaryList))
         var values = state["tabBar"] as? [String] ?? ["dismiss", "resize", "emoji", "japanese", "english"]
         let configured = Set(values)
         let customTabs = (state["customTabs"] as? [[String: Any]] ?? [])
@@ -1115,12 +1134,11 @@ final class KeyboardViewController: UIInputViewController {
             default:
                 title = value.hasPrefix("custom:") ? customTabName(String(value.dropFirst(7))) : value
             }
-            candidateStack.addArrangedSubview(makeCandidateButton(title) { [weak self] in self?.selectTab(value) })
+            candidateStack.addArrangedSubview(makeTabButton(title) { [weak self] in self?.selectTab(value) })
         }
         if boolSetting("enable_clipboard_history_manager_tab", fallback: false), !values.contains("clipboard") {
-            candidateStack.addArrangedSubview(makeCandidateButton("📋", action: showClipboardHistory))
+            candidateStack.addArrangedSubview(makeTabButton("📋", action: showClipboardHistory))
         }
-        candidateStack.addArrangedSubview(makeCandidateButton("辞書", action: showDictionaryList))
     }
 
     private func showDictionaryList() {
@@ -1131,9 +1149,11 @@ final class KeyboardViewController: UIInputViewController {
         dictionaryDeleteArmed = false
         cursorBarVisible = false
         candidateStack.removeAllArrangedSubviews()
+        candidateScroll.setContentOffset(.zero, animated: false)
         candidateStack.addArrangedSubview(makeCandidateButton("＋単語") { [weak self] in self?.showDictionaryEditor() })
         candidateStack.addArrangedSubview(makeCandidateButton("辞書を閉じる", action: closeDictionaryEditor))
         candidateGrid.removeAllArrangedSubviews()
+        candidatePanelScroll.setContentOffset(.zero, animated: false)
         let entries = state["userDictionary"] as? [[String: Any]] ?? []
         for entry in entries where entry["isTemplateMode"] as? Bool != true {
             guard let ruby = entry["ruby"] as? String, !ruby.isEmpty,
@@ -1143,6 +1163,9 @@ final class KeyboardViewController: UIInputViewController {
             let button = makeCandidateButton("\(ruby) → \(word)　重要度 \(importance)") { [weak self] in
                 self?.showDictionaryEditor(reading: ruby, word: word, id: id, importance: importance)
             }
+            button.contentHorizontalAlignment = .left
+            button.titleLabel?.lineBreakMode = .byTruncatingTail
+            button.accessibilityLabel = "\(ruby) → \(word)　重要度 \(importance)"
             button.heightAnchor.constraint(equalToConstant: 42).isActive = true
             candidateGrid.addArrangedSubview(button)
         }
@@ -1167,6 +1190,7 @@ final class KeyboardViewController: UIInputViewController {
         dictionaryEnglishReading = mode == "english" || (id != nil && reading.unicodeScalars.allSatisfy { $0.isASCII })
         dictionaryDeleteArmed = false
         candidateGrid.removeAllArrangedSubviews()
+        candidatePanelScroll.setContentOffset(.zero, animated: false)
         func field(_ label: String, _ value: String) -> UITextField {
             let view = UITextField()
             view.placeholder = label
@@ -1200,6 +1224,22 @@ final class KeyboardViewController: UIInputViewController {
 
     private func renderDictionaryEditorActions() {
         candidateStack.removeAllArrangedSubviews()
+        candidateScroll.setContentOffset(.zero, animated: false)
+        candidateStack.addArrangedSubview(makeCandidateButton("保存", action: saveDictionaryEntry))
+        candidateStack.addArrangedSubview(makeCandidateButton("戻る", action: showDictionaryList))
+        if dictionaryEditingId != nil {
+            candidateStack.addArrangedSubview(makeCandidateButton(dictionaryDeleteArmed ? "削除する" : "削除") { [weak self] in
+                guard let self else { return }
+                if self.dictionaryDeleteArmed { self.deleteDictionaryEntry() } else {
+                    self.dictionaryDeleteArmed = true
+                    self.renderDictionaryEditorActions()
+                }
+            })
+        }
+        candidateStack.addArrangedSubview(makeCandidateButton("貼付") { [weak self] in
+            guard let self, self.hasFullAccess, let value = UIPasteboard.general.string else { return }
+            self.editDictionaryText(value)
+        })
         candidateStack.addArrangedSubview(makeCandidateButton(dictionaryEnglishReading ? "英語の読み" : "日本語の読み") { [weak self] in
             guard let self else { return }
             self.dictionaryEnglishReading.toggle()
@@ -1210,21 +1250,6 @@ final class KeyboardViewController: UIInputViewController {
             self.dictionaryImportance = self.dictionaryImportance % 5 + 1
             self.renderDictionaryEditorActions()
         })
-        candidateStack.addArrangedSubview(makeCandidateButton("貼付") { [weak self] in
-            guard let self, self.hasFullAccess, let value = UIPasteboard.general.string else { return }
-            self.editDictionaryText(value)
-        })
-        candidateStack.addArrangedSubview(makeCandidateButton("保存", action: saveDictionaryEntry))
-        if dictionaryEditingId != nil {
-            candidateStack.addArrangedSubview(makeCandidateButton(dictionaryDeleteArmed ? "削除する" : "削除") { [weak self] in
-                guard let self else { return }
-                if self.dictionaryDeleteArmed { self.deleteDictionaryEntry() } else {
-                    self.dictionaryDeleteArmed = true
-                    self.renderDictionaryEditorActions()
-                }
-            })
-        }
-        candidateStack.addArrangedSubview(makeCandidateButton("戻る", action: showDictionaryList))
     }
 
     private func saveDictionaryEntry() {
@@ -2829,6 +2854,13 @@ final class KeyboardViewController: UIInputViewController {
         button.layer.cornerRadius = 6
         button.titleLabel?.font = .systemFont(ofSize: CGFloat(doubleSetting("result_view_font_size", fallback: 16).positiveOr(16)))
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 15, bottom: 0, right: 15)
+        return button
+    }
+
+    private func makeTabButton(_ title: String, action: @escaping () -> Void) -> ClosureButton {
+        let button = makeCandidateButton(title, action: action)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         return button
     }
 

@@ -24,6 +24,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.net.Uri
 import android.text.InputType
+import android.text.TextUtils
 import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -116,6 +117,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var keyboardSurface: FrameLayout
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
+    private lateinit var candidateScroll: HorizontalScrollView
     private lateinit var candidateExpandButton: TextView
     private lateinit var candidatePanel: ScrollView
     private lateinit var candidatePanelContent: LinearLayout
@@ -220,7 +222,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 insets
             }
         }
-        val candidateScroll = HorizontalScrollView(this).apply {
+        candidateScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             candidateRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1936,6 +1938,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (!::candidateRow.isInitialized) return
         if (dictionaryMode != DictionaryMode.CLOSED) return
         candidateRow.removeAllViews()
+        candidateScroll.scrollTo(0, 0)
         if (showTabs) {
             candidateExpanded = false
             candidatePanel.visibility = View.GONE
@@ -1985,6 +1988,17 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
             }, candidateButtonLayoutParams())
         }
+        val selectedView = candidateRow.getChildAt(selectedCandidate + 1)
+        candidateScroll.post {
+            if (dictionaryMode != DictionaryMode.CLOSED || selectedView?.parent !== candidateRow ||
+                candidateScroll.width <= 0) return@post
+            val visibleLeft = candidateScroll.scrollX
+            val visibleRight = visibleLeft + candidateScroll.width
+            when {
+                selectedView.left < visibleLeft -> candidateScroll.scrollTo(selectedView.left, 0)
+                selectedView.right > visibleRight -> candidateScroll.scrollTo(selectedView.right - candidateScroll.width, 0)
+            }
+        }
         val canExpand = candidates.size > 3
         candidateExpandButton.background = roundedDrawable(palette.key, dp(6).toFloat())
         candidateExpandButton.setTextColor(palette.text)
@@ -2025,6 +2039,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderTabBar() {
+        addCandidateButton("辞書", horizontalPadding = 8, minimumWidth = 43) { showDictionaryList() }
         val values = resolvedTabBar()
         for (index in 0 until values.length()) {
             val value = values.optString(index)
@@ -2043,7 +2058,8 @@ class AzooKeyInputMethodService : InputMethodService() {
                 textLocale = Locale.JAPAN
                 gravity = Gravity.CENTER
                 setTextColor(palette.text)
-                setPadding(dp(16), 0, dp(16), 0)
+                setPadding(dp(8), 0, dp(8), 0)
+                minimumWidth = dp(43)
                 background = roundedDrawable(palette.key, dp(6).toFloat())
                 isClickable = true
                 isFocusable = false
@@ -2065,12 +2081,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                 textLocale = Locale.JAPAN
                 gravity = Gravity.CENTER
                 setTextColor(palette.text)
-                setPadding(dp(16), 0, dp(16), 0)
+                setPadding(dp(8), 0, dp(8), 0)
+                minimumWidth = dp(43)
                 background = roundedDrawable(palette.key, dp(6).toFloat())
                 setOnClickListener { showClipboardHistory() }
             }, candidateButtonLayoutParams())
         }
-        addCandidateButton("辞書") { showDictionaryList() }
     }
 
     private fun showDictionaryList() {
@@ -2083,9 +2099,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateExpanded = false
         candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
+        candidateScroll.scrollTo(0, 0)
         addCandidateButton("＋単語") { showDictionaryEditor() }
         addCandidateButton("辞書を閉じる") { closeDictionaryEditor() }
         candidatePanelContent.removeAllViews()
+        candidatePanel.scrollTo(0, 0)
         val entries = state.optJSONArray("userDictionary") ?: JSONArray()
         var visible = 0
         for (index in 0 until entries.length()) {
@@ -2103,6 +2121,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                 setPadding(dp(16), 0, dp(16), 0)
                 setTextColor(palette.text)
                 textSize = 15f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                contentDescription = "$ruby → $word　重要度 ${entry.optInt("importance", 3)}"
                 background = roundedDrawable(palette.key, dp(6).toFloat())
                 setOnClickListener { showDictionaryEditor(ruby, word, id, entry.optInt("importance", 3)) }
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(43)).apply {
@@ -2128,6 +2149,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateExpanded = false
         candidateExpandButton.visibility = View.GONE
         candidatePanelContent.removeAllViews()
+        candidatePanel.scrollTo(0, 0)
         fun field(label: String, value: String): EditText = EditText(this).apply {
             hint = label
             setSingleLine(true)
@@ -2157,6 +2179,16 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun renderDictionaryEditorActions() {
         candidateRow.removeAllViews()
+        candidateScroll.scrollTo(0, 0)
+        addCandidateButton("保存") { saveDictionaryEntry() }
+        addCandidateButton("戻る") { showDictionaryList() }
+        if (dictionaryEditingId != null) addCandidateButton(if (dictionaryDeleteArmed) "削除する" else "削除") {
+            if (dictionaryDeleteArmed) deleteDictionaryEntry() else {
+                dictionaryDeleteArmed = true
+                renderDictionaryEditorActions()
+            }
+        }
+        addCandidateButton("貼付") { paste() }
         addCandidateButton(if (dictionaryEnglishReading) "英語の読み" else "日本語の読み") {
             dictionaryEnglishReading = !dictionaryEnglishReading
             renderDictionaryEditorActions()
@@ -2165,15 +2197,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             dictionaryImportance = dictionaryImportance % 5 + 1
             renderDictionaryEditorActions()
         }
-        addCandidateButton("貼付") { paste() }
-        addCandidateButton("保存") { saveDictionaryEntry() }
-        if (dictionaryEditingId != null) addCandidateButton(if (dictionaryDeleteArmed) "削除する" else "削除") {
-            if (dictionaryDeleteArmed) deleteDictionaryEntry() else {
-                dictionaryDeleteArmed = true
-                renderDictionaryEditorActions()
-            }
-        }
-        addCandidateButton("戻る") { showDictionaryList() }
     }
 
     private fun saveDictionaryEntry() {
@@ -2427,13 +2450,19 @@ class AzooKeyInputMethodService : InputMethodService() {
             .edit().putString(MainActivity.STATE_KEY, state.toString()).apply()
     }
 
-    private fun addCandidateButton(label: String, action: () -> Unit) {
+    private fun addCandidateButton(
+        label: String,
+        horizontalPadding: Int = 15,
+        minimumWidth: Int = 0,
+        action: () -> Unit,
+    ) {
         candidateRow.addView(TextView(this).apply {
             text = label
             textLocale = Locale.JAPAN
             gravity = Gravity.CENTER
             setTextColor(palette.text)
-            setPadding(dp(15), 0, dp(15), 0)
+            setPadding(dp(horizontalPadding), 0, dp(horizontalPadding), 0)
+            if (minimumWidth > 0) this.minimumWidth = dp(minimumWidth)
             background = roundedDrawable(palette.key, dp(6).toFloat())
             setOnClickListener { action() }
         }, candidateButtonLayoutParams())

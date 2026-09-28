@@ -79,6 +79,7 @@ inline std::optional<std::vector<DictionaryEntry>> load_combined_dictionary_cach
     if (personal_exists) {
         auto personal = load_shared_dictionary_cache(personal_path);
         if (!personal) return shared;
+        for (auto &entry : *personal) entry.source = "personal";
         personal->insert(personal->end(),
                          std::make_move_iterator(shared->begin()),
                          std::make_move_iterator(shared->end()));

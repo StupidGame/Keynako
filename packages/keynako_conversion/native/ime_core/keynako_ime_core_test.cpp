@@ -75,6 +75,17 @@ int main() {
     assert(prefix_prediction.candidates().size() >= 4);
     assert(prefix_prediction.candidates()[2].text == "日本");
     assert(prefix_prediction.candidates()[2].source == "shared-prediction");
+    keynako::DictionaryEntry personal_entry{"てすと", "個人語", 5};
+    personal_entry.source = "personal";
+    ImeSession personal_dictionary;
+    personal_dictionary.set_user_dictionary({personal_entry});
+    for (const char value : std::string("tesuto")) personal_dictionary.append_ascii(value);
+    assert(personal_dictionary.candidates().front().source == "personal");
+    personal_dictionary.clear();
+    for (const char value : std::string("tesu")) personal_dictionary.append_ascii(value);
+    assert(std::any_of(personal_dictionary.candidates().begin(), personal_dictionary.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "個人語" &&
+            candidate.source == "personal-prediction"; }));
     ImeSession ranked_prediction;
     ranked_prediction.set_user_dictionary({
         {"テストケース", "長い補完", 3},

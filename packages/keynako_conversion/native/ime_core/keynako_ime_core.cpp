@@ -562,15 +562,17 @@ void ImeSession::rebuild_candidates() {
         std::string text;
         int importance;
         std::size_t remaining;
+        std::string source;
     };
     std::vector<SharedPrediction> shared_predictions;
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == conversion_reading) {
-            append_converted(entry.value, "shared");
+            append_converted(entry.value, entry.source.c_str());
         } else if (entry.reading.size() > conversion_reading.size() &&
                    entry.reading.rfind(conversion_reading, 0) == 0) {
             shared_predictions.push_back({entry.value, entry.importance,
-                utf8_character_count(entry.reading) - utf8_character_count(conversion_reading)});
+                utf8_character_count(entry.reading) - utf8_character_count(conversion_reading),
+                entry.source == "personal" ? "personal-prediction" : "shared-prediction"});
         }
     }
     std::stable_sort(shared_predictions.begin(), shared_predictions.end(),
@@ -583,7 +585,7 @@ void ImeSession::rebuild_candidates() {
                                              : left_score > right_score;
         });
     for (const auto &entry : shared_predictions) {
-        append_prediction(entry.text, "shared-prediction");
+        append_prediction(entry.text, entry.source.c_str());
     }
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;

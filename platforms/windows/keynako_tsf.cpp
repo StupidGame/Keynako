@@ -1053,7 +1053,8 @@ private:
         const auto &selected = session_.candidates()[session_.selected_index()];
         if (selected.text.empty() || selected.source == "reading" ||
             selected.source == "katakana" || selected.source == "latin" ||
-            selected.source == "shared") {
+            selected.source == "shared" || selected.source == "personal" ||
+            selected.source == "personal-prediction") {
             return std::nullopt;
         }
         const std::string &suggested = session_.candidates().front().text;
@@ -1488,13 +1489,11 @@ private:
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
             const std::string &source = session_.candidates()[index].source;
-            const wchar_t *source_text = source == "zenzai"
-                ? L"Zenzai"
-                : source == "shared"
-                    ? L"共有"
-                    : source.find("-prediction") != std::string::npos
-                        ? L"予測"
-                        : L"";
+            const wchar_t *source_text = L"";
+            if (source == "zenzai") source_text = L"Zenzai";
+            else if (source == "shared") source_text = L"共有";
+            else if (source == "personal" || source == "personal-prediction") source_text = L"個人";
+            else if (source.find("-prediction") != std::string::npos) source_text = L"予測";
             if (*source_text) {
                 RECT source_rect = row;
                 source_rect.right -= MulDiv(12, static_cast<int>(dpi), 96);

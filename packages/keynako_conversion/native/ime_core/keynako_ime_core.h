@@ -26,6 +26,7 @@ struct DictionaryEntry {
     int lcid = 1285;
     int rcid = 1285;
     bool has_word_weight = false;
+    std::string source = "shared";
 };
 
 // Platform-neutral input state. Strings crossing this boundary are UTF-8.
