@@ -352,7 +352,8 @@ final class KeyboardViewController: UIInputViewController {
             }
             for character in letters {
                 let base = String(character)
-                let label = shift || capsLock ? base.uppercased() : base
+                let label = shift || capsLock || textDocumentProxy.autocapitalizationType == .allCharacters
+                    ? base.uppercased() : base
                 row.addArrangedSubview(makeButton(label) { [weak self] in self?.input(label) })
             }
             if index == 2 {
@@ -462,7 +463,8 @@ final class KeyboardViewController: UIInputViewController {
     private func synchronizeKeyboardWithInput(force: Bool) {
         let keyboardType = textDocumentProxy.keyboardType ?? .default
         let contentType = textDocumentProxy.textContentType?.rawValue ?? ""
-        let signature = "\(keyboardType.rawValue)|\(contentType)"
+        let capitalization = textDocumentProxy.autocapitalizationType ?? .sentences
+        let signature = "\(keyboardType.rawValue)|\(contentType)|\(capitalization.rawValue)"
         guard force || signature != inputTraitSignature else { return }
         inputTraitSignature = signature
 
@@ -470,7 +472,8 @@ final class KeyboardViewController: UIInputViewController {
         if boolSetting("automatic_keyboard_switching", fallback: true) {
             requestedMode = requestedModeForCurrentInput(
                 keyboardType: keyboardType,
-                contentType: textDocumentProxy.textContentType
+                contentType: textDocumentProxy.textContentType,
+                capitalization: capitalization
             )
         } else {
             requestedMode = "japanese"
@@ -490,7 +493,8 @@ final class KeyboardViewController: UIInputViewController {
 
     private func requestedModeForCurrentInput(
         keyboardType: UIKeyboardType,
-        contentType: UITextContentType?
+        contentType: UITextContentType?,
+        capitalization: UITextAutocapitalizationType
     ) -> String {
         switch keyboardType {
         case .numberPad, .decimalPad, .asciiCapableNumberPad, .numbersAndPunctuation:
@@ -502,6 +506,7 @@ final class KeyboardViewController: UIInputViewController {
         default:
             break
         }
+        if capitalization == .allCharacters { return "english" }
         guard let contentType else { return "japanese" }
         switch contentType {
         case .emailAddress, .URL, .username, .password, .newPassword, .oneTimeCode:
@@ -1376,11 +1381,16 @@ final class KeyboardViewController: UIInputViewController {
 
     private func inputEnglishText(_ value: String) {
         if dictionaryMode == .edit { editDictionaryText(value); return }
-        let resolved = shift || capsLock ? value.uppercased() : value
+        let allCapsInput = textDocumentProxy.autocapitalizationType == .allCharacters
+        let resolved = shift || capsLock || allCapsInput ? value.uppercased() : value
         let isWordInput = !resolved.isEmpty && resolved.unicodeScalars.allSatisfy {
             (0x41 ... 0x5a).contains($0.value) || (0x61 ... 0x7a).contains($0.value)
         }
-        if isWordInput {
+        if allCapsInput {
+            // A host can commit uppercase text as soon as it arrives. Avoid
+            // rewriting that text as an active composition on the next key.
+            directCommit(resolved)
+        } else if isWordInput {
             composing += resolved
             updateComposition()
         } else {
@@ -1412,9 +1422,12 @@ final class KeyboardViewController: UIInputViewController {
             textDocumentProxy.setMarkedText(value, selectedRange: NSRange(location: value.utf16.count, length: 0))
             if commit { textDocumentProxy.unmarkText() }
         } else {
-            // insertText replaces a host selection. Doing this before the
-            // legacy delete-and-reinsert path prevents deleting past it.
-            textDocumentProxy.insertText("")
+            // Clear an actual host selection before replacing our displayed
+            // composition. An empty insert on every key can disturb editors
+            // that transform or immediately commit the inserted text.
+            if textDocumentProxy.selectedText?.isEmpty == false {
+                textDocumentProxy.insertText("")
+            }
             for _ in lastDisplayed { textDocumentProxy.deleteBackward() }
             textDocumentProxy.insertText(value)
         }
@@ -1993,7 +2006,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private var shouldUppercaseEnglishLabels: Bool {
-        mode == "english" && (shift || capsLock)
+        mode == "english" && (shift || capsLock || textDocumentProxy.autocapitalizationType == .allCharacters)
     }
 
     private func customInput(_ value: String) {

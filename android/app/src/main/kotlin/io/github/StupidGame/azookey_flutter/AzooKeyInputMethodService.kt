@@ -83,6 +83,7 @@ import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.deleteEditorText
 import io.github.StupidGame.azookey_flutter.input.firedLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.isSensitiveInputType
+import io.github.StupidGame.azookey_flutter.input.isAllCapsTextInput
 import io.github.StupidGame.azookey_flutter.input.kanaCharacterFormReplacement
 import io.github.StupidGame.azookey_flutter.input.keyboardSettingKey
 import io.github.StupidGame.azookey_flutter.input.lastCharactersReplacementIn
@@ -133,6 +134,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var selectedCandidate = 0
     private var candidateSelectedExplicitly = false
     private var sensitiveInput = false
+    private var allCapsInput = false
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
     private var candidates = mutableListOf<String>()
@@ -284,6 +286,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         cursorBarVisible = false
         cursorBarView = null
         sensitiveInput = isSensitiveInputType(info?.inputType ?: InputType.TYPE_NULL)
+        allCapsInput = isAllCapsTextInput(info?.inputType ?: InputType.TYPE_NULL)
         val requestedMode = if (settings.optBoolean("automatic_keyboard_switching", true)) {
             requestedKeyboardMode(
                 inputType = info?.inputType ?: InputType.TYPE_NULL,
@@ -545,7 +548,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             ),
             listOf(
                 FlickKey(""),
-                FlickKey(if (shift || capsLock) "A/a" else "a/A", action = "shiftEnglish", special = true),
+                FlickKey(if (shift || capsLock || allCapsInput) "A/a" else "a/A", action = "shiftEnglish", special = true),
                 FlickKey("'\"()", "'", "\"", "(", ")", null),
                 FlickKey(".,?!", ".", ",", "?", "!", "'", customTarget = "kana_symbols"),
                 FlickKey(""),
@@ -618,7 +621,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 )
             }
             for (letter in letters) {
-                val label = if (shift || capsLock) letter.uppercase() else letter.toString()
+                val label = if (shift || capsLock || allCapsInput) letter.uppercase() else letter.toString()
                 row.addView(createKey(label, false, scale) { inputText(label) }, weightParams())
             }
             if (rowIndex == 2) {
@@ -2510,8 +2513,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             editDictionaryText(value)
             return
         }
-        val resolved = if (shift || capsLock) value.uppercase(Locale.ROOT) else value
-        if (sensitiveInput) {
+        val resolved = if (shift || capsLock || allCapsInput) value.uppercase(Locale.ROOT) else value
+        if (sensitiveInput || allCapsInput) {
+            // Some editors replace all-caps composing text with committed text.
+            // Replacing that composition on the next key would duplicate it.
             directCommit(resolved)
         } else if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
             prepareSelectionForInput()
@@ -3388,7 +3393,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun shouldUppercaseEnglishLabels(): Boolean =
-        mode == "english" && (shift || capsLock)
+        mode == "english" && (shift || capsLock || allCapsInput)
 
     private fun customInput(value: String) {
         if (value.isEmpty()) return
