@@ -51,6 +51,7 @@ static NSString *PairedDelimiter(unichar value) {
 - (void)reloadSharedDictionary:(BOOL)force;
 - (BOOL)requestSharedDictionaryRefresh:(BOOL)force;
 - (void)refreshSharedDictionary:(id)sender;
+- (void)openPersonalDictionary:(id)sender;
 - (void)selectJapaneseMode:(id)sender;
 - (void)selectEnglishMode:(id)sender;
 - (void)toggleLiveConversion:(id)sender;
@@ -62,6 +63,8 @@ static NSString *PairedDelimiter(unichar value) {
     BOOL _dictionariesConfigured;
     std::filesystem::path _sharedDictionaryPath;
     std::filesystem::file_time_type _sharedDictionaryWriteTime;
+    std::filesystem::path _personalDictionaryPath;
+    std::filesystem::file_time_type _personalDictionaryWriteTime;
     std::chrono::steady_clock::time_point _lastDictionaryCheck;
     std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
     std::chrono::steady_clock::time_point _lastBackspacePress;
@@ -212,6 +215,12 @@ static NSString *PairedDelimiter(unichar value) {
          keyEquivalent:@""];
     refresh.target = self;
     [menu addItem:refresh];
+    NSMenuItem *personal = [[NSMenuItem alloc]
+        initWithTitle:@"個人辞書を編集"
+                action:@selector(openPersonalDictionary:)
+         keyEquivalent:@""];
+    personal.target = self;
+    [menu addItem:personal];
     return menu;
 }
 
@@ -239,6 +248,23 @@ static NSString *PairedDelimiter(unichar value) {
 - (void)refreshSharedDictionary:(id)sender {
     (void)sender;
     [self requestSharedDictionaryRefresh:YES];
+}
+
+- (void)openPersonalDictionary:(id)sender {
+    (void)sender;
+    NSArray<NSString *> *executables = @[
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Keynako.app/Contents/MacOS/Keynako"],
+        @"/Applications/Keynako.app/Contents/MacOS/Keynako",
+    ];
+    for (NSString *candidate in executables) {
+        if (![[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) continue;
+        NSTask *task = [[NSTask alloc] init];
+        task.executableURL = [NSURL fileURLWithPath:candidate];
+        task.arguments = @[@"--dictionary"];
+        NSError *error = nil;
+        [task launchAndReturnError:&error];
+        return;
+    }
 }
 
 - (NSArray *)candidates:(id)sender {
@@ -409,19 +435,32 @@ static NSString *PairedDelimiter(unichar value) {
                                                         ofType:@"tsv"];
     if (bundled.length > 0) [paths addObject:bundled];
 
+    NSString *personalValue = [NSHomeDirectory() stringByAppendingPathComponent:
+        @"Library/Application Support/Keynako/user_dictionary.tsv"];
+    const std::filesystem::path personalPath(personalValue.UTF8String);
+    std::error_code personalError;
+    std::filesystem::file_time_type personalWriteTime{};
+    if (std::filesystem::exists(personalPath, personalError) && !personalError) {
+        personalWriteTime = std::filesystem::last_write_time(personalPath, personalError);
+        if (personalError) return;
+    }
+
     for (NSString *pathValue in paths) {
         const std::filesystem::path path(pathValue.UTF8String);
         std::error_code error;
         if (!std::filesystem::exists(path, error) || error) continue;
         const auto writeTime = std::filesystem::last_write_time(path, error);
         if (error) continue;
-        if (path == _sharedDictionaryPath && writeTime == _sharedDictionaryWriteTime) return;
+        if (path == _sharedDictionaryPath && writeTime == _sharedDictionaryWriteTime &&
+            personalPath == _personalDictionaryPath && personalWriteTime == _personalDictionaryWriteTime) return;
 
-        auto entries = keynako::load_shared_dictionary_cache(path);
+        auto entries = keynako::load_combined_dictionary_caches(path, personalPath);
         if (!entries) continue;
         _session.set_user_dictionary(std::move(*entries));
         _sharedDictionaryPath = path;
         _sharedDictionaryWriteTime = writeTime;
+        _personalDictionaryPath = personalPath;
+        _personalDictionaryWriteTime = personalWriteTime;
         return;
     }
 }

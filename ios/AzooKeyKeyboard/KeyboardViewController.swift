@@ -2,6 +2,8 @@ import UIKit
 import AzooKeyConverterBridge
 
 final class KeyboardViewController: UIInputViewController {
+    private enum DictionaryMode { case closed, list, edit }
+
     private let backgroundImageView = KeyboardBackgroundImageView()
     private let rootStack = UIStackView()
     private let candidateScroll = UIScrollView()
@@ -20,6 +22,14 @@ final class KeyboardViewController: UIInputViewController {
     private var rawRoman = ""
     private var lastDisplayed = ""
     private var candidates: [String] = []
+    private var dictionaryMode: DictionaryMode = .closed
+    private var dictionaryEditingId: Int?
+    private var dictionaryImportance = 3
+    private var dictionaryEnglishReading = false
+    private var dictionaryDeleteArmed = false
+    private weak var dictionaryReadingField: UITextField?
+    private weak var dictionaryWordField: UITextField?
+    private weak var dictionaryActiveField: UITextField?
     private var candidatePredictionReadings: [String: String] = [:]
     private var unknownPredictionTexts = Set<String>()
     private var candidateExpanded = false
@@ -55,6 +65,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        dictionaryMode = .closed
         reloadState()
         loadOSLexiconIfNeeded()
         resetComposition()
@@ -955,6 +966,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderCandidates(showTabs: Bool? = nil) {
+        if dictionaryMode != .closed { return }
         candidateStack.removeAllArrangedSubviews()
         if showTabs == true {
             setCandidateExpanded(false)
@@ -977,6 +989,11 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         candidates = buildCandidates()
+        candidateStack.addArrangedSubview(makeCandidateButton("＋辞書") { [weak self] in
+            guard let self else { return }
+            let word = self.selectedCandidateText ?? self.candidates.first ?? ""
+            self.showDictionaryEditor(reading: self.candidatePredictionReadings[word] ?? self.composing, word: word)
+        })
         for (index, candidate) in candidates.enumerated() {
             let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
             button.longPressAction = { [weak self] in self?.showLegacyReportPrompt(candidate, index: index) }
@@ -1103,9 +1120,197 @@ final class KeyboardViewController: UIInputViewController {
         if boolSetting("enable_clipboard_history_manager_tab", fallback: false), !values.contains("clipboard") {
             candidateStack.addArrangedSubview(makeCandidateButton("📋", action: showClipboardHistory))
         }
+        candidateStack.addArrangedSubview(makeCandidateButton("辞書", action: showDictionaryList))
+    }
+
+    private func showDictionaryList() {
+        dictionaryMode = .list
+        dictionaryReadingField = nil
+        dictionaryWordField = nil
+        dictionaryActiveField = nil
+        dictionaryDeleteArmed = false
+        cursorBarVisible = false
+        candidateStack.removeAllArrangedSubviews()
+        candidateStack.addArrangedSubview(makeCandidateButton("＋単語") { [weak self] in self?.showDictionaryEditor() })
+        candidateStack.addArrangedSubview(makeCandidateButton("辞書を閉じる", action: closeDictionaryEditor))
+        candidateGrid.removeAllArrangedSubviews()
+        let entries = state["userDictionary"] as? [[String: Any]] ?? []
+        for entry in entries where entry["isTemplateMode"] as? Bool != true {
+            guard let ruby = entry["ruby"] as? String, !ruby.isEmpty,
+                  let word = entry["word"] as? String, !word.isEmpty else { continue }
+            let id = (entry["id"] as? NSNumber)?.intValue
+            let importance = (entry["importance"] as? NSNumber)?.intValue ?? 3
+            let button = makeCandidateButton("\(ruby) → \(word)　重要度 \(importance)") { [weak self] in
+                self?.showDictionaryEditor(reading: ruby, word: word, id: id, importance: importance)
+            }
+            button.heightAnchor.constraint(equalToConstant: 42).isActive = true
+            candidateGrid.addArrangedSubview(button)
+        }
+        if candidateGrid.arrangedSubviews.isEmpty {
+            let label = UILabel()
+            label.text = "登録した単語はまだないよ。＋単語から追加できる"
+            label.textColor = palette.text
+            label.textAlignment = .center
+            label.font = .systemFont(ofSize: 13)
+            candidateGrid.addArrangedSubview(label)
+        }
+        candidateExpandButton.isHidden = true
+        setCandidateExpanded(true)
+    }
+
+    private func showDictionaryEditor(
+        reading: String = "", word: String = "", id: Int? = nil, importance: Int = 3
+    ) {
+        dictionaryMode = .edit
+        dictionaryEditingId = id
+        dictionaryImportance = min(5, max(1, importance))
+        dictionaryEnglishReading = mode == "english" || (id != nil && reading.unicodeScalars.allSatisfy { $0.isASCII })
+        dictionaryDeleteArmed = false
+        candidateGrid.removeAllArrangedSubviews()
+        func field(_ label: String, _ value: String) -> UITextField {
+            let view = UITextField()
+            view.placeholder = label
+            view.text = value
+            view.textColor = palette.text
+            view.backgroundColor = palette.key
+            view.borderStyle = .roundedRect
+            view.inputView = UIView(frame: .zero)
+            view.addTarget(self, action: #selector(dictionaryFieldDidBegin(_:)), for: .editingDidBegin)
+            view.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            candidateGrid.addArrangedSubview(view)
+            return view
+        }
+        dictionaryReadingField = field("読み（ローマ字も入力できる）", reading)
+        dictionaryWordField = field("単語", word)
+        dictionaryActiveField = reading.isEmpty ? dictionaryReadingField : dictionaryWordField
+        let hint = UILabel()
+        hint.text = "欄を選んで編集。漢字は候補から登録するか貼り付けできる"
+        hint.textColor = palette.text
+        hint.font = .systemFont(ofSize: 12)
+        hint.numberOfLines = 2
+        candidateGrid.addArrangedSubview(hint)
+        candidateExpandButton.isHidden = true
+        setCandidateExpanded(true)
+        renderDictionaryEditorActions()
+    }
+
+    @objc private func dictionaryFieldDidBegin(_ field: UITextField) {
+        dictionaryActiveField = field
+    }
+
+    private func renderDictionaryEditorActions() {
+        candidateStack.removeAllArrangedSubviews()
+        candidateStack.addArrangedSubview(makeCandidateButton(dictionaryEnglishReading ? "英語の読み" : "日本語の読み") { [weak self] in
+            guard let self else { return }
+            self.dictionaryEnglishReading.toggle()
+            self.renderDictionaryEditorActions()
+        })
+        candidateStack.addArrangedSubview(makeCandidateButton("重要度 \(dictionaryImportance)") { [weak self] in
+            guard let self else { return }
+            self.dictionaryImportance = self.dictionaryImportance % 5 + 1
+            self.renderDictionaryEditorActions()
+        })
+        candidateStack.addArrangedSubview(makeCandidateButton("貼付") { [weak self] in
+            guard let self, self.hasFullAccess, let value = UIPasteboard.general.string else { return }
+            self.editDictionaryText(value)
+        })
+        candidateStack.addArrangedSubview(makeCandidateButton("保存", action: saveDictionaryEntry))
+        if dictionaryEditingId != nil {
+            candidateStack.addArrangedSubview(makeCandidateButton(dictionaryDeleteArmed ? "削除する" : "削除") { [weak self] in
+                guard let self else { return }
+                if self.dictionaryDeleteArmed { self.deleteDictionaryEntry() } else {
+                    self.dictionaryDeleteArmed = true
+                    self.renderDictionaryEditorActions()
+                }
+            })
+        }
+        candidateStack.addArrangedSubview(makeCandidateButton("戻る", action: showDictionaryList))
+    }
+
+    private func saveDictionaryEntry() {
+        let rawReading = dictionaryReadingField?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let word = dictionaryWordField?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let ruby = dictionaryEnglishReading
+            ? rawReading.lowercased()
+            : katakanaToHiragana(romanToHiragana(rawReading.lowercased()))
+        guard !ruby.isEmpty, !word.isEmpty, ruby.count <= 128, word.count <= 128,
+              !ruby.contains("\t"), !word.contains("\t"),
+              !ruby.contains("\n"), !word.contains("\n") else {
+            renderDictionaryEditorActions()
+            candidateStack.addArrangedSubview(makeCandidateButton("読みと単語を確認してね", action: {}))
+            return
+        }
+        var entries = state["userDictionary"] as? [[String: Any]] ?? []
+        let nextId = (entries.compactMap { ($0["id"] as? NSNumber)?.intValue }.max() ?? -1) + 1
+        let editedIndex = dictionaryEditingId.flatMap { id in
+            entries.firstIndex { ($0["id"] as? NSNumber)?.intValue == id }
+        }
+        let duplicateIndex = entries.firstIndex {
+            ($0["isTemplateMode"] as? Bool) != true &&
+                ($0["ruby"] as? String) == ruby && ($0["word"] as? String) == word
+        }
+        if let editedIndex, let duplicateIndex, editedIndex != duplicateIndex {
+            renderDictionaryEditorActions()
+            candidateStack.addArrangedSubview(makeCandidateButton("同じ読みと単語が登録済みだよ", action: {}))
+            return
+        }
+        let index = editedIndex ?? duplicateIndex
+        var entry = index.map { entries[$0] } ?? [:]
+        entry["id"] = (entry["id"] as? NSNumber)?.intValue ?? nextId
+        entry["ruby"] = ruby
+        entry["word"] = word
+        entry["importance"] = dictionaryImportance
+        entry["shared"] = false
+        entry["isTemplateMode"] = false
+        if let index { entries[index] = entry } else { entries.append(entry) }
+        state["userDictionary"] = entries
+        saveState()
+        showDictionaryList()
+    }
+
+    private func deleteDictionaryEntry() {
+        guard let id = dictionaryEditingId else { return }
+        var entries = state["userDictionary"] as? [[String: Any]] ?? []
+        entries.removeAll { ($0["id"] as? NSNumber)?.intValue == id }
+        state["userDictionary"] = entries
+        saveState()
+        showDictionaryList()
+    }
+
+    private func closeDictionaryEditor() {
+        dictionaryMode = .closed
+        dictionaryReadingField = nil
+        dictionaryWordField = nil
+        dictionaryActiveField = nil
+        setCandidateExpanded(false)
+        renderCandidates()
+    }
+
+    private func editDictionaryText(_ value: String) {
+        guard let field = dictionaryActiveField,
+              !value.contains("\n"), !value.contains("\r") else { return }
+        let selection = field.selectedTextRange
+        let selectedCount = selection.flatMap { field.text(in: $0)?.count } ?? 0
+        guard (field.text?.count ?? 0) - selectedCount + value.count <= 128 else { return }
+        if let selection {
+            field.replace(selection, withText: value)
+        } else {
+            field.text = (field.text ?? "") + value
+        }
+    }
+
+    private func deleteDictionaryText() {
+        guard let field = dictionaryActiveField else { return }
+        if field.selectedTextRange != nil {
+            field.deleteBackward()
+        } else {
+            field.text = String((field.text ?? "").dropLast())
+        }
     }
 
     private func selectTab(_ value: String) {
+        if dictionaryMode == .edit && !["dismiss", "japanese", "english"].contains(value) { return }
+        if dictionaryMode == .list { closeDictionaryEditor() }
         switch value {
         case "dismiss": dismissKeyboard()
         case "emoji": showEmoji()
@@ -1120,6 +1325,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func input(_ value: String) {
+        if dictionaryMode == .edit { editDictionaryText(value); return }
         if !value.isEmpty,
            value.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
             directCommit(value)
@@ -1144,6 +1350,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func inputEnglishText(_ value: String) {
+        if dictionaryMode == .edit { editDictionaryText(value); return }
         let resolved = shift || capsLock ? value.uppercased() : value
         let isWordInput = !resolved.isEmpty && resolved.unicodeScalars.allSatisfy {
             (0x41 ... 0x5a).contains($0.value) || (0x61 ... 0x7a).contains($0.value)
@@ -1227,6 +1434,10 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func directCommit(_ value: String, normalizePunctuation: Bool = true) {
+        if dictionaryMode == .edit {
+            if value.contains("\n") { saveDictionaryEntry() } else { editDictionaryText(value) }
+            return
+        }
         commitComposition()
         let input = normalizePunctuation ? punctuationForInputMode(value, mode: mode) : value
         if let closingDelimiter = closingDelimiter(for: input) {
@@ -1241,6 +1452,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func delete() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         if layout == "qwerty", !rawRoman.isEmpty {
             rawRoman.removeLast()
@@ -1274,6 +1486,7 @@ final class KeyboardViewController: UIInputViewController {
     /// The first press remains immediate. A second quick press completes the
     /// one word that was under the cursor before that first character moved.
     private func quickDelete() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         let now = CACurrentMediaTime()
         if let pending = pendingQuickWordDelete, now <= pending.deadline {
@@ -1348,6 +1561,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func deleteForward() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         guard composing.isEmpty, rawRoman.isEmpty,
               !(textDocumentProxy.documentContextAfterInput ?? "").isEmpty else { return }
@@ -1357,6 +1571,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func space() {
+        if dictionaryMode == .edit { editDictionaryText(" "); return }
         if composing.isEmpty, rawRoman.isEmpty {
             directCommit(" ")
         } else if mode == "english" {
@@ -1368,12 +1583,14 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func spaceWithoutConversion() {
+        if dictionaryMode == .edit { editDictionaryText(" "); return }
         commitComposition(useCandidate: false)
         directCommit(" ")
         refreshCursorBar()
     }
 
     private func enter() {
+        if dictionaryMode == .edit { saveDictionaryEntry(); return }
         commitComposition()
         textDocumentProxy.insertText("\n")
     }
@@ -1385,7 +1602,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setMode(_ newMode: String) {
-        if mode != "english" || newMode != "english" { commitComposition() }
+        if dictionaryMode != .edit, mode != "english" || newMode != "english" { commitComposition() }
         mode = newMode
         activeCustomTab = nil
         switch newMode {
@@ -1408,6 +1625,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         if definition.action == "space", value == "__cursor_repeat__" {
+            if dictionaryMode == .edit { return }
             textDocumentProxy.adjustTextPosition(byCharacterOffset: -1)
             refreshCursorBar()
             return
@@ -1454,13 +1672,18 @@ final class KeyboardViewController: UIInputViewController {
         guard let action else { return }
         let type = action["type"] as? String ?? "input"
         let value = action["value"] as? String ?? ""
+        if dictionaryMode == .edit && ![
+            "input", "directInput", "direct_input", "delete", "enter", "space",
+            "switchLayout", "paste", "__paste", "smart_delete_default", "smartDeleteDefault",
+            "smart_delete", "toggle_caps_lock_state", "toggleCapsLock", "dismiss", "dismiss_keyboard"
+        ].contains(type) { return }
         switch type {
         case "input":
             if let text = action["text"] as? String { custardInput(text) } else { customInput(value) }
         case "directInput": directCommit(value, normalizePunctuation: false)
         case "direct_input": directCommit(action["text"] as? String ?? "", normalizePunctuation: false)
         case "delete":
-            if deleteSelectedText() { return }
+            if dictionaryMode != .edit, deleteSelectedText() { return }
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
             let boundedCount = min(100, max(-100, count))
             if allowQuickWordDelete, boundedCount == 1 {
@@ -1519,10 +1742,13 @@ final class KeyboardViewController: UIInputViewController {
             if index + 1 < actions.count,
                positiveBackwardDelete(actions[index]),
                isBackwardSmartDelete(actions[index + 1]) {
-                dispatchCombinedBackwardSmartDelete(
-                    deleteAction: actions[index],
-                    smartDeleteAction: actions[index + 1]
-                )
+                if dictionaryMode == .edit { deleteDictionaryText() }
+                else {
+                    dispatchCombinedBackwardSmartDelete(
+                        deleteAction: actions[index],
+                        smartDeleteAction: actions[index + 1]
+                    )
+                }
                 index += 2
             } else {
                 dispatch(
@@ -1925,6 +2151,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDeleteDefault() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         if !composing.isEmpty || !rawRoman.isEmpty {
             let count = backwardWordDeleteCount(in: composing)
@@ -1965,6 +2192,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDelete(_ action: [String: Any]) {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         let backward = action["direction"] as? String == "backward"
         if backward {

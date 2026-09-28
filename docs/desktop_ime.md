@@ -20,6 +20,7 @@ PC版は、Flutter製の設定・動作確認アプリと、OSへ入力ソース
 - Windowsでは日本語の未確定入力中に`Shift`付きの英字を入力しても、同じ読みの変換を継続
 - サブモジュールのAzooKey標準辞書と、別リポジトリの`Dictionary/data_v1.json`共有辞書を併用
 - 共有辞書をインストール時から利用し、アプリ版と同じ5分間隔で取得して三OSのシステムIMEへ反映
+- IMEメニューの「個人辞書を編集」から単語を登録・編集・削除。保存した個人辞書を三OSのIMEと動作確認アプリへ反映
 - Windowsでは第一候補以外の辞書候補を確定したあと、確認操作によって読みと選択語を共有変換辞書へ改善として送信
 - Zenzai v3.2 xsmall／smallと常駐`llama.cpp`プロセスによる端末内推論
 
@@ -78,3 +79,5 @@ flutter run -d windows
 ```
 
 この画面はIMEと同じ日本語、英語、候補、ライブ変換、Zenzaiの状態遷移を試すためのものです。ライト／ダークテーマへ追従する画面で、選択候補、候補番号、辞書やZenzaiの出典を見分けられます。候補の右クリックから単語と読みを共有ストレージへ送信できます。共有辞書は保存済みキャッシュを起動時に読み込み、最終取得から5分以上経過していれば更新し、その後もアプリ起動中は5分ごとに更新します。「共有辞書を今すぐ読み込む」から手動更新もできます。Windowsの入力メニュー、LinuxのIBus項目、macOSの入力メニューにも同じ手動更新を用意しています。通常の利用時はOS側でKeynakoを入力ソースとして選び、任意のアプリへ直接入力します。
+
+個人辞書は画面上部の本のアイコンから開きます。IMEの入力メニューからも同じ管理画面を開けます。読み、単語、重要度を保存でき、日本語の読みにはローマ字も入力できます。英語の読みは切り替えて登録します。保存先はWindowsが`%LOCALAPPDATA%\Keynako\user_dictionary.tsv`、macOSが`~/Library/Application Support/Keynako/user_dictionary.tsv`、Linuxが`$XDG_DATA_HOME/keynako/user_dictionary.tsv`（未設定時は`~/.local/share/keynako/user_dictionary.tsv`）です。共有辞書とは別に端末内へ保存し、IMEは変更を検出して読み込みます。

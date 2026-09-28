@@ -57,6 +57,14 @@ int keynako_ime_load_user_dictionary(keynako_ime_session session, const char *ut
     cast(session)->set_user_dictionary(std::move(*entries));
     return 1;
 }
+int keynako_ime_load_combined_dictionary(keynako_ime_session session, const char *shared_path, const char *personal_path) {
+    if (!session || !shared_path || !*shared_path || !personal_path || !*personal_path) return 0;
+    auto entries = keynako::load_combined_dictionary_caches(
+        std::filesystem::u8path(shared_path), std::filesystem::u8path(personal_path));
+    if (!entries) return 0;
+    cast(session)->set_user_dictionary(std::move(*entries));
+    return 1;
+}
 int keynako_ime_set_bundled_dictionary_path(keynako_ime_session session, const char *utf8_path) {
     return session && utf8_path && cast(session)->set_bundled_dictionary_path(utf8_path) ? 1 : 0;
 }

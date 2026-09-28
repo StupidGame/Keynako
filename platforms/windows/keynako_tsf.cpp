@@ -84,6 +84,7 @@ constexpr UINT kMenuEnglish = 2;
 constexpr UINT kMenuLiveConversion = 3;
 constexpr UINT kMenuRefreshDictionary = 4;
 constexpr UINT kMenuSettings = 5;
+constexpr UINT kMenuPersonalDictionary = 6;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
 constexpr UINT kImprovementSubmissionComplete = WM_APP + 0x4b;
 constexpr UINT_PTR kImprovementDismissTimer = 1;
@@ -308,6 +309,10 @@ public:
     void open_settings() const {
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         ShellExecuteW(nullptr, L"open", executable.c_str(), nullptr, executable.parent_path().c_str(), SW_SHOWNORMAL);
+    }
+    void open_personal_dictionary() const {
+        const auto executable = module_directory().parent_path() / L"Keynako.exe";
+        ShellExecuteW(nullptr, L"open", executable.c_str(), L"--dictionary", executable.parent_path().c_str(), SW_SHOWNORMAL);
     }
     void refresh_shared_dictionary() {
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
@@ -806,6 +811,8 @@ private:
     DWORD candidate_ui_element_id_ = TF_INVALID_UIELEMENTID;
     std::filesystem::path shared_dictionary_path_;
     std::filesystem::file_time_type shared_dictionary_write_time_{};
+    std::filesystem::path personal_dictionary_path_;
+    std::filesystem::file_time_type personal_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
     std::chrono::steady_clock::time_point last_backspace_press_{};
     std::wstring shared_submission_status_;
@@ -955,11 +962,20 @@ private:
         std::vector<std::filesystem::path> files;
         const auto program_data = environment_path(L"ProgramData");
         const auto local_app_data = environment_path(L"LOCALAPPDATA");
+        const auto personal_file = local_app_data.empty()
+            ? std::filesystem::path()
+            : local_app_data / L"Keynako" / L"user_dictionary.tsv";
         if (!local_app_data.empty()) files.push_back(local_app_data / L"Keynako" / L"shared_dictionary.tsv");
         if (!program_data.empty()) files.push_back(program_data / L"Keynako" / L"shared_dictionary.tsv");
         files.push_back(module_directory() / L"bundled_shared_dictionary.tsv");
 
         std::error_code error;
+        std::filesystem::file_time_type personal_write_time{};
+        if (!personal_file.empty() && std::filesystem::exists(personal_file, error) && !error) {
+            personal_write_time = std::filesystem::last_write_time(personal_file, error);
+            if (error) return;
+        }
+        error.clear();
         for (const auto &file : files) {
             if (!std::filesystem::exists(file, error) || error) {
                 error.clear();
@@ -970,13 +986,16 @@ private:
                 error.clear();
                 continue;
             }
-            if (file == shared_dictionary_path_ && write_time == shared_dictionary_write_time_) return;
+            if (file == shared_dictionary_path_ && write_time == shared_dictionary_write_time_ &&
+                personal_file == personal_dictionary_path_ && personal_write_time == personal_dictionary_write_time_) return;
 
-            auto entries = keynako::load_shared_dictionary_cache(file);
+            auto entries = keynako::load_combined_dictionary_caches(file, personal_file);
             if (!entries) continue;
             session_.set_user_dictionary(std::move(*entries));
             shared_dictionary_path_ = file;
             shared_dictionary_write_time_ = write_time;
+            personal_dictionary_path_ = personal_file;
+            personal_dictionary_write_time_ = personal_write_time;
             return;
         }
     }
@@ -1924,6 +1943,7 @@ STDMETHODIMP LanguageBarItem::InitMenu(ITfMenu *menu) {
              L"ライブ変換");
     menu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
     add_item(kMenuRefreshDictionary, 0, L"共有辞書を今すぐ更新");
+    add_item(kMenuPersonalDictionary, 0, L"個人辞書を編集");
     add_item(kMenuSettings, 0, L"Keynako 設定");
     return S_OK;
 }
@@ -1936,6 +1956,7 @@ STDMETHODIMP LanguageBarItem::OnMenuSelect(UINT id) {
         case kMenuLiveConversion: owner_->toggle_live_conversion(); break;
         case kMenuRefreshDictionary: owner_->refresh_shared_dictionary(); break;
         case kMenuSettings: owner_->open_settings(); break;
+        case kMenuPersonalDictionary: owner_->open_personal_dictionary(); break;
         default: return E_INVALIDARG;
     }
     return S_OK;

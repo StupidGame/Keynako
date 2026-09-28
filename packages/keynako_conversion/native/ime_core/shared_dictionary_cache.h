@@ -4,6 +4,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -65,6 +66,25 @@ inline std::optional<std::vector<DictionaryEntry>> load_shared_dictionary_cache(
     }
     if (!valid_header || stream.bad()) return std::nullopt;
     return entries;
+}
+
+inline std::optional<std::vector<DictionaryEntry>> load_combined_dictionary_caches(
+    const std::filesystem::path &shared_path,
+    const std::filesystem::path &personal_path) {
+    auto shared = load_shared_dictionary_cache(shared_path);
+    if (!shared) return std::nullopt;
+    std::error_code error;
+    const bool personal_exists = std::filesystem::exists(personal_path, error);
+    if (error) return shared;
+    if (personal_exists) {
+        auto personal = load_shared_dictionary_cache(personal_path);
+        if (!personal) return shared;
+        personal->insert(personal->end(),
+                         std::make_move_iterator(shared->begin()),
+                         std::make_move_iterator(shared->end()));
+        return personal;
+    }
+    return shared;
 }
 
 }  // namespace keynako

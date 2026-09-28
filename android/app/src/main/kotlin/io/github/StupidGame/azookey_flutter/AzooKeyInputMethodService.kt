@@ -34,6 +34,7 @@ import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.HorizontalScrollView
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -109,6 +110,8 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 
 class AzooKeyInputMethodService : InputMethodService() {
+    private enum class DictionaryMode { CLOSED, LIST, EDIT }
+
     private lateinit var inputViewFrame: KeyboardInputFrame
     private lateinit var keyboardSurface: FrameLayout
     private lateinit var root: LinearLayout
@@ -133,6 +136,14 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidates = mutableListOf<String>()
     private var candidatePredictionReadings = emptyMap<String, String>()
     private var candidateExpanded = false
+    private var dictionaryMode = DictionaryMode.CLOSED
+    private var dictionaryEditingId: Int? = null
+    private var dictionaryImportance = 3
+    private var dictionaryEnglishReading = false
+    private var dictionaryDeleteArmed = false
+    private var dictionaryReadingField: EditText? = null
+    private var dictionaryWordField: EditText? = null
+    private var dictionaryActiveField: EditText? = null
     private var pendingReport: WrongConversionReport? = null
     private var hotfixDictionaryEntries = emptyList<AzooKeyHotfixDictionaryEntry>()
     private var hotfixDictionaryVersion = "none"
@@ -255,6 +266,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        dictionaryMode = DictionaryMode.CLOSED
+        dictionaryReadingField = null
+        dictionaryWordField = null
+        dictionaryActiveField = null
         super.onStartInputView(info, restarting)
         if (::root.isInitialized && settings.optBoolean("enable_zenzai", true)) {
             zenzaiRuntime.cancel()
@@ -1919,6 +1934,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun renderCandidates(showTabs: Boolean = composing.isEmpty()) {
         if (!::candidateRow.isInitialized) return
+        if (dictionaryMode != DictionaryMode.CLOSED) return
         candidateRow.removeAllViews()
         if (showTabs) {
             candidateExpanded = false
@@ -1946,7 +1962,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderCandidateValues() {
+        if (dictionaryMode != DictionaryMode.CLOSED) return
         candidateRow.removeAllViews()
+        addCandidateButton("＋辞書") {
+            val word = candidates.getOrNull(selectedCandidate).orEmpty()
+            showDictionaryEditor(candidatePredictionReadings[word] ?: displayReading(), word)
+        }
         val candidateSize = settings.optDouble("result_view_font_size", -1.0)
         for ((index, candidate) in candidates.withIndex()) {
             candidateRow.addView(TextView(this).apply {
@@ -2049,6 +2070,195 @@ class AzooKeyInputMethodService : InputMethodService() {
                 setOnClickListener { showClipboardHistory() }
             }, candidateButtonLayoutParams())
         }
+        addCandidateButton("辞書") { showDictionaryList() }
+    }
+
+    private fun showDictionaryList() {
+        dictionaryMode = DictionaryMode.LIST
+        dictionaryReadingField = null
+        dictionaryWordField = null
+        dictionaryActiveField = null
+        dictionaryDeleteArmed = false
+        cursorBarVisible = false
+        candidateExpanded = false
+        candidateExpandButton.visibility = View.GONE
+        candidateRow.removeAllViews()
+        addCandidateButton("＋単語") { showDictionaryEditor() }
+        addCandidateButton("辞書を閉じる") { closeDictionaryEditor() }
+        candidatePanelContent.removeAllViews()
+        val entries = state.optJSONArray("userDictionary") ?: JSONArray()
+        var visible = 0
+        for (index in 0 until entries.length()) {
+            val entry = entries.optJSONObject(index) ?: continue
+            if (entry.optBoolean("isTemplateMode", false)) continue
+            val id = entry.optInt("id", index)
+            val ruby = entry.optString("ruby")
+            val word = entry.optString("word")
+            if (ruby.isBlank() || word.isBlank()) continue
+            visible += 1
+            candidatePanelContent.addView(TextView(this).apply {
+                text = "$ruby → $word　重要度 ${entry.optInt("importance", 3)}"
+                textLocale = Locale.JAPAN
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), 0)
+                setTextColor(palette.text)
+                textSize = 15f
+                background = roundedDrawable(palette.key, dp(6).toFloat())
+                setOnClickListener { showDictionaryEditor(ruby, word, id, entry.optInt("importance", 3)) }
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(43)).apply {
+                setMargins(dp(2), dp(2), dp(2), dp(2))
+            })
+        }
+        if (visible == 0) candidatePanelContent.addView(TextView(this).apply {
+            text = "登録した単語はまだないよ。＋単語から追加できる"
+            setTextColor(palette.text)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        })
+        candidatePanel.visibility = View.VISIBLE
+    }
+
+    private fun showDictionaryEditor(
+        reading: String = "", word: String = "", id: Int? = null, importance: Int = 3,
+    ) {
+        dictionaryMode = DictionaryMode.EDIT
+        dictionaryEditingId = id
+        dictionaryImportance = importance.coerceIn(1, 5)
+        dictionaryEnglishReading = mode == "english" || (id != null && reading.all { it.code < 128 })
+        dictionaryDeleteArmed = false
+        candidateExpanded = false
+        candidateExpandButton.visibility = View.GONE
+        candidatePanelContent.removeAllViews()
+        fun field(label: String, value: String): EditText = EditText(this).apply {
+            hint = label
+            setSingleLine(true)
+            setText(value)
+            setSelection(text.length)
+            textSize = 16f
+            setTextColor(palette.text)
+            showSoftInputOnFocus = false
+            setOnFocusChangeListener { _, focused -> if (focused) dictionaryActiveField = this }
+            candidatePanelContent.addView(this, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(50),
+            ))
+        }
+        dictionaryReadingField = field("読み（ローマ字も入力できる）", reading)
+        dictionaryWordField = field("単語", word)
+        dictionaryActiveField = if (reading.isEmpty()) dictionaryReadingField else dictionaryWordField
+        dictionaryActiveField?.requestFocus()
+        candidatePanelContent.addView(TextView(this).apply {
+            text = "上の欄を選んで編集。漢字は候補から登録するか貼り付けできる"
+            setTextColor(palette.text)
+            textSize = 12f
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        })
+        candidatePanel.visibility = View.VISIBLE
+        renderDictionaryEditorActions()
+    }
+
+    private fun renderDictionaryEditorActions() {
+        candidateRow.removeAllViews()
+        addCandidateButton(if (dictionaryEnglishReading) "英語の読み" else "日本語の読み") {
+            dictionaryEnglishReading = !dictionaryEnglishReading
+            renderDictionaryEditorActions()
+        }
+        addCandidateButton("重要度 $dictionaryImportance") {
+            dictionaryImportance = dictionaryImportance % 5 + 1
+            renderDictionaryEditorActions()
+        }
+        addCandidateButton("貼付") { paste() }
+        addCandidateButton("保存") { saveDictionaryEntry() }
+        if (dictionaryEditingId != null) addCandidateButton(if (dictionaryDeleteArmed) "削除する" else "削除") {
+            if (dictionaryDeleteArmed) deleteDictionaryEntry() else {
+                dictionaryDeleteArmed = true
+                renderDictionaryEditorActions()
+            }
+        }
+        addCandidateButton("戻る") { showDictionaryList() }
+    }
+
+    private fun saveDictionaryEntry() {
+        val rawReading = dictionaryReadingField?.text?.toString()?.trim().orEmpty()
+        val word = dictionaryWordField?.text?.toString()?.trim().orEmpty()
+        val ruby = if (dictionaryEnglishReading) rawReading.lowercase(Locale.ROOT) else
+            katakanaToHiragana(romanToHiragana(rawReading.lowercase(Locale.ROOT)))
+        if (ruby.isBlank() || word.isBlank() || ruby.length > 128 || word.length > 128 ||
+            ruby.any { it == '\t' || it == '\n' } || word.any { it == '\t' || it == '\n' }
+        ) {
+            renderDictionaryEditorActions()
+            addCandidateButton("読みと単語を確認してね") {}
+            return
+        }
+        val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
+        var editedIndex = -1
+        var duplicateIndex = -1
+        var nextId = 0
+        for (index in 0 until dictionary.length()) {
+            val entry = dictionary.optJSONObject(index) ?: continue
+            nextId = maxOf(nextId, entry.optInt("id", index) + 1)
+            if (dictionaryEditingId != null && entry.optInt("id", index) == dictionaryEditingId) editedIndex = index
+            if (!entry.optBoolean("isTemplateMode", false) &&
+                entry.optString("ruby") == ruby && entry.optString("word") == word
+            ) duplicateIndex = index
+        }
+        if (editedIndex >= 0 && duplicateIndex >= 0 && editedIndex != duplicateIndex) {
+            renderDictionaryEditorActions()
+            addCandidateButton("同じ読みと単語が登録済みだよ") {}
+            return
+        }
+        val target = if (editedIndex >= 0) editedIndex else duplicateIndex
+        val existing = if (target >= 0) dictionary.optJSONObject(target) else null
+        val entry = existing ?: JSONObject()
+        entry.put("id", existing?.optInt("id") ?: nextId)
+        entry.put("ruby", ruby)
+        entry.put("word", word)
+        entry.put("importance", dictionaryImportance)
+        entry.put("shared", false)
+        entry.put("isTemplateMode", false)
+        if (target >= 0) dictionary.put(target, entry) else dictionary.put(entry)
+        state.put("userDictionary", dictionary)
+        persistState()
+        showDictionaryList()
+    }
+
+    private fun deleteDictionaryEntry() {
+        val id = dictionaryEditingId ?: return
+        val dictionary = state.optJSONArray("userDictionary") ?: return
+        val updated = JSONArray()
+        for (index in 0 until dictionary.length()) {
+            val entry = dictionary.optJSONObject(index) ?: continue
+            if (entry.optInt("id", index) != id) updated.put(entry)
+        }
+        state.put("userDictionary", updated)
+        persistState()
+        showDictionaryList()
+    }
+
+    private fun closeDictionaryEditor() {
+        dictionaryMode = DictionaryMode.CLOSED
+        dictionaryReadingField = null
+        dictionaryWordField = null
+        dictionaryActiveField = null
+        candidatePanel.visibility = View.GONE
+        renderCandidates()
+    }
+
+    private fun editDictionaryText(value: String) {
+        val field = dictionaryActiveField ?: return
+        if (value.contains('\n') || value.contains('\r')) return
+        val start = field.selectionStart.coerceAtLeast(0)
+        val end = field.selectionEnd.coerceAtLeast(start)
+        if (field.text.length - (end - start) + value.length > 128) return
+        field.text.replace(start, end, value)
+    }
+
+    private fun deleteDictionaryText() {
+        val field = dictionaryActiveField ?: return
+        val start = field.selectionStart.coerceAtLeast(0)
+        val end = field.selectionEnd.coerceAtLeast(start)
+        if (end > start) field.text.delete(start, end) else if (start > 0) {
+            val count = backwardCharacterDeleteCount(field.text.substring(0, start))
+            field.text.delete(start - count, start)
+        }
     }
 
     private fun toggleCursorBar() {
@@ -2111,6 +2321,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun selectTab(value: String) {
+        if (dictionaryMode == DictionaryMode.EDIT && value !in setOf("dismiss", "japanese", "english")) return
+        if (dictionaryMode == DictionaryMode.LIST) closeDictionaryEditor()
         when {
             value == "dismiss" -> requestHideSelf(0)
             value == "emoji" -> showEmoji()
@@ -2236,6 +2448,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun inputText(value: String?) {
         if (value.isNullOrEmpty()) return
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            editDictionaryText(value)
+            return
+        }
         val input = punctuationForInputMode(value, mode)
         if (input.isBlank()) {
             directCommit(input)
@@ -2261,6 +2477,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun inputEnglishText(value: String) {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            editDictionaryText(value)
+            return
+        }
         val resolved = if (shift || capsLock) value.uppercase(Locale.ROOT) else value
         if (sensitiveInput) {
             directCommit(resolved)
@@ -2655,6 +2875,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         value: String,
         normalizePunctuation: Boolean = true,
     ) {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            if (value.contains('\n')) saveDictionaryEntry() else editDictionaryText(value)
+            return
+        }
         prepareSelectionForInput()
         commitComposition()
         val input = if (normalizePunctuation) punctuationForInputMode(value, mode) else value
@@ -2690,6 +2914,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun delete() {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            deleteDictionaryText()
+            return
+        }
         if (deleteSelectedText()) return
         when {
             layout == "qwerty" && rawRoman.isNotEmpty() -> {
@@ -2746,6 +2974,10 @@ class AzooKeyInputMethodService : InputMethodService() {
      * a one-character word such as a particle from consuming its neighbor.
      */
     private fun quickDelete() {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            deleteDictionaryText()
+            return
+        }
         if (deleteSelectedText()) return
         val now = SystemClock.uptimeMillis()
         pendingQuickWordDelete?.let { pending ->
@@ -2830,6 +3062,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun deleteForward() {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            deleteDictionaryText()
+            return
+        }
         if (deleteSelectedText()) return
         // The local composition cursor is always at its trailing edge, matching
         // azooKey's behavior: a forward delete has nothing to remove until the
@@ -2840,6 +3076,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun space() {
+        if (dictionaryMode == DictionaryMode.EDIT) { editDictionaryText(" "); return }
         if (composing.isEmpty() && rawRoman.isEmpty()) {
             directCommit(" ")
         } else if (mode == "english") {
@@ -2856,12 +3093,14 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun spaceWithoutConversion() {
+        if (dictionaryMode == DictionaryMode.EDIT) { editDictionaryText(" "); return }
         commitComposition(useCandidate = false)
         directCommit(" ")
         cursorBarView?.post { cursorBarView?.refresh() }
     }
 
     private fun selectNextCandidate() {
+        if (dictionaryMode == DictionaryMode.EDIT) return
         if (candidates.isEmpty()) {
             space()
             return
@@ -2873,6 +3112,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun enter() {
+        if (dictionaryMode == DictionaryMode.EDIT) { saveDictionaryEntry(); return }
         commitComposition()
         // This respects IME_FLAG_NO_ENTER_ACTION, which multiline editors such as
         // chat compose boxes use to request a newline instead of their send action.
@@ -2886,7 +3126,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun setMode(newMode: String) {
-        if (mode != "english" || newMode != "english") commitComposition()
+        if (dictionaryMode != DictionaryMode.EDIT && (mode != "english" || newMode != "english")) commitComposition()
         mode = newMode
         activeCustomTab = null
         layout = when (newMode) {
@@ -2929,12 +3169,17 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (action == null) return
         val type = action.optString("type", "input")
         val value = action.optString("value", "")
+        if (dictionaryMode == DictionaryMode.EDIT && type !in setOf(
+                "input", "directInput", "direct_input", "delete", "enter", "space",
+                "switchLayout", "paste", "__paste", "smart_delete_default", "smartDeleteDefault",
+                "smart_delete", "toggle_caps_lock_state", "toggleCapsLock", "dismiss", "dismiss_keyboard",
+            )) return
         when (type) {
             "input" -> if (action.has("text")) custardInput(action.optString("text")) else customInput(value)
             "directInput" -> directCommit(value, normalizePunctuation = false)
             "direct_input" -> directCommit(action.optString("text"), normalizePunctuation = false)
             "delete" -> {
-                if (deleteSelectedText()) return
+                if (dictionaryMode != DictionaryMode.EDIT && deleteSelectedText()) return
                 val count = if (action.has("count")) action.optInt("count", 1)
                 else value.toIntOrNull() ?: 1
                 val deletion = surroundingDeleteFor(count)
@@ -2992,7 +3237,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             val action = actions.optJSONObject(index)
             val next = actions.optJSONObject(index + 1)
             if (positiveBackwardDelete(action) && isBackwardSmartDelete(next)) {
-                dispatchCombinedBackwardSmartDelete(checkNotNull(action), checkNotNull(next))
+                if (dictionaryMode == DictionaryMode.EDIT) deleteDictionaryText()
+                else dispatchCombinedBackwardSmartDelete(checkNotNull(action), checkNotNull(next))
                 index += 2
             } else {
                 dispatchAction(action, allowQuickWordDelete)
@@ -3280,6 +3526,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun smartDeleteDefault() {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            deleteDictionaryText()
+            return
+        }
         if (deleteSelectedText()) return
         if (composing.isNotEmpty() || rawRoman.isNotEmpty()) {
             val count = backwardWordDeleteCount(composing, knownReadings = systemDictionary.keys)
@@ -3311,6 +3561,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun smartDelete(action: JSONObject) {
+        if (dictionaryMode == DictionaryMode.EDIT) {
+            deleteDictionaryText()
+            return
+        }
         if (deleteSelectedText()) return
         val backward = action.optString("direction", "forward") == "backward"
         if (backward) {

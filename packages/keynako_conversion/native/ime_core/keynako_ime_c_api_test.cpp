@@ -76,6 +76,22 @@ int main() {
     }
     assert(keynako_ime_load_user_dictionary(session, cache.u8string().c_str()) == 1);
     assert(!has_custom_candidate());
+    const auto personal = cache.string() + ".personal";
+    {
+        std::ofstream output(cache, std::ios::trunc);
+        output << "# keynako-shared-dictionary-v1\trevision\t1\ttoday\n"
+                  "3\tかきくけこ\t共有語\n";
+    }
+    {
+        std::ofstream output(personal);
+        output << "# keynako-shared-dictionary-v1\tlocal\t1\ttoday\n"
+                  "5\tかきくけこ\t個人語\n";
+    }
+    assert(keynako_ime_load_combined_dictionary(session, cache.u8string().c_str(), personal.c_str()) == 1);
+    assert(std::strcmp(keynako_ime_candidate_at(session, 0), "個人語") == 0);
+    std::filesystem::remove(personal);
+    assert(keynako_ime_load_combined_dictionary(session, cache.u8string().c_str(), personal.c_str()) == 1);
+    assert(std::strcmp(keynako_ime_candidate_at(session, 0), "共有語") == 0);
     std::filesystem::remove(cache);
     keynako_ime_destroy(session);
     return 0;

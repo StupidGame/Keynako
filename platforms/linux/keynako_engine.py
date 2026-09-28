@@ -43,6 +43,10 @@ class NativeSession:
         self.library.keynako_ime_is_converting.restype = ctypes.c_int
         self.library.keynako_ime_load_user_dictionary.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_load_user_dictionary.restype = ctypes.c_int
+        self.library.keynako_ime_load_combined_dictionary.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+        ]
+        self.library.keynako_ime_load_combined_dictionary.restype = ctypes.c_int
         self.library.keynako_ime_set_bundled_dictionary_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_set_bundled_dictionary_path.restype = ctypes.c_int
         for name in (
@@ -111,6 +115,11 @@ class NativeSession:
             self.handle, os.fsencode(path),
         ))
 
+    def load_combined_dictionary(self, shared: Path, personal: Path) -> bool:
+        return bool(self.library.keynako_ime_load_combined_dictionary(
+            self.handle, os.fsencode(shared), os.fsencode(personal),
+        ))
+
     def reading(self) -> str:
         return self.library.keynako_ime_reading(self.handle).decode()
 
@@ -156,6 +165,8 @@ class KeynakoEngine(IBus.Engine):
         self._destroyed = False
         self.dictionary_path: Path | None = None
         self.dictionary_mtime_ns = -1
+        self.personal_dictionary_path: Path | None = None
+        self.personal_dictionary_mtime_ns = -1
         self.last_dictionary_check = 0.0
         self.last_dictionary_refresh_request = 0.0
         self.last_backspace_press: float | None = None
@@ -187,6 +198,17 @@ class KeynakoEngine(IBus.Engine):
             None,
         )
         properties.append(self.refresh_dictionary_property)
+        properties.append(IBus.Property.new(
+            "PersonalDictionary",
+            IBus.PropType.NORMAL,
+            IBus.Text.new_from_string("個人辞書を編集"),
+            "",
+            IBus.Text.new_from_string("単語を登録・編集します"),
+            True,
+            True,
+            IBus.PropState.UNCHECKED,
+            None,
+        ))
         self.register_properties(properties)
 
     def _dictionary_candidates(self) -> list[Path]:
@@ -199,21 +221,40 @@ class KeynakoEngine(IBus.Engine):
         candidates.append(Path(__file__).resolve().parent / "bundled_shared_dictionary.tsv")
         return candidates
 
+    def _personal_dictionary_candidates(self) -> list[Path]:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        home = Path.home()
+        candidates = []
+        if xdg:
+            candidates.append(Path(xdg) / "keynako" / "user_dictionary.tsv")
+        candidates.append(home / ".local" / "share" / "keynako" / "user_dictionary.tsv")
+        return candidates
+
     def _reload_shared_dictionary(self, force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self.last_dictionary_check < 5:
             return
         self.last_dictionary_check = now
+        personal_candidates = self._personal_dictionary_candidates()
+        personal = next((path for path in personal_candidates if path.is_file()), personal_candidates[0])
+        try:
+            personal_mtime_ns = personal.stat().st_mtime_ns
+        except OSError:
+            personal_mtime_ns = -1
         for path in self._dictionary_candidates():
             try:
                 mtime_ns = path.stat().st_mtime_ns
             except OSError:
                 continue
-            if path == self.dictionary_path and mtime_ns == self.dictionary_mtime_ns:
+            if (path == self.dictionary_path and mtime_ns == self.dictionary_mtime_ns
+                    and personal == self.personal_dictionary_path
+                    and personal_mtime_ns == self.personal_dictionary_mtime_ns):
                 return
-            if self.session.load_user_dictionary(path):
+            if self.session.load_combined_dictionary(path, personal):
                 self.dictionary_path = path
                 self.dictionary_mtime_ns = mtime_ns
+                self.personal_dictionary_path = personal
+                self.personal_dictionary_mtime_ns = personal_mtime_ns
                 return
 
     def _request_shared_dictionary_refresh(self, force: bool = False) -> bool:
@@ -480,6 +521,14 @@ class KeynakoEngine(IBus.Engine):
         del prop_state
         if prop_name == "RefreshDictionary":
             self._request_shared_dictionary_refresh(force=True)
+            return
+        if prop_name == "PersonalDictionary":
+            executable = Path(__file__).resolve().parent / "keynako_desktop"
+            if executable.is_file():
+                try:
+                    subprocess.Popen([str(executable), "--dictionary"], start_new_session=True)
+                except OSError:
+                    pass
             return
         if prop_name != "InputMode":
             return

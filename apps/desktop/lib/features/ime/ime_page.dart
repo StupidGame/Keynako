@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../input/desktop_input_controller.dart';
+import 'personal_dictionary_page.dart';
 
 class ImePage extends StatefulWidget {
   const ImePage({required this.controller, super.key});
@@ -150,7 +151,9 @@ class _ImePageState extends State<ImePage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _Header(controller: controller),
-                    const SizedBox(height: 18),
+                    SizedBox(
+                      height: MediaQuery.sizeOf(context).height < 680 ? 10 : 18,
+                    ),
                     Expanded(
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -243,7 +246,10 @@ class _Header extends StatelessWidget {
     final colors = theme.colorScheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        padding: EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: MediaQuery.sizeOf(context).height < 680 ? 8 : 16,
+        ),
         child: Row(
           children: [
             Container(
@@ -276,11 +282,29 @@ class _Header extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Keynako',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Keynako',
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('personal-dictionary-open'),
+                        tooltip: '個人辞書',
+                        icon: const Icon(Icons.book_outlined, size: 20),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                PersonalDictionaryPage(controller: controller),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -560,7 +584,10 @@ class _InputCard extends StatelessWidget {
                         final selected = index == controller.selectedIndex;
                         final sourceLabel = switch (candidate.source) {
                           'zenzai' => 'Zenzai',
-                          'user' || 'shared' => '共有',
+                          'user' || 'shared' =>
+                            controller.isPersonalCandidate(candidate)
+                                ? '個人'
+                                : '共有',
                           'user-prediction' || 'dictionary-prediction' => '予測',
                           _ => null,
                         };
