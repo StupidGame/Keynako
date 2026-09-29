@@ -137,7 +137,9 @@ void main() {
       buttons: kSecondaryMouseButton,
       kind: PointerDeviceKind.mouse,
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('共通辞書に送る'));
+    await tester.pumpAndSettle();
 
     expect(submitter.word, '日本語');
     expect(submitter.ruby, 'にほんご');
