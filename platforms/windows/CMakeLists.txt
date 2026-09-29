@@ -73,14 +73,18 @@ endif()
 if(BUILD_TESTING)
   add_executable(keynako_windows_shortcut_test keynako_shortcut_policy_test.cpp)
   add_executable(keynako_submission_payload_test keynako_submission_payload_test.cpp)
+  add_executable(keynako_personal_dictionary_entry_test personal_dictionary_entry_test.cpp)
   target_compile_features(keynako_windows_shortcut_test PRIVATE cxx_std_17)
   target_compile_features(keynako_submission_payload_test PRIVATE cxx_std_17)
+  target_compile_features(keynako_personal_dictionary_entry_test PRIVATE cxx_std_17)
   if(MSVC)
     target_compile_options(keynako_windows_shortcut_test PRIVATE /W4 /EHsc /utf-8 /permissive-)
     target_compile_options(keynako_submission_payload_test PRIVATE /W4 /EHsc /utf-8 /permissive-)
+    target_compile_options(keynako_personal_dictionary_entry_test PRIVATE /W4 /EHsc /utf-8 /permissive-)
   endif()
   add_test(NAME keynako_windows_shortcut_test COMMAND keynako_windows_shortcut_test)
   add_test(NAME keynako_submission_payload_test COMMAND keynako_submission_payload_test)
+  add_test(NAME keynako_personal_dictionary_entry_test COMMAND keynako_personal_dictionary_entry_test)
 
   add_executable(keynako_windows_improvement_submission_test
     keynako_improvement_submission.cpp

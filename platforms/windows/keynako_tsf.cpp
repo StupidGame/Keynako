@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <memory>
 #include <new>
@@ -28,6 +29,7 @@
 #include "keynako_ime_core.h"
 #include "keynako_shortcut_policy.h"
 #include "keynako_submission_payload.h"
+#include "personal_dictionary_entry.h"
 #include "shared_dictionary_cache.h"
 #include "zenzai_client.h"
 
@@ -85,6 +87,8 @@ constexpr UINT kMenuLiveConversion = 3;
 constexpr UINT kMenuRefreshDictionary = 4;
 constexpr UINT kMenuSettings = 5;
 constexpr UINT kMenuPersonalDictionary = 6;
+constexpr UINT kCandidateSendShared = 1;
+constexpr UINT kCandidateSavePersonal = 2;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
 constexpr UINT kImprovementSubmissionComplete = WM_APP + 0x4b;
 constexpr UINT_PTR kImprovementDismissTimer = 1;
@@ -986,7 +990,7 @@ private:
                 error.clear();
                 continue;
             }
-            if (file == shared_dictionary_path_ && write_time == shared_dictionary_write_time_ &&
+            if (!force && file == shared_dictionary_path_ && write_time == shared_dictionary_write_time_ &&
                 personal_file == personal_dictionary_path_ && personal_write_time == personal_dictionary_write_time_) return;
 
             auto entries = keynako::load_combined_dictionary_caches(file, personal_file);
@@ -1247,13 +1251,13 @@ private:
         CloseHandle(thread);
     }
 
-    bool submit_candidate_to_shared_storage(std::size_t index) {
-        if (index >= session_.candidates().size()) return false;
+    bool submit_candidate_to_shared_storage(const std::string &word,
+                                            const std::string &reading) {
         const auto helper = module_directory() / L"KeynakoDictionarySubmit.exe";
         std::error_code helper_error;
         if (!std::filesystem::exists(helper, helper_error) || helper_error) return false;
         const std::string payload = keynako::windows::shared_candidate_payload(
-            session_.candidates()[index].text, session_.reading());
+            word, reading);
         if (payload.size() > MAXDWORD) return false;
 
         SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
@@ -1323,6 +1327,91 @@ private:
         return sent && written == static_cast<DWORD>(payload.size());
     }
 
+    keynako::windows::PersonalEntryUpdateStatus save_candidate_to_personal_dictionary(
+        const std::string &word, const std::string &reading) {
+        using keynako::windows::PersonalEntryUpdateStatus;
+        const auto local_app_data = environment_path(L"LOCALAPPDATA");
+        if (local_app_data.empty()) return PersonalEntryUpdateStatus::invalid;
+        const auto path = local_app_data / L"Keynako" / L"user_dictionary.tsv";
+        std::error_code error;
+        const bool exists = std::filesystem::exists(path, error);
+        if (error) return PersonalEntryUpdateStatus::invalid;
+        std::optional<std::string> current;
+        if (exists) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return PersonalEntryUpdateStatus::invalid;
+            current = std::string(std::istreambuf_iterator<char>(input),
+                                  std::istreambuf_iterator<char>());
+            if (input.bad()) return PersonalEntryUpdateStatus::invalid;
+        }
+        const auto update = keynako::windows::prepare_personal_entry_update(
+            current, reading, word);
+        if (update.status != PersonalEntryUpdateStatus::added) return update.status;
+
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) return PersonalEntryUpdateStatus::invalid;
+        static std::atomic<unsigned long> next_temporary_id{0};
+        auto temporary = path;
+        temporary += L".tmp." + std::to_wstring(GetCurrentProcessId()) + L"." +
+                     std::to_wstring(++next_temporary_id);
+        {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            if (!output) return PersonalEntryUpdateStatus::invalid;
+            output.write(update.content.data(),
+                         static_cast<std::streamsize>(update.content.size()));
+            output.flush();
+            if (!output) {
+                output.close();
+                std::filesystem::remove(temporary, error);
+                return PersonalEntryUpdateStatus::invalid;
+            }
+        }
+        if (!MoveFileExW(temporary.c_str(), path.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            std::filesystem::remove(temporary, error);
+            return PersonalEntryUpdateStatus::invalid;
+        }
+        reload_shared_dictionary(true);
+        request_active_edit(EditAction::update);
+        return PersonalEntryUpdateStatus::added;
+    }
+
+    void show_candidate_dictionary_menu(HWND window, LPARAM lparam) {
+        const UINT dpi = GetDpiForWindow(window);
+        const int row_height = MulDiv(36, static_cast<int>(dpi), 96);
+        const int row = GET_Y_LPARAM(lparam) / std::max(1, row_height);
+        const std::size_t page_start = (session_.selected_index() / 9) * 9;
+        const std::size_t index = page_start + static_cast<std::size_t>(std::max(0, row));
+        if (row < 0 || row >= 9 || index >= session_.candidates().size()) return;
+        const std::string word = session_.candidates()[index].text;
+        const std::string reading = session_.reading();
+
+        HMENU menu = CreatePopupMenu();
+        if (!menu) return;
+        AppendMenuW(menu, MF_STRING, kCandidateSendShared, L"共通辞書に送る");
+        AppendMenuW(menu, MF_STRING, kCandidateSavePersonal, L"個人辞書に登録");
+        POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ClientToScreen(window, &point);
+        const UINT command = TrackPopupMenuEx(
+            menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+            point.x, point.y, window, nullptr);
+        DestroyMenu(menu);
+        if (command == kCandidateSendShared) {
+            const bool started = submit_candidate_to_shared_storage(word, reading);
+            shared_submission_status_ = started
+                ? L"共通辞書への送信を開始しました"
+                : L"共通辞書へ送信できません";
+        } else if (command == kCandidateSavePersonal) {
+            const auto result = save_candidate_to_personal_dictionary(word, reading);
+            shared_submission_status_ = result == keynako::windows::PersonalEntryUpdateStatus::added
+                ? L"個人辞書に登録しました"
+                : result == keynako::windows::PersonalEntryUpdateStatus::already_exists
+                    ? L"個人辞書に登録済みです"
+                    : L"個人辞書に登録できません";
+        }
+        if (IsWindow(window)) InvalidateRect(window, nullptr, TRUE);
+    }
+
     static LRESULT CALLBACK candidate_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         auto *service = reinterpret_cast<TextService *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
@@ -1388,22 +1477,14 @@ private:
             case WM_ERASEBKGND: return 1;
             case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
             case WM_LBUTTONDOWN:
-            case WM_LBUTTONDBLCLK:
-            case WM_RBUTTONDOWN: {
+            case WM_LBUTTONDBLCLK: {
                 const UINT dpi = GetDpiForWindow(window);
                 const int row_height = MulDiv(36, static_cast<int>(dpi), 96);
                 const int row = GET_Y_LPARAM(lparam) / std::max(1, row_height);
                 const std::size_t page_start = (service->session_.selected_index() / 9) * 9;
                 const std::size_t index = page_start + static_cast<std::size_t>(std::max(0, row));
-                if (index < service->session_.candidates().size() && row < 9) {
-                    if (message == WM_RBUTTONDOWN) {
-                        const bool started =
-                            service->submit_candidate_to_shared_storage(index);
-                        service->shared_submission_status_ = started
-                            ? L"共有ストレージへ送信を開始しました"
-                            : L"共有ストレージへ送信できません";
-                        InvalidateRect(window, nullptr, TRUE);
-                    } else if (service->session_.select_candidate(index)) {
+                if (row >= 0 && row < 9 && index < service->session_.candidates().size()) {
+                    if (service->session_.select_candidate(index)) {
                         service->request_active_edit(message == WM_LBUTTONDBLCLK
                                                          ? EditAction::commit
                                                          : EditAction::update);
@@ -1411,12 +1492,17 @@ private:
                 }
                 return 0;
             }
+            case WM_RBUTTONUP:
+                service->AddRef();
+                service->show_candidate_dictionary_menu(window, lparam);
+                service->Release();
+                return 0;
             case WM_NCDESTROY:
                 if (service->candidate_window_ == window) {
                     service->candidate_window_ = nullptr;
                 }
                 return DefWindowProcW(window, message, wparam, lparam);
-            case WM_RBUTTONUP:
+            case WM_RBUTTONDOWN:
             case WM_CONTEXTMENU: return 0;
             default: return DefWindowProcW(window, message, wparam, lparam);
         }
@@ -1518,7 +1604,7 @@ private:
         const std::wstring footer_text = shared_submission_status_.empty()
             ? std::to_wstring(page_start / 9 + 1) + L" / " +
                   std::to_wstring(page_count) +
-                  L"   ↑↓ 選択   右クリック 共有   Enter 確定"
+                  L"   ↑↓ 選択   右クリック 辞書登録   Enter 確定"
             : shared_submission_status_;
         DrawTextW(dc, footer_text.c_str(), -1, &footer,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);

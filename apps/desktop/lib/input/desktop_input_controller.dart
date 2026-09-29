@@ -332,6 +332,49 @@ class DesktopInputController extends ChangeNotifier {
     }
   }
 
+  Future<bool> saveCandidateToPersonalDictionary(int index) async {
+    final repository = _personalDictionaryRepository;
+    if (_candidateSharing ||
+        repository == null ||
+        index < 0 ||
+        index >= _candidates.length) {
+      return false;
+    }
+    final candidate = _candidates[index];
+    _candidateSharing = true;
+    _candidateShareStatus = '個人辞書に登録中';
+    notifyListeners();
+    try {
+      final entries = await repository.load();
+      if (entries.any(
+        (entry) =>
+            entry.reading == candidate.reading && entry.value == candidate.text,
+      )) {
+        _personalDictionary = List.unmodifiable(entries);
+        _personalDictionaryLoadFailed = false;
+        if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+        _candidateShareStatus = '個人辞書に登録済みです';
+        return true;
+      }
+      await savePersonalDictionary([
+        ...entries,
+        ConversionDictionaryEntry(
+          reading: candidate.reading,
+          value: candidate.text,
+          importance: 3,
+        ),
+      ]);
+      _candidateShareStatus = '個人辞書に登録しました';
+      return true;
+    } on Object {
+      _candidateShareStatus = '個人辞書に登録できませんでした';
+      return false;
+    } finally {
+      _candidateSharing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   void beginOrCycleCandidate(int delta) {
     if (_candidates.isEmpty) return;
     if (_converting) {

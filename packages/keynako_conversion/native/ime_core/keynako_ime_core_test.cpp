@@ -257,6 +257,24 @@ int main() {
         bundled.candidates().begin(), bundled.candidates().end(),
         [](const keynako::Candidate &candidate) { return candidate.text == "日本語"; });
     assert(has_japanese);
+    const auto long_sentence = dictionary.candidates(
+        "わたしはきょうとうきょうのえきでともだちとあいました", 1);
+    assert(!long_sentence.empty() &&
+           long_sentence.front() == "私は今日東京の駅で友達と会いました");
+    ImeSession personal_phrase;
+    assert(personal_phrase.set_bundled_dictionary_path(dictionary_path));
+    personal_phrase.set_user_dictionary({personal_entry});
+    for (const char value : std::string("tesutokana")) personal_phrase.append_ascii(value);
+    assert(std::any_of(personal_phrase.candidates().begin(), personal_phrase.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.text.find("個人語") != std::string::npos;
+        }));
+    personal_phrase.clear();
+    for (const char value : std::string("atesutoikana")) personal_phrase.append_ascii(value);
+    assert(std::any_of(personal_phrase.candidates().begin(), personal_phrase.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.text.find("個人語") != std::string::npos;
+        }));
     ImeSession bundled_prediction;
     assert(bundled_prediction.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("konni")) bundled_prediction.append_ascii(value);

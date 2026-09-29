@@ -56,16 +56,20 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 if (!ensureModel(modelSize)) return@runCatching emptyList()
                 if (request != requestSequence.get()) return@runCatching emptyList()
 
-                val generated = ZenzEngine.generateWithContextAndConditionsV32(
-                    "",
-                    "",
-                    "",
-                    "",
-                    leftContext,
-                    rightContext,
-                    reading,
-                    maxTokens,
-                ).trim().takeIf { it.isPlausibleZenzaiCandidate(reading) }.orEmpty()
+                val generated = if (shouldGenerateZenzaiCandidate(reading.length, maxTokens)) {
+                    ZenzEngine.generateWithContextAndConditionsV32(
+                        "",
+                        "",
+                        "",
+                        "",
+                        leftContext,
+                        rightContext,
+                        reading,
+                        maxTokens,
+                    ).trim().takeIf { it.isPlausibleZenzaiCandidate(reading) }.orEmpty()
+                } else {
+                    ""
+                }
                 if (request != requestSequence.get()) return@runCatching emptyList()
 
                 val values = linkedSetOf<String>()
@@ -87,13 +91,14 @@ internal class AndroidZenzaiRuntime(context: Context) {
                     reading,
                     rerankedCandidates.toTypedArray(),
                 )
-                rerankedCandidates.withIndex().sortedWith(
+                val ranked = rerankedCandidates.withIndex().sortedWith(
                     compareByDescending<IndexedValue<String>> { indexed ->
                         scores.getOrNull(indexed.index)
                             ?.takeIf { it.isFinite() }
                             ?: Float.NEGATIVE_INFINITY
                     }.thenBy { it.index },
                 ).map { it.value } + candidates.drop(rerankedCandidates.size)
+                placeNovelGeneratedCandidate(ranked, generated, baseCandidates.toSet())
             }.getOrElse { error ->
                 Log.e(LOG_TAG, "Candidate ranking failed", error)
                 emptyList()

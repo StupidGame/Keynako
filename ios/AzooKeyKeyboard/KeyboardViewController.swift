@@ -183,7 +183,7 @@ final class KeyboardViewController: UIInputViewController {
         hasLoadedState = true
         state = object
         settings = object["settings"] as? [String: Any] ?? [:]
-        reloadAzooKeyHotfixDictionary()
+        reloadConversionDictionary()
         if settings["memory_reset_setting"] != nil,
            settings["memory_reset_setting"] as? Bool != false {
             conversionEngine?.resetLearning()
@@ -197,7 +197,7 @@ final class KeyboardViewController: UIInputViewController {
         heightConstraint?.constant = 42 + 216 * scale
     }
 
-    private func reloadAzooKeyHotfixDictionary() {
+    private func reloadConversionDictionary() {
         let storageKey = "keynako_hotfix_dictionary_storage"
         let tagKey = "keynako_hotfix_dictionary_storage_latest_sha"
         let tag = state[tagKey] as? String
@@ -205,33 +205,52 @@ final class KeyboardViewController: UIInputViewController {
             ?? "none"
         let dictionary = state[storageKey] as? [String: Any]
             ?? state["azooKey_hotfix_dictionary_storage"] as? [String: Any]
-        guard let dictionary,
-              let metadata = dictionary["metadata"] as? [String: Any],
-              metadata["status"] as? String == "active",
-              let values = dictionary["data"] as? [[String: Any]] else {
-            conversionEngine?.updateHotfixDictionary([], version: "\(tag)|disabled")
-            return
+        var entries: [AzooKeyHotfixDictionaryEntry] = []
+        var hotfixVersion = "\(tag)|disabled"
+        if let dictionary,
+           let metadata = dictionary["metadata"] as? [String: Any],
+           metadata["status"] as? String == "active",
+           let values = dictionary["data"] as? [[String: Any]] {
+            entries = values.compactMap { value -> AzooKeyHotfixDictionaryEntry? in
+                guard let word = value["word"] as? String,
+                      let ruby = value["ruby"] as? String,
+                      let wordWeight = value["word_weight"] as? Double,
+                      let lcid = value["lcid"] as? Int,
+                      let rcid = value["rcid"] as? Int,
+                      let mid = value["mid"] as? Int else { return nil }
+                return AzooKeyHotfixDictionaryEntry(
+                    word: word,
+                    ruby: ruby,
+                    wordWeight: wordWeight,
+                    lcid: lcid,
+                    rcid: rcid,
+                    mid: mid
+                )
+            }
+            let lastUpdate = metadata["last_update"] as? String ?? "unknown"
+            hotfixVersion = "\(tag)|\(lastUpdate)|\(entries.count)"
         }
-        let entries = values.compactMap { value -> AzooKeyHotfixDictionaryEntry? in
-            guard let word = value["word"] as? String,
-                  let ruby = value["ruby"] as? String,
-                  let wordWeight = value["word_weight"] as? Double,
-                  let lcid = value["lcid"] as? Int,
-                  let rcid = value["rcid"] as? Int,
-                  let mid = value["mid"] as? Int else { return nil }
-            return AzooKeyHotfixDictionaryEntry(
+        var personalVersion = Hasher()
+        for item in state["userDictionary"] as? [[String: Any]] ?? [] {
+            guard item["isTemplateMode"] as? Bool != true,
+                  let ruby = item["ruby"] as? String, !ruby.isEmpty,
+                  let word = item["word"] as? String, !word.isEmpty else { continue }
+            let importance = min(5, max(1, item["importance"] as? Int ?? 3))
+            personalVersion.combine(ruby)
+            personalVersion.combine(word)
+            personalVersion.combine(importance)
+            entries.append(AzooKeyHotfixDictionaryEntry(
                 word: word,
                 ruby: ruby,
-                wordWeight: wordWeight,
-                lcid: lcid,
-                rcid: rcid,
-                mid: mid
-            )
+                wordWeight: Double(importance - 3) * 2 - 9,
+                lcid: 1285,
+                rcid: 1285,
+                mid: 501
+            ))
         }
-        let lastUpdate = metadata["last_update"] as? String ?? "unknown"
         conversionEngine?.updateHotfixDictionary(
             entries,
-            version: "\(tag)|\(lastUpdate)|\(entries.count)"
+            version: "\(hotfixVersion)|personal:\(personalVersion.finalize())"
         )
     }
 
@@ -1295,6 +1314,7 @@ final class KeyboardViewController: UIInputViewController {
         if let index { entries[index] = entry } else { entries.append(entry) }
         state["userDictionary"] = entries
         saveState()
+        reloadConversionDictionary()
         showDictionaryList()
     }
 
@@ -1304,6 +1324,7 @@ final class KeyboardViewController: UIInputViewController {
         entries.removeAll { ($0["id"] as? NSNumber)?.intValue == id }
         state["userDictionary"] = entries
         saveState()
+        reloadConversionDictionary()
         showDictionaryList()
     }
 
@@ -2367,6 +2388,7 @@ final class KeyboardViewController: UIInputViewController {
         if mode == "english" { return buildEnglishCandidates(composing) }
         let reading = katakanaToHiragana(composing)
         var result: [String] = []
+        var exactUserTexts: [String] = []
         let learned = learnedCandidateEntries(learningScores(), english: false)
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
@@ -2402,6 +2424,7 @@ final class KeyboardViewController: UIInputViewController {
                 guard let value, !value.isEmpty else { continue }
                 if ruby == reading {
                     result.append(value)
+                    exactUserTexts.append(value)
                 } else {
                     prefixPredictions.append(value)
                     if predictionReadings[value] == nil { predictionReadings[value] = ruby }
@@ -2492,18 +2515,19 @@ final class KeyboardViewController: UIInputViewController {
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
         let learnedTexts = exactLearning.map(\.text)
-        let engineCandidate: String?
-        if zenzai != nil {
-            engineCandidate = engineCandidates.first {
-                !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
-                    && $0 != hiragana && $0 != fullKatakana
-            }
-        } else {
-            engineCandidate = nil
+        let stableEngineCandidate = conversionEngine?.baselineTexts.first {
+            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && $0 != hiragana && $0 != fullKatakana
+        }
+        let engineCandidate = stableEngineCandidate ?? engineCandidates.first {
+            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && $0 != hiragana && $0 != fullKatakana
         }
         var prioritized: [String] = []
         prioritized.append(contentsOf: learnedTexts)
+        prioritized.append(contentsOf: exactUserTexts)
         if let engineCandidate { prioritized.append(engineCandidate) }
+        prioritized.append(contentsOf: Self.systemDictionary[reading] ?? [])
         prioritized.append(contentsOf: [hiragana, fullKatakana])
         prioritized.append(contentsOf: result)
         var seen = Set<String>()

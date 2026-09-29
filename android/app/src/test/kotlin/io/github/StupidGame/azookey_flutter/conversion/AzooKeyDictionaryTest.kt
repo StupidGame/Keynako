@@ -47,6 +47,21 @@ class AzooKeyDictionaryTest {
         assertTrue("旧候補" !in updated)
     }
 
+    @Test
+    fun personalEntryConvertsTheStartAndMiddleOfLongerReadings() {
+        val dictionary = syntheticDictionary()
+        val personal = listOf(entry("登録語", "てすと", 200))
+
+        assertEquals(
+            "登録語かな",
+            dictionary.candidates("てすとかな", 0, additionalEntries = personal).conversions.first(),
+        )
+        assertEquals(
+            "あ登録語い",
+            dictionary.candidates("あてすとい", 0, additionalEntries = personal).conversions.first(),
+        )
+    }
+
     private val dictionaryRoot: File by lazy {
         val workingDirectory = requireNotNull(System.getProperty("user.dir"))
         generateSequence(File(workingDirectory).absoluteFile) { it.parentFile }
@@ -74,6 +89,15 @@ class AzooKeyDictionaryTest {
 
         assertTrue("今日 should be a conversion candidate: $candidates", "今日" in candidates)
         assertTrue("conversion candidates should be rich: $candidates", candidates.size >= 10)
+    }
+
+    @Test
+    fun longSentenceStartsWithTheCommonCompleteConversion() {
+        val candidates = dictionary.candidates(
+            "わたしはきょうとうきょうのえきでともだちとあいました",
+            predictionLimit = 0,
+        ).conversions
+        assertEquals("私は今日東京の駅で友達と会いました", candidates.first())
     }
 
     @Test

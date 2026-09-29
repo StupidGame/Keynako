@@ -590,9 +590,14 @@ void ImeSession::rebuild_candidates() {
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;
         for (const auto &entry : user_dictionary_) {
-            if (!entry.has_word_weight) continue;
-            additional_entries.push_back({entry.value, entry.reading, entry.lcid,
-                                          entry.rcid, entry.word_weight});
+            if (entry.has_word_weight) {
+                additional_entries.push_back({entry.value, entry.reading, entry.lcid,
+                                              entry.rcid, entry.word_weight});
+            } else if (entry.source == "personal" && !entry.reading.empty() &&
+                       conversion_reading.find(entry.reading) != std::string::npos) {
+                additional_entries.push_back({entry.value, entry.reading, 1285, 1285,
+                                              static_cast<float>((entry.importance - 3) * 2 - 9)});
+            }
         }
         for (auto &value : bundled_dictionary_->candidates(
                  conversion_reading, 48, additional_entries)) {

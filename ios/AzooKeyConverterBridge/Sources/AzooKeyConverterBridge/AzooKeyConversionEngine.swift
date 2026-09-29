@@ -35,6 +35,7 @@ public final class AzooKeyConversionEngine {
     private let memoryDirectoryURL: URL
     private var lastCandidates: [String: Candidate] = [:]
     public private(set) var predictionTexts = Set<String>()
+    public private(set) var baselineTexts: [String] = []
     private var hotfixDictionaryVersion: String?
 
     public init(sharedContainerURL: URL) {
@@ -68,6 +69,7 @@ public final class AzooKeyConversionEngine {
         hotfixDictionaryVersion = version
         lastCandidates = [:]
         predictionTexts = []
+        baselineTexts = []
     }
 
     public func candidates(
@@ -86,6 +88,7 @@ public final class AzooKeyConversionEngine {
         guard !reading.isEmpty else {
             lastCandidates = [:]
             predictionTexts = []
+            baselineTexts = []
             return []
         }
 
@@ -126,35 +129,51 @@ public final class AzooKeyConversionEngine {
         if !unicodeCandidate {
             providers.removeAll { $0 is UnicodeSpecialCandidateProvider }
         }
-        let options = ConvertRequestOptions(
-            N_best: 20,
-            requireJapanesePrediction: .autoMix,
-            requireEnglishPrediction: .disabled,
-            keyboardLanguage: .ja_JP,
-            englishCandidateInRoman2KanaInput: true,
-            fullWidthRomanCandidate: fullWidthRomanCandidate,
-            halfWidthKanaCandidate: halfWidthKanaCandidate,
-            learningType: learningType,
-            maxMemoryCount: learningMode == 2 ? 0 : 65_536,
-            memoryDirectoryURL: memoryDirectoryURL,
-            sharedContainerURL: sharedContainerURL,
-            textReplacer: .withDefaultEmojiDictionary(),
-            specialCandidateProviders: providers,
-            zenzaiMode: zenzaiMode,
-            experimentalZenzaiPredictiveInput: modelURL != nil,
-            typoCorrectionMode: .automatic,
-            metadata: .init(versionString: "Keynako \(appVersion)")
+        func options(
+            for mode: ConvertRequestOptions.ZenzaiMode,
+            predictiveInput: Bool
+        ) -> ConvertRequestOptions {
+            ConvertRequestOptions(
+                N_best: 20,
+                requireJapanesePrediction: .autoMix,
+                requireEnglishPrediction: .disabled,
+                keyboardLanguage: .ja_JP,
+                englishCandidateInRoman2KanaInput: true,
+                fullWidthRomanCandidate: fullWidthRomanCandidate,
+                halfWidthKanaCandidate: halfWidthKanaCandidate,
+                learningType: learningType,
+                maxMemoryCount: learningMode == 2 ? 0 : 65_536,
+                memoryDirectoryURL: memoryDirectoryURL,
+                sharedContainerURL: sharedContainerURL,
+                textReplacer: .withDefaultEmojiDictionary(),
+                specialCandidateProviders: providers,
+                zenzaiMode: mode,
+                experimentalZenzaiPredictiveInput: predictiveInput,
+                typoCorrectionMode: .automatic,
+                metadata: .init(versionString: "Keynako \(appVersion)")
+            )
+        }
+        // Keep a standard conversion available when model suggestions are unusual.
+        let baseline = converter.requestCandidates(
+            composingText,
+            options: options(for: .off, predictiveInput: false)
         )
-        let result = converter.requestCandidates(composingText, options: options)
-        let mainTexts = Set(result.mainResults.map(\.text))
+        let result = modelURL == nil
+            ? baseline
+            : converter.requestCandidates(
+                composingText,
+                options: options(for: zenzaiMode, predictiveInput: true)
+            )
+        baselineTexts = baseline.mainResults.map(\.text)
+        let mainTexts = Set(result.mainResults.map(\.text)).union(baselineTexts)
         predictionTexts = Set(result.predictionResults.map(\.text)).subtracting(mainTexts)
-        let values = result.mainResults + result.predictionResults
+        let values = result.mainResults + baseline.mainResults + result.predictionResults
         lastCandidates = [:]
         var texts: [String] = []
         var seen = Set<String>()
         for candidate in values where !candidate.text.isEmpty && seen.insert(candidate.text).inserted {
             texts.append(candidate.text)
-            lastCandidates[candidate.text] = candidate
+            if lastCandidates[candidate.text] == nil { lastCandidates[candidate.text] = candidate }
         }
         return texts
     }
@@ -167,18 +186,21 @@ public final class AzooKeyConversionEngine {
         converter.stopComposition()
         lastCandidates = [:]
         predictionTexts = []
+        baselineTexts = []
     }
 
     public func stopComposition() {
         converter.stopComposition()
         lastCandidates = [:]
         predictionTexts = []
+        baselineTexts = []
     }
 
     public func resetLearning() {
         converter.resetMemory()
         lastCandidates = [:]
         predictionTexts = []
+        baselineTexts = []
     }
 
     private static func toKatakana(_ value: String) -> String {

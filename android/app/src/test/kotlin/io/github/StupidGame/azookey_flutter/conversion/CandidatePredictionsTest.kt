@@ -2,9 +2,42 @@ package io.github.StupidGame.azookey_flutter.conversion
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CandidatePredictionsTest {
+
+    @Test
+    fun completeConversionsLeadLiveInputWithoutPromotingCompletions() {
+        assertEquals(
+            "今日の予定",
+            bestLiveJapaneseConversion(
+                "きょうのよてい",
+                setOf("今日の予定", "きょうのよてい"),
+                listOf("先の予測", "きょうのよてい", "今日の予定"),
+            ),
+        )
+    }
+
+    @Test
+    fun longReadingsUseRerankingBeforeGenerationWouldBeTruncated() {
+        assertEquals(96, zenzaiGenerationTokenBudget(40, 1))
+        assertTrue(!shouldGenerateZenzaiCandidate(40, 96))
+        assertTrue(shouldGenerateZenzaiCandidate(8, zenzaiGenerationTokenBudget(8, 1)))
+    }
+
+    @Test
+    fun novelModelOutputDoesNotDisplaceEstablishedConversions() {
+        assertEquals(
+            listOf("今日は晴れる", "今日は晴れ", "きょうははれる", "奇妙な候補"),
+            placeNovelGeneratedCandidate(
+                listOf("奇妙な候補", "今日は晴れる", "今日は晴れ", "きょうははれる"),
+                "奇妙な候補",
+                setOf("今日は晴れる", "今日は晴れ", "きょうははれる"),
+            ),
+        )
+    }
+
     @Test
     fun commitsTheRawReadingWhenCandidateConversionIsDisabled() {
         assertEquals(

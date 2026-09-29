@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
@@ -46,6 +47,59 @@ void main() {
     } finally {
       await directory.delete(recursive: true);
     }
+  });
+
+  test(
+    'right-click candidate saves locally without duplicate entries',
+    () async {
+      final repository = _MemoryPersonalDictionaryRepository();
+      final controller = DesktopInputController(
+        personalDictionaryRepository: repository,
+      );
+      controller.updateRawInput('nihongo');
+      final index = controller.candidates.indexWhere(
+        (candidate) => candidate.text == '日本語',
+      );
+
+      expect(await controller.saveCandidateToPersonalDictionary(index), isTrue);
+      expect(repository.entries.single.reading, 'にほんご');
+      expect(repository.entries.single.value, '日本語');
+      expect(controller.candidateShareStatus, '個人辞書に登録しました');
+      expect(await controller.saveCandidateToPersonalDictionary(index), isTrue);
+      expect(repository.entries, hasLength(1));
+      expect(controller.candidateShareStatus, '個人辞書に登録済みです');
+      controller.dispose();
+    },
+  );
+
+  testWidgets('right-click menu waits for a dictionary choice', (tester) async {
+    final repository = _MemoryPersonalDictionaryRepository();
+    final controller = DesktopInputController(
+      personalDictionaryRepository: repository,
+    );
+    controller.updateRawInput('nihongo');
+    final index = controller.candidates.indexWhere(
+      (candidate) => candidate.text == '日本語',
+    );
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+    final candidate = find.byKey(Key('candidate-$index'));
+    final mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await mouse.down(tester.getCenter(candidate));
+    await mouse.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text('共通辞書に送る'), findsOneWidget);
+    expect(find.text('個人辞書に登録'), findsOneWidget);
+    expect(repository.entries, isEmpty);
+    await tester.tap(find.text('個人辞書に登録'));
+    await tester.pumpAndSettle();
+    expect(repository.entries.single.value, '日本語');
+    await mouse.removePointer();
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
   });
 
   testWidgets('dictionary opens from IME and adds, edits, deletes a word', (

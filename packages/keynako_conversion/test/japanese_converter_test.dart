@@ -36,6 +36,20 @@ void main() {
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
 
+  test('applies a personal word to the start of a longer reading', () {
+    final values = converter.candidates(
+      input: 'てすとかな',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'てすと', value: '登録語'),
+        ],
+      ),
+    );
+
+    expect(values.map((candidate) => candidate.text), contains('登録語かな'));
+    expect(values.first.source, 'user-prefix');
+  });
+
   test('orders user dictionary entries by importance', () {
     final candidates = converter.candidates(
       input: 'きーなこ',

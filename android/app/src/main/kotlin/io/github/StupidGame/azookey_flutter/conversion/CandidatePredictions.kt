@@ -71,6 +71,42 @@ internal fun compositionCommitText(
     selectedIndex: Int = 0,
 ): String = if (useCandidate) candidates.getOrNull(selectedIndex) ?: candidates.firstOrNull() ?: reading else reading
 
+/** Give longer readings enough room to finish; capped requests are reranked without generation. */
+internal fun zenzaiGenerationTokenBudget(readingLength: Int, effort: Int): Int {
+    val limit = when (effort) {
+        0 -> 64
+        2 -> 128
+        else -> 96
+    }
+    return (readingLength * 3 + 16).coerceIn(16, limit)
+}
+
+internal fun shouldGenerateZenzaiCandidate(readingLength: Int, maxTokens: Int): Boolean =
+    readingLength * 3 + 16 <= maxTokens
+
+/** A complete conversion may lead live input; completions and bare kana may not. */
+internal fun bestLiveJapaneseConversion(
+    reading: String,
+    completeConversions: Set<String>,
+    ranked: Iterable<String>,
+): String? {
+    val hiragana = katakanaToHiragana(reading)
+    val katakana = hiraganaToKatakana(hiragana)
+    return ranked.firstOrNull { it in completeConversions && it != hiragana && it != katakana }
+}
+
+/** Keep a new model suggestion visible without letting it displace common dictionary results. */
+internal fun placeNovelGeneratedCandidate(
+    ranked: List<String>,
+    generated: String,
+    established: Set<String>,
+): List<String> {
+    if (generated.isEmpty() || generated in established || generated !in ranked) return ranked
+    val common = ranked.filter { it != generated }
+    val insertion = minOf(3, common.size)
+    return common.take(insertion) + generated + common.drop(insertion)
+}
+
 /** Returns dictionary values whose reading extends the text currently being composed. */
 internal data class ReadingPrediction(
     val reading: String,

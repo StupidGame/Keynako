@@ -410,6 +410,20 @@ class JapaneseConverter {
                 (ruby.length - reading.length) * 4,
           ),
         );
+      } else if (ruby.isNotEmpty && reading.startsWith(ruby)) {
+        values.add(
+          ConversionCandidate(
+            text:
+                (entry.template ? _renderTemplate(entry) : entry.value) +
+                reading.substring(ruby.length),
+            reading: reading,
+            source: 'user-prefix',
+            score:
+                180 +
+                entry.importance.clamp(1, 5).toInt() * 20 -
+                (reading.length - ruby.length) * 4,
+          ),
+        );
       }
     }
     for (final value in _dictionary[reading] ?? const <String>[]) {

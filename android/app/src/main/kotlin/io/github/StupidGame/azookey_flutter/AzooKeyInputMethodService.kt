@@ -50,6 +50,7 @@ import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
+import io.github.StupidGame.azookey_flutter.conversion.bestLiveJapaneseConversion
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
@@ -69,6 +70,7 @@ import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
+import io.github.StupidGame.azookey_flutter.conversion.zenzaiGenerationTokenBudget
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationAction
@@ -2560,12 +2562,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val effort = settings.optInt("zenzai_effort", 1).coerceIn(0, 2)
         val size = if (effort == 0) "xsmall" else "small"
         val modelInput = hiraganaToKatakana(reading)
-        val effortTokenLimit = when (effort) {
-            0 -> 24
-            2 -> 48
-            else -> 32
-        }
-        val maxTokens = (modelInput.length * 2 + 6).coerceIn(8, effortTokenLimit)
+        val maxTokens = zenzaiGenerationTokenBudget(modelInput.length, effort)
         val leftContext = currentInputConnection
             ?.getTextBeforeCursor(20, 0)
             ?.toString()
@@ -2640,11 +2637,25 @@ class AzooKeyInputMethodService : InputMethodService() {
             predictedValues.add(prediction.text)
             predictionReadings.getOrPut(prediction.text) { prediction.reading }
         }
+        val personalEntries = userEntries.mapNotNull { entry ->
+            if (entry.optBoolean("isTemplateMode", false)) return@mapNotNull null
+            val ruby = katakanaToHiragana(entry.optString("ruby"))
+            val word = entry.optString("word")
+            if (ruby.isBlank() || word.isBlank() || !reading.contains(ruby)) return@mapNotNull null
+            AzooKeyHotfixDictionaryEntry(
+                word = word,
+                ruby = ruby,
+                wordWeight = (entry.optInt("importance", 3).coerceIn(1, 5) - 3) * 2.0 - 9.0,
+                lcid = 1285,
+                rcid = 1285,
+                mid = 501,
+            )
+        }
         val officialCandidates = runCatching {
             azooKeyDictionary.candidates(
                 reading,
                 predictionLimit,
-                additionalEntries = hotfixDictionaryEntries,
+                additionalEntries = hotfixDictionaryEntries + personalEntries,
                 additionalDictionaryVersion = hotfixDictionaryVersion,
             )
         }.onFailure {
@@ -2656,6 +2667,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (officialCandidates.conversions.isEmpty()) {
             systemDictionary[reading]?.let(values::addAll)
         }
+        val completeConversions = values.toSet()
         values.add(reading)
         if (predictionLimit > 0) {
             for (prediction in prefixPredictionEntries(
@@ -2707,6 +2719,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         return pinJapaneseKanaCandidates(
             reading = reading,
             ranked = ranked,
+            liveCandidate = bestLiveJapaneseConversion(reading, completeConversions, ranked),
             learnedCandidates = learned,
         )
     }

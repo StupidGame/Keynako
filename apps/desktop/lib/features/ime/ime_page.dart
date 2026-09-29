@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../../input/desktop_input_controller.dart';
 import 'personal_dictionary_page.dart';
 
+enum _DictionaryDestination { shared, personal }
+
 class ImePage extends StatefulWidget {
   const ImePage({required this.controller, super.key});
 
@@ -297,12 +299,17 @@ class _Header extends StatelessWidget {
                         key: const Key('personal-dictionary-open'),
                         tooltip: '個人辞書',
                         icon: const Icon(Icons.book_outlined, size: 20),
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) =>
-                                PersonalDictionaryPage(controller: controller),
-                          ),
-                        ),
+                        onPressed: () async {
+                          await controller.initializePersonalDictionary();
+                          if (!context.mounted) return;
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => PersonalDictionaryPage(
+                                controller: controller,
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -609,23 +616,56 @@ class _InputCard extends StatelessWidget {
                             ),
                           ),
                           child: InkWell(
+                            key: Key('candidate-$index'),
                             borderRadius: BorderRadius.circular(15),
                             onTap: () => controller.selectCandidate(index),
                             onDoubleTap: () {
                               controller.selectCandidate(index);
                               onCommit();
                             },
-                            onSecondaryTap: () async {
-                              final sent = await controller.shareCandidate(
-                                index,
+                            onSecondaryTapUp: (details) async {
+                              if (controller.candidateSharing) return;
+                              final overlay =
+                                  Overlay.of(context).context.findRenderObject()
+                                      as RenderBox;
+                              final position = overlay.globalToLocal(
+                                details.globalPosition,
                               );
+                              final destination =
+                                  await showMenu<_DictionaryDestination>(
+                                    context: context,
+                                    position: RelativeRect.fromLTRB(
+                                      position.dx,
+                                      position.dy,
+                                      overlay.size.width - position.dx,
+                                      overlay.size.height - position.dy,
+                                    ),
+                                    items: const [
+                                      PopupMenuItem(
+                                        value: _DictionaryDestination.shared,
+                                        child: Text('共通辞書に送る'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: _DictionaryDestination.personal,
+                                        child: Text('個人辞書に登録'),
+                                      ),
+                                    ],
+                                  );
+                              if (destination == null || !context.mounted) {
+                                return;
+                              }
+                              if (destination ==
+                                  _DictionaryDestination.shared) {
+                                await controller.shareCandidate(index);
+                              } else {
+                                await controller
+                                    .saveCandidateToPersonalDictionary(index);
+                              }
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    sent
-                                        ? '候補を共有ストレージへ送信しました。'
-                                        : '候補を共有ストレージへ送信できませんでした。',
+                                    controller.candidateShareStatus,
                                   ),
                                 ),
                               );
