@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import binascii
 import ctypes
 import os
 from pathlib import Path
@@ -12,6 +11,7 @@ import sys
 import time
 
 import gi
+from zenzai_process import AsyncZenzai
 
 gi.require_version("IBus", "1.0")
 from gi.repository import GLib, IBus  # noqa: E402
@@ -43,6 +43,10 @@ class NativeSession:
         self.library.keynako_ime_is_converting.restype = ctypes.c_int
         self.library.keynako_ime_load_user_dictionary.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_load_user_dictionary.restype = ctypes.c_int
+        self.library.keynako_ime_load_combined_dictionary.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+        ]
+        self.library.keynako_ime_load_combined_dictionary.restype = ctypes.c_int
         self.library.keynako_ime_set_bundled_dictionary_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_set_bundled_dictionary_path.restype = ctypes.c_int
         for name in (
@@ -111,6 +115,11 @@ class NativeSession:
             self.handle, os.fsencode(path),
         ))
 
+    def load_combined_dictionary(self, shared: Path, personal: Path) -> bool:
+        return bool(self.library.keynako_ime_load_combined_dictionary(
+            self.handle, os.fsencode(shared), os.fsencode(personal),
+        ))
+
     def reading(self) -> str:
         return self.library.keynako_ime_reading(self.handle).decode()
 
@@ -143,57 +152,6 @@ class NativeSession:
         self.library.keynako_ime_insert_zenzai(self.handle, value.encode())
 
 
-class Zenzai:
-    def __init__(self) -> None:
-        self.process: subprocess.Popen[bytes] | None = None
-
-    def _start(self) -> bool:
-        if self.process is not None:
-            return True
-        root = Path(__file__).resolve().parent
-        executable = Path(os.environ.get("KEYNAKO_ZENZAI_BIN", root / "keynako_zenzai"))
-        model = Path(os.environ.get(
-            "KEYNAKO_ZENZAI_MODEL",
-            root / "zenzai" / "zenz-v3.2-xsmall-gguf" / "ggml-model-Q5_K_M.gguf",
-        ))
-        if not executable.is_file() or not model.is_file():
-            return False
-        self.process = subprocess.Popen(
-            [str(executable), str(model)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if self.process.stdout is not None and self.process.stdout.readline().strip() == b"READY":
-            return True
-        self.close()
-        return False
-
-    def generate(self, reading: str) -> str | None:
-        if not self._start() or self.process is None or self.process.stdin is None or self.process.stdout is None:
-            return None
-        prompt = "\uee00" + reading + "\uee01"
-        try:
-            self.process.stdin.write(b"24\t" + binascii.hexlify(prompt.encode()) + b"\n")
-            self.process.stdin.flush()
-            response = self.process.stdout.readline().strip()
-            if not response or response.startswith(b"ERROR"):
-                return None
-            value = binascii.unhexlify(response).decode("utf-8", "replace")
-            for marker in range(0xEE00, 0xEE08):
-                value = value.split(chr(marker), 1)[0]
-            return value.strip() or None
-        except (BrokenPipeError, OSError, ValueError):
-            return None
-
-    def close(self) -> None:
-        if self.process is None:
-            return
-        try:
-            self.process.communicate(b"QUIT\n", timeout=1)
-        except (OSError, subprocess.TimeoutExpired):
-            self.process.kill()
-        self.process = None
-
-
 class KeynakoEngine(IBus.Engine):
     def __init__(self, connection: object, object_path: str) -> None:
         super().__init__(connection=connection, object_path=object_path)
@@ -201,9 +159,14 @@ class KeynakoEngine(IBus.Engine):
         self.raw = ""
         self.mode = "ja"
         self.lookup = IBus.LookupTable.new(9, 0, True, True)
-        self.zenzai = Zenzai()
+        self.zenzai = AsyncZenzai(GLib.idle_add)
+        self._conversion_revision = 0
+        self._selection_revision = 0
+        self._destroyed = False
         self.dictionary_path: Path | None = None
         self.dictionary_mtime_ns = -1
+        self.personal_dictionary_path: Path | None = None
+        self.personal_dictionary_mtime_ns = -1
         self.last_dictionary_check = 0.0
         self.last_dictionary_refresh_request = 0.0
         self.last_backspace_press: float | None = None
@@ -235,6 +198,17 @@ class KeynakoEngine(IBus.Engine):
             None,
         )
         properties.append(self.refresh_dictionary_property)
+        properties.append(IBus.Property.new(
+            "PersonalDictionary",
+            IBus.PropType.NORMAL,
+            IBus.Text.new_from_string("個人辞書を編集"),
+            "",
+            IBus.Text.new_from_string("単語を登録・編集します"),
+            True,
+            True,
+            IBus.PropState.UNCHECKED,
+            None,
+        ))
         self.register_properties(properties)
 
     def _dictionary_candidates(self) -> list[Path]:
@@ -247,21 +221,40 @@ class KeynakoEngine(IBus.Engine):
         candidates.append(Path(__file__).resolve().parent / "bundled_shared_dictionary.tsv")
         return candidates
 
+    def _personal_dictionary_candidates(self) -> list[Path]:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        home = Path.home()
+        candidates = []
+        if xdg:
+            candidates.append(Path(xdg) / "keynako" / "user_dictionary.tsv")
+        candidates.append(home / ".local" / "share" / "keynako" / "user_dictionary.tsv")
+        return candidates
+
     def _reload_shared_dictionary(self, force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self.last_dictionary_check < 5:
             return
         self.last_dictionary_check = now
+        personal_candidates = self._personal_dictionary_candidates()
+        personal = next((path for path in personal_candidates if path.is_file()), personal_candidates[0])
+        try:
+            personal_mtime_ns = personal.stat().st_mtime_ns
+        except OSError:
+            personal_mtime_ns = -1
         for path in self._dictionary_candidates():
             try:
                 mtime_ns = path.stat().st_mtime_ns
             except OSError:
                 continue
-            if path == self.dictionary_path and mtime_ns == self.dictionary_mtime_ns:
+            if (path == self.dictionary_path and mtime_ns == self.dictionary_mtime_ns
+                    and personal == self.personal_dictionary_path
+                    and personal_mtime_ns == self.personal_dictionary_mtime_ns):
                 return
-            if self.session.load_user_dictionary(path):
+            if self.session.load_combined_dictionary(path, personal):
                 self.dictionary_path = path
                 self.dictionary_mtime_ns = mtime_ns
+                self.personal_dictionary_path = personal
+                self.personal_dictionary_mtime_ns = personal_mtime_ns
                 return
 
     def _request_shared_dictionary_refresh(self, force: bool = False) -> bool:
@@ -330,8 +323,27 @@ class KeynakoEngine(IBus.Engine):
         self.update_lookup_table(self.lookup, True)
 
     def _clear(self) -> None:
+        self._conversion_revision += 1
         self.raw = ""
         self.session.clear()
+        self._render()
+
+    def _receive_zenzai(
+        self, revision: int, selection_revision: int, reading: str, value: str | None,
+    ) -> None:
+        if (
+            not value
+            or self._destroyed
+            or revision != self._conversion_revision
+            or not self.raw
+            or self.mode != "ja"
+            or not self.session.is_converting()
+            or self.session.reading() != reading
+        ):
+            return
+        self.session.insert_zenzai(value)
+        if selection_revision == self._selection_revision:
+            self.session.select(0)
         self._render()
 
     def _replace_selection_before_input(self) -> None:
@@ -377,6 +389,7 @@ class KeynakoEngine(IBus.Engine):
         self._request_shared_dictionary_refresh()
         control = bool(state & IBus.ModifierType.CONTROL_MASK)
         if control and keyval == IBus.KEY_space:
+            self._conversion_revision += 1
             self.mode = "en" if self.mode == "ja" else "ja"
             self.session.set_mode(self.mode == "en")
             self.raw = self.session.raw_input()
@@ -388,6 +401,7 @@ class KeynakoEngine(IBus.Engine):
         if keyval == IBus.KEY_BackSpace:
             if not self.raw:
                 return False
+            self._conversion_revision += 1
             if self.session.cancel_conversion():
                 self.last_backspace_press = None
             else:
@@ -414,6 +428,7 @@ class KeynakoEngine(IBus.Engine):
             if not self.raw:
                 return False
             if self.session.cancel_conversion():
+                self._conversion_revision += 1
                 self._render()
             else:
                 self._clear()
@@ -435,18 +450,27 @@ class KeynakoEngine(IBus.Engine):
                 return False
             self._reload_shared_dictionary()
             if not self.session.is_converting():
-                if keyval in (
+                request_zenzai = keyval in (
                     IBus.KEY_space,
                     getattr(IBus, "KEY_Henkan", -1),
                     getattr(IBus, "KEY_Henkan_Mode", -1),
-                ) and self.mode == "ja":
-                    generated = self.zenzai.generate(self.session.reading())
-                    if generated:
-                        self.session.insert_zenzai(generated)
-                self.session.begin_conversion()
+                ) and self.mode == "ja"
+                reading = self.session.reading()
+                if self.session.begin_conversion() and request_zenzai:
+                    self._conversion_revision += 1
+                    revision = self._conversion_revision
+                    selection_revision = self._selection_revision
+                    self.zenzai.submit(
+                        reading,
+                        lambda value: self._receive_zenzai(
+                            revision, selection_revision, reading, value,
+                        ),
+                    )
                 if keyval == IBus.KEY_Up:
+                    self._selection_revision += 1
                     self.session.select_previous()
             else:
+                self._selection_revision += 1
                 if keyval == IBus.KEY_Up:
                     self.session.select_previous()
                 else:
@@ -479,6 +503,7 @@ class KeynakoEngine(IBus.Engine):
             value = chr(scalar)
             self._reload_shared_dictionary()
             self._replace_selection_before_input()
+            self._conversion_revision += 1
             self.raw += value
             self.session.append(value)
             self._render()
@@ -488,6 +513,7 @@ class KeynakoEngine(IBus.Engine):
     def do_candidate_clicked(self, index: int, button: int, state: int) -> None:
         del button, state
         if 0 <= index < len(self.session.candidates()):
+            self._selection_revision += 1
             self.session.select(index)
             self._commit()
 
@@ -496,8 +522,17 @@ class KeynakoEngine(IBus.Engine):
         if prop_name == "RefreshDictionary":
             self._request_shared_dictionary_refresh(force=True)
             return
+        if prop_name == "PersonalDictionary":
+            executable = Path(__file__).resolve().parent / "keynako_desktop"
+            if executable.is_file():
+                try:
+                    subprocess.Popen([str(executable), "--dictionary"], start_new_session=True)
+                except OSError:
+                    pass
+            return
         if prop_name != "InputMode":
             return
+        self._conversion_revision += 1
         self.mode = "en" if self.mode == "ja" else "ja"
         self.session.set_mode(self.mode == "en")
         self.raw = self.session.raw_input()
@@ -507,6 +542,7 @@ class KeynakoEngine(IBus.Engine):
     def do_cursor_up(self) -> bool:
         if not self.raw:
             return False
+        self._selection_revision += 1
         self.session.select_previous()
         self._render()
         return True
@@ -514,6 +550,7 @@ class KeynakoEngine(IBus.Engine):
     def do_cursor_down(self) -> bool:
         if not self.raw:
             return False
+        self._selection_revision += 1
         self.session.select_next()
         self._render()
         return True
@@ -528,6 +565,8 @@ class KeynakoEngine(IBus.Engine):
         super().do_focus_out()
 
     def do_destroy(self) -> None:
+        self._destroyed = True
+        self._conversion_revision += 1
         self.zenzai.close()
         self.session.close()
         super().do_destroy()

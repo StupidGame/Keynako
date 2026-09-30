@@ -1,13 +1,11 @@
 #include "keynako_ime_c_api.h"
 
 #include "keynako_ime_core.h"
+#include "shared_dictionary_cache.h"
 
-#include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace {
 
@@ -54,52 +52,17 @@ int keynako_ime_select_candidate(keynako_ime_session session, size_t index) {
 }
 int keynako_ime_load_user_dictionary(keynako_ime_session session, const char *utf8_path) {
     if (!session || !utf8_path || !*utf8_path) return 0;
-    std::ifstream stream(std::filesystem::u8path(utf8_path), std::ios::binary);
-    if (!stream) return 0;
-    std::vector<keynako::DictionaryEntry> entries;
-    std::string line;
-    bool valid_header = false;
-    while (std::getline(stream, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.rfind("# keynako-shared-dictionary-v1", 0) == 0) {
-            valid_header = true;
-            continue;
-        }
-        if (line.empty() || line.front() == '#') continue;
-        const auto first_tab = line.find('\t');
-        const auto second_tab = first_tab == std::string::npos
-            ? std::string::npos
-            : line.find('\t', first_tab + 1);
-        if (first_tab == std::string::npos || second_tab == std::string::npos) continue;
-        try {
-            const int importance = std::clamp(std::stoi(line.substr(0, first_tab)), 1, 5);
-            std::string reading = line.substr(first_tab + 1, second_tab - first_tab - 1);
-            const auto third_tab = line.find('\t', second_tab + 1);
-            std::string value = third_tab == std::string::npos
-                ? line.substr(second_tab + 1)
-                : line.substr(second_tab + 1, third_tab - second_tab - 1);
-            if (!reading.empty() && !value.empty()) {
-                keynako::DictionaryEntry entry{std::move(reading), std::move(value), importance};
-                if (third_tab != std::string::npos) {
-                    const auto fourth_tab = line.find('\t', third_tab + 1);
-                    const auto fifth_tab = fourth_tab == std::string::npos
-                        ? std::string::npos
-                        : line.find('\t', fourth_tab + 1);
-                    if (fourth_tab != std::string::npos && fifth_tab != std::string::npos) {
-                        entry.word_weight = std::stof(line.substr(third_tab + 1, fourth_tab - third_tab - 1));
-                        entry.lcid = std::stoi(line.substr(fourth_tab + 1, fifth_tab - fourth_tab - 1));
-                        entry.rcid = std::stoi(line.substr(fifth_tab + 1));
-                        entry.has_word_weight = true;
-                    }
-                }
-                entries.push_back(std::move(entry));
-            }
-        } catch (const std::exception &) {
-            continue;
-        }
-    }
-    if (!valid_header || entries.empty()) return 0;
-    cast(session)->set_user_dictionary(std::move(entries));
+    auto entries = keynako::load_shared_dictionary_cache(std::filesystem::u8path(utf8_path));
+    if (!entries) return 0;
+    cast(session)->set_user_dictionary(std::move(*entries));
+    return 1;
+}
+int keynako_ime_load_combined_dictionary(keynako_ime_session session, const char *shared_path, const char *personal_path) {
+    if (!session || !shared_path || !*shared_path || !personal_path || !*personal_path) return 0;
+    auto entries = keynako::load_combined_dictionary_caches(
+        std::filesystem::u8path(shared_path), std::filesystem::u8path(personal_path));
+    if (!entries) return 0;
+    cast(session)->set_user_dictionary(std::move(*entries));
     return 1;
 }
 int keynako_ime_set_bundled_dictionary_path(keynako_ime_session session, const char *utf8_path) {

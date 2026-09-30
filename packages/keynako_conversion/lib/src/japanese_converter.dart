@@ -377,7 +377,7 @@ class JapaneseConverter {
         (exact ? values : prefixPredictions).add(
           ConversionCandidate(
             text: text,
-            reading: reading,
+            reading: ruby,
             source: exact ? 'learned' : 'learned-prediction',
             score: exact ? 250 : 180 - (ruby.length - reading.length) * 4,
           ),
@@ -402,12 +402,26 @@ class JapaneseConverter {
         prefixPredictions.add(
           ConversionCandidate(
             text: entry.template ? _renderTemplate(entry) : entry.value,
-            reading: reading,
+            reading: ruby,
             source: 'user-prediction',
             score:
                 220 +
                 entry.importance.clamp(1, 5).toInt() * 20 -
                 (ruby.length - reading.length) * 4,
+          ),
+        );
+      } else if (ruby.isNotEmpty && reading.startsWith(ruby)) {
+        values.add(
+          ConversionCandidate(
+            text:
+                (entry.template ? _renderTemplate(entry) : entry.value) +
+                reading.substring(ruby.length),
+            reading: reading,
+            source: 'user-prefix',
+            score:
+                180 +
+                entry.importance.clamp(1, 5).toInt() * 20 -
+                (reading.length - ruby.length) * 4,
           ),
         );
       }
@@ -427,7 +441,7 @@ class JapaneseConverter {
           prefixPredictions.add(
             ConversionCandidate(
               text: value,
-              reading: reading,
+              reading: entry.key,
               source: 'dictionary-prediction',
               score: 180 - (entry.key.length - reading.length) * 4,
             ),

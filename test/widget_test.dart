@@ -3,6 +3,7 @@ import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
 import 'package:azookey_flutter/features/customization/customization_page.dart';
 import 'package:azookey_flutter/features/settings/keyboard_settings_page.dart';
+import 'package:azookey_flutter/features/settings/settings_page.dart';
 import 'package:azookey_flutter/models/app_data.dart';
 import 'package:azookey_flutter/widgets/keyboard_preview.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,44 @@ class MemoryStorage implements StateStorage {
 }
 
 void main() {
+  testWidgets('deletes a dictionary word and keeps the last deletion saved', (
+    tester,
+  ) async {
+    final storage = MemoryStorage();
+    final controller = AppController(storage: storage);
+    await controller.initialize();
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: UserDictionaryPage()),
+      ),
+    );
+
+    final deleteButton = find.byKey(const ValueKey('dictionary-delete-0'));
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    expect(find.text('「Keynako」（きーなこ）をユーザ辞書から削除する？'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pumpAndSettle();
+    expect(controller.data.userDictionary, hasLength(1));
+
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('削除'));
+    await tester.pumpAndSettle();
+    await controller.flush();
+    expect(controller.data.userDictionary, isEmpty);
+    expect(AppData.decode(storage.value!).userDictionary, isEmpty);
+    expect(find.text('Keynako'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+    final reloaded = AppController(storage: storage);
+    await reloaded.initialize();
+    expect(reloaded.data.userDictionary, isEmpty);
+    reloaded.dispose();
+  });
+
   testWidgets('shows the four migrated application tabs', (tester) async {
     final controller = AppController(storage: MemoryStorage());
     await controller.initialize();

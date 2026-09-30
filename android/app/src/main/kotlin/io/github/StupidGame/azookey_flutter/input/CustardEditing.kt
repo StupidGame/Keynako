@@ -63,6 +63,7 @@ internal fun smartDeleteCount(
 internal fun backwardWordDeleteCount(
     text: String,
     locale: Locale = Locale.JAPANESE,
+    knownReadings: Set<String> = emptySet(),
 ): Int {
     if (text.isEmpty()) return 0
 
@@ -91,13 +92,22 @@ internal fun backwardWordDeleteCount(
     }
 
     if (lastWordEnd == contentEnd) {
-        return text.length - refinedJapaneseWordStart(text, lastWordStart, lastWordEnd)
+        return text.length - refinedJapaneseWordStart(text, lastWordStart, lastWordEnd, knownReadings)
     }
     if (lastWordEnd >= 0) return text.length - lastWordEnd
 
     val characters = BreakIterator.getCharacterInstance(locale).apply { setText(text) }
     val previous = characters.preceding(contentEnd).takeIf { it != BreakIterator.DONE } ?: 0
     return text.length - previous
+}
+
+/** UTF-16 units in the final user-visible character; never split a surrogate pair. */
+internal fun backwardCharacterDeleteCount(text: String): Int {
+    if (text.isEmpty()) return 0
+    val boundary = BreakIterator.getCharacterInstance(Locale.ROOT).apply {
+        setText(text)
+    }.preceding(text.length)
+    return text.length - (if (boundary == BreakIterator.DONE) 0 else boundary)
 }
 
 private enum class JapaneseCharacterClass {
@@ -124,7 +134,7 @@ private val indivisibleKanaWords = setOf(
 )
 
 /** Refines one platform word without ever extending its deletion range. */
-private fun refinedJapaneseWordStart(text: String, start: Int, end: Int): Int {
+private fun refinedJapaneseWordStart(text: String, start: Int, end: Int, knownReadings: Set<String>): Int {
     if (start >= end) return start
 
     val finalClass = japaneseCharacterClass(Character.codePointBefore(text, end))
@@ -139,15 +149,15 @@ private fun refinedJapaneseWordStart(text: String, start: Int, end: Int): Int {
 
     // A script change is a stable boundary even when a platform iterator has
     // returned a mixed Japanese/Latin token as one word.
-    if (runStart > start) return refineKanaGrammarBoundary(text, runStart, end)
-    return refineKanaGrammarBoundary(text, start, end)
+    if (runStart > start) return refineKanaGrammarBoundary(text, runStart, end, knownReadings)
+    return refineKanaGrammarBoundary(text, start, end, knownReadings)
 }
 
-private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
+private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int, knownReadings: Set<String>): Int {
     if (start >= end) return start
     val segment = text.substring(start, end)
     if (
-        segment in indivisibleKanaWords ||
+        segment in indivisibleKanaWords || segment in knownReadings ||
         segment.codePoints().anyMatch { japaneseCharacterClass(it) != JapaneseCharacterClass.HIRAGANA }
     ) {
         return start
@@ -155,17 +165,28 @@ private fun refineKanaGrammarBoundary(text: String, start: Int, end: Int): Int {
 
     japaneseAuxiliaries.firstOrNull { segment.length > it.length && segment.endsWith(it) }
         ?.let { return end - it.length }
-    japaneseParticles.firstOrNull { segment.length > it.length && segment.endsWith(it) }
-        ?.let { return end - it.length }
-
+    // In an all-kana run, は/の/に and similar syllables can also be part of a
+    // word (きもの, たまのこし). を is a much safer boundary without a tokenizer.
+    if (segment.length > 1 && segment.endsWith("を")) return end - 1
+    val objectMarker = segment.lastIndexOf("を")
+    if (objectMarker >= 2 && segment.length - objectMarker - 1 >= 2) {
+        return start + objectMarker + 1
+    }
+    for (particle in japaneseParticles) {
+        if (segment.length > particle.length && segment.endsWith(particle) &&
+            segment.dropLast(particle.length) in knownReadings
+        ) {
+            return end - particle.length
+        }
+    }
     for (particle in japaneseParticles) {
         val index = segment.lastIndexOf(particle)
-        val boundary = index + particle.length
-        // Require a lexical-looking span on both sides. Particle priority is
-        // intentional: an unambiguous を must win over a later に that begins
-        // a word such as にゅうりょく.
-        if (index >= 2 && segment.length - boundary >= 2) {
-            return start + boundary
+        val suffixStart = index + particle.length
+        if (index >= 2 && segment.length - suffixStart >= 2 &&
+            segment.substring(0, index) in knownReadings &&
+            segment.substring(suffixStart) in knownReadings
+        ) {
+            return start + suffixStart
         }
     }
     return start

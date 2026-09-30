@@ -548,9 +548,9 @@ class AppData {
     final data = AppData(
       schemaVersion: storedSchemaVersion,
       settings: defaults.settings,
-      userDictionary: decodedDictionary.isEmpty
-          ? defaults.userDictionary
-          : decodedDictionary,
+      userDictionary: json['userDictionary'] is List
+          ? decodedDictionary
+          : defaults.userDictionary,
       themes: decodedThemes.isEmpty ? defaults.themes : decodedThemes,
       lightThemeId: json['lightThemeId'] as String? ?? defaults.lightThemeId,
       darkThemeId: json['darkThemeId'] as String? ?? defaults.darkThemeId,

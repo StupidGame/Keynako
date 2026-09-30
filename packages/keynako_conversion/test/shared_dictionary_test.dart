@@ -43,6 +43,42 @@ void main() {
     expect(snapshot.entries.single.rightContextId, 1285);
   });
 
+  test('disabled shared dictionary clears cached entries', () async {
+    final client = KeynakoSharedDictionaryClient(
+      get: (_, _) async => SharedDictionaryHttpResponse(
+        statusCode: 200,
+        body: jsonEncode({
+          'sha': 'disabled-revision',
+          'encoding': 'base64',
+          'content': base64Encode(
+            utf8.encode(
+              jsonEncode({
+                'metadata': {
+                  'status': 'disabled',
+                  'version': '1.2',
+                  'last_update': '2026-09-27',
+                },
+                'data': [
+                  {'word': 'stale', 'ruby': 'すている', 'word_weight': -10},
+                ],
+              }),
+            ),
+          ),
+        }),
+      ),
+    );
+
+    final snapshot = await client.fetch();
+
+    expect(snapshot.entries, isEmpty);
+    expect(
+      NativeSharedDictionaryCodec.decode(
+        NativeSharedDictionaryCodec.encode(snapshot),
+      ).entries,
+      isEmpty,
+    );
+  });
+
   test('round trips the native dictionary cache', () {
     const snapshot = SharedDictionarySnapshot(
       revision: 'revision',
@@ -71,5 +107,14 @@ void main() {
     expect(decoded.entries.single.wordWeight, -10);
     expect(decoded.entries.single.leftContextId, 1285);
     expect(decoded.entries.single.rightContextId, 1285);
+  });
+
+  test('rejects a cache with an incomplete header', () {
+    expect(
+      () => NativeSharedDictionaryCodec.decode(
+        '# keynako-shared-dictionary-v1\tpartial\n',
+      ),
+      throwsFormatException,
+    );
   });
 }

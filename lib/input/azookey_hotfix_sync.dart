@@ -110,7 +110,7 @@ class AzooKeyHotfixSyncClient implements AzooKeyHotfixSynchronizer {
         throw const FormatException('Keynako hotfix response exceeds 2 MB.');
       }
       final bytes = <int>[];
-      await for (final chunk in response) {
+      await for (final chunk in response.timeout(const Duration(seconds: 30))) {
         bytes.addAll(chunk);
         if (bytes.length > maximumBytes) {
           throw const FormatException('Keynako hotfix response exceeds 2 MB.');

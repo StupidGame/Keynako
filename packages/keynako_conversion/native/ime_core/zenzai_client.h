@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -9,7 +10,8 @@ namespace keynako {
 // on explicit conversion (Space); live base conversion never waits for a model.
 class ZenzaiClient {
 public:
-    ZenzaiClient(std::string executable_path, std::string model_path);
+    ZenzaiClient(std::string executable_path, std::string model_path,
+                 std::chrono::milliseconds timeout = std::chrono::seconds(15));
     ~ZenzaiClient();
     ZenzaiClient(const ZenzaiClient &) = delete;
     ZenzaiClient &operator=(const ZenzaiClient &) = delete;

@@ -74,6 +74,11 @@ std::string hiragana_to_katakana(const std::string &value) {
     return convert_kana(value, true);
 }
 
+std::size_t utf8_character_count(const std::string &value) {
+    return static_cast<std::size_t>(std::count_if(value.begin(), value.end(),
+        [](unsigned char byte) { return (byte & 0xc0) != 0x80; }));
+}
+
 void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> &seen,
                    std::string text, const char *source) {
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
@@ -124,6 +129,10 @@ std::size_t ascii_word_delete_start(const std::string &input,
     return start;
 }
 
+bool is_known_roman_word(const std::string &roman) {
+    return kDictionary.find(ImeSession::roman_to_hiragana(roman)) != kDictionary.end();
+}
+
 std::size_t japanese_roman_word_delete_start(const std::string &input) {
     std::size_t content_end = input.size();
     while (content_end > 0 &&
@@ -146,7 +155,7 @@ std::size_t japanese_roman_word_delete_start(const std::string &input) {
     static const std::unordered_set<std::string> indivisible_words = {
         "konnichiha", "konbanha", "arigatou", "ohayou",
     };
-    if (indivisible_words.count(segment) != 0) return start;
+    if (indivisible_words.count(segment) != 0 || is_known_roman_word(segment)) return start;
 
     static const std::vector<std::string> auxiliaries = {
         "masendeshita", "mashou", "mashita", "masen", "masu",
@@ -164,14 +173,18 @@ std::size_t japanese_roman_word_delete_start(const std::string &input) {
     }
     for (const auto &suffix : particles) {
         if (segment.size() > suffix.size() &&
-            segment.compare(segment.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            segment.compare(segment.size() - suffix.size(), suffix.size(), suffix) == 0 &&
+            (suffix == "wo" || is_known_roman_word(segment.substr(0, segment.size() - suffix.size())))) {
             return content_end - suffix.size();
         }
     }
     for (const auto &particle : particles) {
         const std::size_t index = segment.rfind(particle);
         if (index != std::string::npos && index >= 2 &&
-            segment.size() - index - particle.size() >= 2) {
+            segment.size() - index - particle.size() >= 2 &&
+            (particle == "wo" ||
+             (is_known_roman_word(segment.substr(0, index)) &&
+              is_known_roman_word(segment.substr(index + particle.size()))))) {
             return start + index + particle.size();
         }
     }
@@ -545,20 +558,46 @@ void ImeSession::rebuild_candidates() {
         append_unique(prefix_predictions, prediction_seen, entry.text, "learned-prediction");
     }
 
+    struct SharedPrediction {
+        std::string text;
+        int importance;
+        std::size_t remaining;
+        std::string source;
+    };
+    std::vector<SharedPrediction> shared_predictions;
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == conversion_reading) {
-            append_converted(entry.value, "shared");
+            append_converted(entry.value, entry.source.c_str());
         } else if (entry.reading.size() > conversion_reading.size() &&
                    entry.reading.rfind(conversion_reading, 0) == 0) {
-            append_prediction(entry.value, "shared-prediction");
+            shared_predictions.push_back({entry.value, entry.importance,
+                utf8_character_count(entry.reading) - utf8_character_count(conversion_reading),
+                entry.source == "personal" ? "personal-prediction" : "shared-prediction"});
         }
+    }
+    std::stable_sort(shared_predictions.begin(), shared_predictions.end(),
+        [](const auto &left, const auto &right) {
+            const auto left_score = std::clamp(left.importance, 1, 5) * 20 -
+                static_cast<int>(std::min<std::size_t>(left.remaining, 1000)) * 4;
+            const auto right_score = std::clamp(right.importance, 1, 5) * 20 -
+                static_cast<int>(std::min<std::size_t>(right.remaining, 1000)) * 4;
+            return left_score == right_score ? left.remaining < right.remaining
+                                             : left_score > right_score;
+        });
+    for (const auto &entry : shared_predictions) {
+        append_prediction(entry.text, entry.source.c_str());
     }
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;
         for (const auto &entry : user_dictionary_) {
-            if (!entry.has_word_weight) continue;
-            additional_entries.push_back({entry.value, entry.reading, entry.lcid,
-                                          entry.rcid, entry.word_weight});
+            if (entry.has_word_weight) {
+                additional_entries.push_back({entry.value, entry.reading, entry.lcid,
+                                              entry.rcid, entry.word_weight});
+            } else if (entry.source == "personal" && !entry.reading.empty() &&
+                       conversion_reading.find(entry.reading) != std::string::npos) {
+                additional_entries.push_back({entry.value, entry.reading, 1285, 1285,
+                                              static_cast<float>((entry.importance - 3) * 2 - 9)});
+            }
         }
         for (auto &value : bundled_dictionary_->candidates(
                  conversion_reading, 48, additional_entries)) {

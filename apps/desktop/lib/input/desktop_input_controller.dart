@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:keynako_conversion/keynako_conversion.dart';
 
 import 'desktop_shared_dictionary.dart';
+import 'desktop_personal_dictionary.dart';
 
 enum InputMode { japanese, english }
 
@@ -16,11 +17,13 @@ class DesktopInputController extends ChangeNotifier {
   factory DesktopInputController({
     ZenzaiEngineFactory? zenzaiEngineFactory,
     SharedDictionaryRepository? sharedDictionaryRepository,
+    PersonalDictionaryRepository? personalDictionaryRepository,
     KeynakoDictionarySubmitter? sharedDictionarySubmitter,
     Duration sharedDictionaryInterval = desktopSharedDictionaryInterval,
   }) => DesktopInputController._(
     zenzaiEngineFactory,
     sharedDictionaryRepository,
+    personalDictionaryRepository,
     sharedDictionarySubmitter ?? KeynakoDictionarySubmissionClient(),
     sharedDictionaryInterval,
   );
@@ -28,6 +31,7 @@ class DesktopInputController extends ChangeNotifier {
   DesktopInputController._(
     this._zenzaiEngineFactory,
     this._sharedDictionaryRepository,
+    this._personalDictionaryRepository,
     this._sharedDictionarySubmitter,
     this._sharedDictionaryInterval,
   );
@@ -59,6 +63,7 @@ class DesktopInputController extends ChangeNotifier {
 
   final ZenzaiEngineFactory? _zenzaiEngineFactory;
   final SharedDictionaryRepository? _sharedDictionaryRepository;
+  final PersonalDictionaryRepository? _personalDictionaryRepository;
   final KeynakoDictionarySubmitter _sharedDictionarySubmitter;
   final Duration _sharedDictionaryInterval;
   final Map<String, int> _learning = {};
@@ -78,6 +83,8 @@ class DesktopInputController extends ChangeNotifier {
   bool _liveConversionEnabled = true;
   bool _converting = false;
   List<ConversionDictionaryEntry> _sharedDictionary = const [];
+  List<ConversionDictionaryEntry> _personalDictionary = const [];
+  bool _personalDictionaryLoadFailed = false;
   Timer? _sharedDictionaryTimer;
   bool _sharedDictionarySyncing = false;
   String _sharedDictionaryStatus = '未取得';
@@ -99,6 +106,15 @@ class DesktopInputController extends ChangeNotifier {
   bool get sharedDictionarySyncing => _sharedDictionarySyncing;
   String get sharedDictionaryStatus => _sharedDictionaryStatus;
   int get sharedDictionaryEntryCount => _sharedDictionary.length;
+  List<ConversionDictionaryEntry> get personalDictionary =>
+      List.unmodifiable(_personalDictionary);
+  bool get personalDictionaryLoadFailed => _personalDictionaryLoadFailed;
+  bool isPersonalCandidate(ConversionCandidate candidate) =>
+      _personalDictionary.any(
+        (entry) =>
+            entry.value == candidate.text &&
+            entry.reading.toLowerCase() == candidate.reading.toLowerCase(),
+      );
   bool get candidateSharing => _candidateSharing;
   String get candidateShareStatus => _candidateShareStatus;
 
@@ -177,6 +193,32 @@ class DesktopInputController extends ChangeNotifier {
         'v${snapshot.version} · ${snapshot.entries.length}語';
     if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
     if (!_disposed) notifyListeners();
+  }
+
+  Future<void> initializePersonalDictionary() async {
+    final repository = _personalDictionaryRepository;
+    if (repository == null) return;
+    try {
+      _personalDictionary = await repository.load();
+      _personalDictionaryLoadFailed = false;
+    } on Object {
+      _personalDictionary = const [];
+      _personalDictionaryLoadFailed = true;
+    }
+    if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+    notifyListeners();
+  }
+
+  Future<void> savePersonalDictionary(
+    List<ConversionDictionaryEntry> entries,
+  ) async {
+    final repository = _personalDictionaryRepository;
+    if (repository == null) throw StateError('個人辞書を保存できない');
+    await repository.save(entries);
+    _personalDictionary = List.unmodifiable(entries);
+    _personalDictionaryLoadFailed = false;
+    if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+    notifyListeners();
   }
 
   Future<void> setZenzaiModel(ZenzaiModel model) async {
@@ -290,6 +332,49 @@ class DesktopInputController extends ChangeNotifier {
     }
   }
 
+  Future<bool> saveCandidateToPersonalDictionary(int index) async {
+    final repository = _personalDictionaryRepository;
+    if (_candidateSharing ||
+        repository == null ||
+        index < 0 ||
+        index >= _candidates.length) {
+      return false;
+    }
+    final candidate = _candidates[index];
+    _candidateSharing = true;
+    _candidateShareStatus = '個人辞書に登録中';
+    notifyListeners();
+    try {
+      final entries = await repository.load();
+      if (entries.any(
+        (entry) =>
+            entry.reading == candidate.reading && entry.value == candidate.text,
+      )) {
+        _personalDictionary = List.unmodifiable(entries);
+        _personalDictionaryLoadFailed = false;
+        if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+        _candidateShareStatus = '個人辞書に登録済みです';
+        return true;
+      }
+      await savePersonalDictionary([
+        ...entries,
+        ConversionDictionaryEntry(
+          reading: candidate.reading,
+          value: candidate.text,
+          importance: 3,
+        ),
+      ]);
+      _candidateShareStatus = '個人辞書に登録しました';
+      return true;
+    } on Object {
+      _candidateShareStatus = '個人辞書に登録できませんでした';
+      return false;
+    } finally {
+      _candidateSharing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   void beginOrCycleCandidate(int delta) {
     if (_candidates.isEmpty) return;
     if (_converting) {
@@ -311,13 +396,12 @@ class DesktopInputController extends ChangeNotifier {
 
   void commitSelected({int? replaceStart, int? replaceEnd}) {
     if (_rawInput.isEmpty) return;
-    final candidate = _candidates.isEmpty
-        ? composingText
-        : _candidates[_selectedIndex].text;
+    final selected = _candidates.isEmpty ? null : _candidates[_selectedIndex];
+    final candidate = selected?.text ?? composingText;
     if (candidate.isEmpty) return;
     CandidateLearning.record(
       _learning,
-      reading: composingText,
+      reading: selected?.reading ?? composingText,
       text: candidate,
       english: _mode == InputMode.english,
       explicitSelection: _converting,
@@ -372,7 +456,7 @@ class DesktopInputController extends ChangeNotifier {
       return;
     }
     final options = ConversionOptions(
-      userDictionary: _sharedDictionary,
+      userDictionary: [..._personalDictionary, ..._sharedDictionary],
       learning: _learning,
     );
     _candidates = _mode == InputMode.japanese

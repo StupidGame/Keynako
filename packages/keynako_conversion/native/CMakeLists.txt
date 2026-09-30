@@ -30,8 +30,12 @@ if(BUILD_TESTING)
   target_link_libraries(keynako_ime_c_api_test PRIVATE keynako_ime_bridge)
   add_test(NAME keynako_ime_c_api_test COMMAND keynako_ime_c_api_test)
 
+  add_executable(keynako_zenzai_client_test ime_core/zenzai_client_test.cpp)
+  target_link_libraries(keynako_zenzai_client_test PRIVATE keynako_ime_core)
+  add_test(NAME keynako_zenzai_client_test COMMAND keynako_zenzai_client_test)
+
   # The packaging jobs run tests in Release too; keep assert-based checks active.
-  foreach(test_target keynako_ime_core_test keynako_ime_c_api_test)
+  foreach(test_target keynako_ime_core_test keynako_ime_c_api_test keynako_zenzai_client_test)
     if(MSVC)
       target_compile_options(${test_target} PRIVATE /UNDEBUG)
     else()

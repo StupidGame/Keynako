@@ -75,6 +75,17 @@ int main() {
     assert(prefix_prediction.candidates().size() >= 4);
     assert(prefix_prediction.candidates()[2].text == "日本");
     assert(prefix_prediction.candidates()[2].source == "shared-prediction");
+    keynako::DictionaryEntry personal_entry{"てすと", "個人語", 5};
+    personal_entry.source = "personal";
+    ImeSession personal_dictionary;
+    personal_dictionary.set_user_dictionary({personal_entry});
+    for (const char value : std::string("tesuto")) personal_dictionary.append_ascii(value);
+    assert(personal_dictionary.candidates().front().source == "personal");
+    personal_dictionary.clear();
+    for (const char value : std::string("tesu")) personal_dictionary.append_ascii(value);
+    assert(std::any_of(personal_dictionary.candidates().begin(), personal_dictionary.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "個人語" &&
+            candidate.source == "personal-prediction"; }));
     ImeSession ranked_prediction;
     ranked_prediction.set_user_dictionary({
         {"テストケース", "長い補完", 3},
@@ -85,6 +96,13 @@ int main() {
     assert(ranked_prediction.display_text() == "てす");
     assert(ranked_prediction.candidates()[2].text == "重要な補完");
     assert(ranked_prediction.candidates()[3].text == "短い補完");
+    ImeSession closer_prediction;
+    closer_prediction.set_user_dictionary({
+        {"テストケースナガイヨソク", "遠い高重要度", 5},
+        {"テスト", "近い補完", 4},
+    });
+    for (const char value : std::string("tesu")) closer_prediction.append_ascii(value);
+    assert(closer_prediction.candidates()[2].text == "近い補完");
     ranked_prediction.clear();
     ranked_prediction.append_ascii('/');
     assert(std::none_of(ranked_prediction.candidates().begin(), ranked_prediction.candidates().end(),
@@ -125,6 +143,16 @@ int main() {
     assert(japanese_phrase_word_delete.raw_input() == "watashihanihongow");
     japanese_phrase_word_delete.backspace_word();
     assert(japanese_phrase_word_delete.raw_input() == "watashihanihongo");
+    japanese_phrase_word_delete.backspace_word();
+    assert(japanese_phrase_word_delete.raw_input() == "watashiha");
+
+    ImeSession lexical_word_delete;
+    for (const char value : std::string("kimono")) lexical_word_delete.append_ascii(value);
+    lexical_word_delete.backspace_word();
+    assert(lexical_word_delete.raw_input().empty());
+    for (const char value : std::string("tamanokoshi")) lexical_word_delete.append_ascii(value);
+    lexical_word_delete.backspace_word();
+    assert(lexical_word_delete.raw_input().empty());
 
     ImeSession literal_word_delete;
     for (const char value : std::string("nihongo")) literal_word_delete.append_ascii(value);
@@ -229,6 +257,24 @@ int main() {
         bundled.candidates().begin(), bundled.candidates().end(),
         [](const keynako::Candidate &candidate) { return candidate.text == "日本語"; });
     assert(has_japanese);
+    const auto long_sentence = dictionary.candidates(
+        "わたしはきょうとうきょうのえきでともだちとあいました", 1);
+    assert(!long_sentence.empty() &&
+           long_sentence.front() == "私は今日東京の駅で友達と会いました");
+    ImeSession personal_phrase;
+    assert(personal_phrase.set_bundled_dictionary_path(dictionary_path));
+    personal_phrase.set_user_dictionary({personal_entry});
+    for (const char value : std::string("tesutokana")) personal_phrase.append_ascii(value);
+    assert(std::any_of(personal_phrase.candidates().begin(), personal_phrase.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.text.find("個人語") != std::string::npos;
+        }));
+    personal_phrase.clear();
+    for (const char value : std::string("atesutoikana")) personal_phrase.append_ascii(value);
+    assert(std::any_of(personal_phrase.candidates().begin(), personal_phrase.candidates().end(),
+        [](const keynako::Candidate &candidate) {
+            return candidate.text.find("個人語") != std::string::npos;
+        }));
     ImeSession bundled_prediction;
     assert(bundled_prediction.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("konni")) bundled_prediction.append_ascii(value);

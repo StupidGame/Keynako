@@ -63,6 +63,7 @@ internal fun requestedKeyboardMode(
             val variation = inputType and TYPE_MASK_VARIATION
             if (
                 variation in englishTextVariations ||
+                isAllCapsTextInput(inputType) ||
                 imeOptions and IME_FLAG_FORCE_ASCII != 0 ||
                 prefersEnglish(hintLocaleTags)
             ) {
@@ -74,6 +75,10 @@ internal fun requestedKeyboardMode(
         else -> RequestedKeyboardMode.JAPANESE
     }
 }
+
+internal fun isAllCapsTextInput(inputType: Int): Boolean =
+    inputType and TYPE_MASK_CLASS == TYPE_CLASS_TEXT &&
+        inputType and TYPE_TEXT_FLAG_CAP_CHARACTERS != 0
 
 /** Password fields must not expose their contents in the candidate row. */
 internal fun isSensitiveInputType(inputType: Int): Boolean {
@@ -96,6 +101,7 @@ private const val TYPE_CLASS_TEXT = 0x00000001
 private const val TYPE_CLASS_NUMBER = 0x00000002
 private const val TYPE_CLASS_PHONE = 0x00000003
 private const val TYPE_CLASS_DATETIME = 0x00000004
+private const val TYPE_TEXT_FLAG_CAP_CHARACTERS = 0x00001000
 private const val IME_FLAG_FORCE_ASCII = Int.MIN_VALUE
 
 private val englishTextVariations = setOf(

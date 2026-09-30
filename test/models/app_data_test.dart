@@ -141,6 +141,13 @@ void main() {
     expect(data.themes.first.keyOpacity, 0.72);
   });
 
+  test('keeps an intentionally emptied user dictionary empty after reload', () {
+    final data = AppData.defaults()..userDictionary.clear();
+
+    expect(AppData.decode(data.encode()).userDictionary, isEmpty);
+    expect(AppData.fromJson({}).userDictionary, isNotEmpty);
+  });
+
   test('uses a transparent key default for an older image theme', () {
     final theme = KeyboardThemeConfig.fromJson({
       'id': 'image',

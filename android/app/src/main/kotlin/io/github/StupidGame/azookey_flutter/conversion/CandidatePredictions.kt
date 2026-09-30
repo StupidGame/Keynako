@@ -71,21 +71,89 @@ internal fun compositionCommitText(
     selectedIndex: Int = 0,
 ): String = if (useCandidate) candidates.getOrNull(selectedIndex) ?: candidates.firstOrNull() ?: reading else reading
 
+/** Give longer readings enough room to finish; capped requests are reranked without generation. */
+internal fun zenzaiGenerationTokenBudget(readingLength: Int, effort: Int): Int {
+    val limit = when (effort) {
+        0 -> 64
+        2 -> 128
+        else -> 96
+    }
+    return (readingLength * 3 + 16).coerceIn(16, limit)
+}
+
+internal fun shouldGenerateZenzaiCandidate(readingLength: Int, maxTokens: Int): Boolean =
+    readingLength * 3 + 16 <= maxTokens
+
+/** A complete conversion may lead live input; completions and bare kana may not. */
+internal fun bestLiveJapaneseConversion(
+    reading: String,
+    completeConversions: Set<String>,
+    ranked: Iterable<String>,
+): String? {
+    val hiragana = katakanaToHiragana(reading)
+    val katakana = hiraganaToKatakana(hiragana)
+    return ranked.firstOrNull { it in completeConversions && it != hiragana && it != katakana }
+}
+
+/** Keep a new model suggestion visible without letting it displace common dictionary results. */
+internal fun placeNovelGeneratedCandidate(
+    ranked: List<String>,
+    generated: String,
+    established: Set<String>,
+): List<String> {
+    if (generated.isEmpty() || generated in established || generated !in ranked) return ranked
+    val common = ranked.filter { it != generated }
+    val insertion = minOf(3, common.size)
+    return common.take(insertion) + generated + common.drop(insertion)
+}
+
 /** Returns dictionary values whose reading extends the text currently being composed. */
-internal fun prefixPredictionValues(
+internal data class ReadingPrediction(
+    val reading: String,
+    val text: String,
+    val importance: Int = 3,
+)
+
+internal fun prefixPredictionEntries(
     reading: String,
     entries: Iterable<Pair<String, List<String>>>,
     limit: Int,
-): List<String> {
+): List<ReadingPrediction> {
     if (reading.isEmpty() || limit <= 0) return emptyList()
     val normalized = katakanaToHiragana(reading)
     return entries.asSequence()
         .map { (ruby, values) -> katakanaToHiragana(ruby) to values }
         .filter { (ruby, _) -> ruby.length > normalized.length && ruby.startsWith(normalized) }
         .sortedBy { (ruby, _) -> ruby.length }
-        .flatMap { (_, values) -> values.asSequence() }
-        .filter(String::isNotBlank)
-        .distinct()
+        .flatMap { (ruby, values) -> values.asSequence().map { ReadingPrediction(ruby, it) } }
+        .filter { it.text.isNotBlank() }
+        .distinctBy { it.text }
+        .take(limit)
+        .toList()
+}
+
+internal fun prefixPredictionValues(
+    reading: String,
+    entries: Iterable<Pair<String, List<String>>>,
+    limit: Int,
+): List<String> = prefixPredictionEntries(reading, entries, limit).map { it.text }
+
+/** Balance a user's importance setting against the amount left to type. */
+internal fun rankUserPrefixPredictions(
+    reading: String,
+    entries: Iterable<ReadingPrediction>,
+    limit: Int,
+): List<ReadingPrediction> {
+    if (reading.isEmpty() || limit <= 0) return emptyList()
+    val normalized = katakanaToHiragana(reading)
+    return entries.asSequence()
+        .filter { it.text.isNotBlank() && it.reading.length > normalized.length && it.reading.startsWith(normalized) }
+        .sortedWith(
+            compareByDescending<ReadingPrediction> {
+                it.importance.coerceIn(1, 5) * 20 - (it.reading.length - normalized.length).coerceAtMost(1000) * 4
+            }.thenBy { it.reading.length },
+        )
+        .distinctBy { it.text }
         .take(limit)
         .toList()
 }

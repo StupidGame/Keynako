@@ -80,37 +80,19 @@ class KeynakoDictionarySubmissionClient implements KeynakoDictionarySubmitter {
       ..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.postUrl(uri);
-      request.followRedirects = true;
+      // Redirects can turn a POST into a GET and report a false success.
+      // The configured gateway must be its final HTTPS endpoint.
+      request.followRedirects = false;
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'Keynako 3.1.0');
       request.write(body);
-      var response = await request.close().timeout(const Duration(seconds: 30));
-      final redirect = response.headers.value(HttpHeaders.locationHeader);
-      if (redirect != null &&
-          const {
-            HttpStatus.movedPermanently,
-            HttpStatus.found,
-            HttpStatus.seeOther,
-          }.contains(response.statusCode)) {
-        await response.drain<void>();
-        final redirectRequest = await client.getUrl(uri.resolve(redirect));
-        redirectRequest.followRedirects = true;
-        redirectRequest.headers.set(
-          HttpHeaders.acceptHeader,
-          'application/json',
-        );
-        redirectRequest.headers.set(
-          HttpHeaders.userAgentHeader,
-          'Keynako 3.1.0',
-        );
-        response = await redirectRequest.close().timeout(
-          const Duration(seconds: 30),
-        );
-      }
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
       const maximumBytes = 64 * 1024;
       final bytes = <int>[];
-      await for (final chunk in response) {
+      await for (final chunk in response.timeout(const Duration(seconds: 30))) {
         bytes.addAll(chunk);
         if (bytes.length > maximumBytes) {
           throw const FormatException('Submission response exceeds 64 KB.');

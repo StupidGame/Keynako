@@ -41,6 +41,17 @@ class InputTypeKeyboardPolicyTest {
             RequestedKeyboardMode.ENGLISH,
             requestedKeyboardMode(0x00000001, imeOptions = Int.MIN_VALUE),
         )
+        assertEquals(
+            RequestedKeyboardMode.ENGLISH,
+            requestedKeyboardMode(0x00000001 or 0x00001000),
+        )
+    }
+
+    @Test
+    fun detectsAllCapsTextFieldsWithoutTreatingNumberFlagsAsTextCaps() {
+        assertEquals(true, isAllCapsTextInput(0x00000001 or 0x00001000))
+        assertEquals(false, isAllCapsTextInput(0x00000001 or 0x00002000))
+        assertEquals(false, isAllCapsTextInput(0x00000002 or 0x00001000))
     }
 
     @Test

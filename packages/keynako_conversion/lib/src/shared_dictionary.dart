@@ -72,11 +72,18 @@ class KeynakoSharedDictionaryClient {
       throw const FormatException('Keynako shared dictionary is malformed.');
     }
     final metadata = Map<String, dynamic>.from(decoded['metadata'] as Map);
-    if (metadata['status'] != 'active' || decoded['data'] is! List) {
-      throw const FormatException('Keynako shared dictionary is not active.');
+    final status = metadata['status'];
+    if (status != 'active' && status != 'disabled') {
+      throw const FormatException(
+        'Keynako shared dictionary has an invalid status.',
+      );
+    }
+    if (status == 'active' && decoded['data'] is! List) {
+      throw const FormatException('Keynako shared dictionary is malformed.');
     }
     final entries = <ConversionDictionaryEntry>[];
-    for (final item in decoded['data'] as List) {
+    for (final item
+        in status == 'active' ? decoded['data'] as List : const []) {
       if (item is! Map) {
         throw const FormatException(
           'Keynako shared dictionary entry is malformed.',
@@ -146,7 +153,7 @@ class KeynakoSharedDictionaryClient {
         throw const FormatException('Keynako shared dictionary exceeds 2 MB.');
       }
       final bytes = <int>[];
-      await for (final chunk in response) {
+      await for (final chunk in response.timeout(const Duration(seconds: 30))) {
         bytes.addAll(chunk);
         if (bytes.length > maximumBytes) {
           throw const FormatException(
@@ -202,7 +209,7 @@ class NativeSharedDictionaryCodec {
       throw const FormatException('Shared dictionary cache is empty.');
     }
     final header = lines.first.split('\t');
-    if (header.isEmpty || header.first != '# keynako-shared-dictionary-v1') {
+    if (header.length < 4 || header.first != '# keynako-shared-dictionary-v1') {
       throw const FormatException('Shared dictionary cache is malformed.');
     }
     final entries = <ConversionDictionaryEntry>[];
@@ -226,9 +233,9 @@ class NativeSharedDictionaryCodec {
       );
     }
     return SharedDictionarySnapshot(
-      revision: header.length > 1 ? header[1] : 'unknown',
-      version: header.length > 2 ? header[2] : 'unknown',
-      lastUpdate: header.length > 3 ? header[3] : 'unknown',
+      revision: header[1],
+      version: header[2],
+      lastUpdate: header[3],
       entries: List.unmodifiable(entries),
     );
   }

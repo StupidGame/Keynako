@@ -27,10 +27,12 @@ class AzooKeyDictionaryTest {
         val dictionary = syntheticDictionary()
         val entries = listOf(entry("弱い終端", "てすと", 100), entry("強い終端", "てすと", 200))
         assertEquals("強い終端", dictionary.candidates("てすと", 0, additionalEntries = entries).conversions.first())
-        val predictions = dictionary.candidates("てす", 2, additionalEntries = listOf(
+        val result = dictionary.candidates("てす", 2, additionalEntries = listOf(
             entry("長い補完", "てすとけーす", 200), entry("短い補完", "てすと", 200),
-        )).predictions
-        assertEquals(listOf("短い補完", "長い補完"), predictions)
+        ))
+        assertEquals(listOf("短い補完", "長い補完"), result.predictions)
+        assertEquals("てすと", result.predictionReadings["短い補完"])
+        assertEquals("てすとけーす", result.predictionReadings["長い補完"])
     }
 
     @Test
@@ -43,6 +45,21 @@ class AzooKeyDictionaryTest {
         val updated = dictionary.candidates("てすと", 0, 5, listOf(entry("新候補", "てすと", 200))).conversions
         assertEquals("新候補", updated.first())
         assertTrue("旧候補" !in updated)
+    }
+
+    @Test
+    fun personalEntryConvertsTheStartAndMiddleOfLongerReadings() {
+        val dictionary = syntheticDictionary()
+        val personal = listOf(entry("登録語", "てすと", 200))
+
+        assertEquals(
+            "登録語かな",
+            dictionary.candidates("てすとかな", 0, additionalEntries = personal).conversions.first(),
+        )
+        assertEquals(
+            "あ登録語い",
+            dictionary.candidates("あてすとい", 0, additionalEntries = personal).conversions.first(),
+        )
     }
 
     private val dictionaryRoot: File by lazy {
@@ -72,6 +89,15 @@ class AzooKeyDictionaryTest {
 
         assertTrue("今日 should be a conversion candidate: $candidates", "今日" in candidates)
         assertTrue("conversion candidates should be rich: $candidates", candidates.size >= 10)
+    }
+
+    @Test
+    fun longSentenceStartsWithTheCommonCompleteConversion() {
+        val candidates = dictionary.candidates(
+            "わたしはきょうとうきょうのえきでともだちとあいました",
+            predictionLimit = 0,
+        ).conversions
+        assertEquals("私は今日東京の駅で友達と会いました", candidates.first())
     }
 
     @Test

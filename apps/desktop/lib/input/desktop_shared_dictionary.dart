@@ -32,10 +32,14 @@ Future<int?> runSharedDictionaryCommand(
 }
 
 class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
-  DesktopSharedDictionaryRepository({KeynakoSharedDictionaryClient? client})
-    : _client = client ?? KeynakoSharedDictionaryClient();
+  DesktopSharedDictionaryRepository({
+    KeynakoSharedDictionaryClient? client,
+    this.cacheFile,
+  }) : _client = client ?? KeynakoSharedDictionaryClient();
 
   final KeynakoSharedDictionaryClient _client;
+  final File? cacheFile;
+  static int _temporaryFileId = 0;
   File? _activeFile;
 
   @override
@@ -50,6 +54,9 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
         return snapshot;
       } on FormatException {
         continue;
+      } on FileSystemException {
+        // Another process may replace the cache between exists() and read().
+        continue;
       }
     }
     return null;
@@ -58,11 +65,15 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
   @override
   Future<bool> isRefreshDue() async {
     final file = _activeFile ?? await _firstExistingFile();
-    if (file == null) return true;
-    final modified = await file.lastModified();
-    return !modified
-        .add(desktopSharedDictionaryInterval)
-        .isAfter(DateTime.now());
+    if (file == null || !await file.exists()) return true;
+    try {
+      final modified = await file.lastModified();
+      return !modified
+          .add(desktopSharedDictionaryInterval)
+          .isAfter(DateTime.now());
+    } on FileSystemException {
+      return true;
+    }
   }
 
   @override
@@ -73,7 +84,7 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
     for (final file in _writableFiles()) {
       try {
         await file.parent.create(recursive: true);
-        await file.writeAsString(content, flush: true);
+        await _writeCache(file, content);
         _activeFile = file;
         return snapshot;
       } on FileSystemException catch (error) {
@@ -87,14 +98,43 @@ class DesktopSharedDictionaryRepository implements SharedDictionaryRepository {
     );
   }
 
+  Future<void> _writeCache(File file, String content) async {
+    final temporary = File('${file.path}.tmp.$pid.${_temporaryFileId++}');
+    try {
+      await temporary.writeAsString(content, flush: true);
+      try {
+        await temporary.rename(file.path);
+      } on FileSystemException {
+        if (!Platform.isWindows) rethrow;
+        // Dart cannot replace an existing destination with rename on Windows.
+        await file.writeAsString(content, flush: true);
+      }
+    } finally {
+      try {
+        if (await temporary.exists()) await temporary.delete();
+      } on FileSystemException {
+        // A failed cleanup should not hide a successfully saved cache.
+      }
+    }
+  }
+
   Future<File?> _firstExistingFile() async {
     for (final file in _writableFiles()) {
-      if (await file.exists()) return file;
+      try {
+        if (!await file.exists()) continue;
+        NativeSharedDictionaryCodec.decode(await file.readAsString());
+        return file;
+      } on FormatException {
+        continue;
+      } on FileSystemException {
+        continue;
+      }
     }
     return null;
   }
 
   List<File> _writableFiles() {
+    if (cacheFile != null) return [cacheFile!];
     final paths = <String>[];
     if (Platform.isWindows) {
       final programData = Platform.environment['ProgramData'];

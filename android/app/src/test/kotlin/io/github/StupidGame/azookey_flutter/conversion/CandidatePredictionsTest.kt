@@ -2,9 +2,42 @@ package io.github.StupidGame.azookey_flutter.conversion
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CandidatePredictionsTest {
+
+    @Test
+    fun completeConversionsLeadLiveInputWithoutPromotingCompletions() {
+        assertEquals(
+            "今日の予定",
+            bestLiveJapaneseConversion(
+                "きょうのよてい",
+                setOf("今日の予定", "きょうのよてい"),
+                listOf("先の予測", "きょうのよてい", "今日の予定"),
+            ),
+        )
+    }
+
+    @Test
+    fun longReadingsUseRerankingBeforeGenerationWouldBeTruncated() {
+        assertEquals(96, zenzaiGenerationTokenBudget(40, 1))
+        assertTrue(!shouldGenerateZenzaiCandidate(40, 96))
+        assertTrue(shouldGenerateZenzaiCandidate(8, zenzaiGenerationTokenBudget(8, 1)))
+    }
+
+    @Test
+    fun novelModelOutputDoesNotDisplaceEstablishedConversions() {
+        assertEquals(
+            listOf("今日は晴れる", "今日は晴れ", "きょうははれる", "奇妙な候補"),
+            placeNovelGeneratedCandidate(
+                listOf("奇妙な候補", "今日は晴れる", "今日は晴れ", "きょうははれる"),
+                "奇妙な候補",
+                setOf("今日は晴れる", "今日は晴れ", "きょうははれる"),
+            ),
+        )
+    }
+
     @Test
     fun commitsTheRawReadingWhenCandidateConversionIsDisabled() {
         assertEquals(
@@ -88,6 +121,20 @@ class CandidatePredictionsTest {
         assertEquals(listOf("テスト", "テストケース"), prefixPredictionValues(
             "てす", listOf("テストケース" to listOf("テストケース"), "テスト" to listOf("テスト")), 2,
         ))
+        assertEquals("てすと", prefixPredictionEntries(
+            "てす", listOf("テスト" to listOf("テスト")), 1,
+        ).single().reading)
+    }
+
+    @Test
+    fun aNearbyUserCompletionCanOutrankAMuchLongerOne() {
+        assertEquals(
+            listOf("近い", "遠い"),
+            rankUserPrefixPredictions("てす", listOf(
+                ReadingPrediction("てすとけーすながいよそく", "遠い", 5),
+                ReadingPrediction("てすと", "近い", 4),
+            ), 2).map { it.text },
+        )
     }
 
     @Test

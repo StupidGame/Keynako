@@ -13,6 +13,7 @@ internal fun interface DictionaryAssetSource {
 internal data class DictionaryCandidates(
     val conversions: List<String>,
     val predictions: List<String>,
+    val predictionReadings: Map<String, String> = emptyMap(),
 )
 
 internal data class AzooKeyHotfixDictionaryEntry(
@@ -109,7 +110,11 @@ internal class AzooKeyDictionary(
         } else {
             emptyList()
         }
-        return DictionaryCandidates(conversions, predictions)
+        return DictionaryCandidates(
+            conversions,
+            predictions.map(ReadingPrediction::text),
+            predictions.associate { it.text to it.reading },
+        )
     }
 
     private fun convert(
@@ -202,7 +207,7 @@ internal class AzooKeyDictionary(
         reading: String,
         limit: Int,
         additionalEntries: List<Entry>,
-    ): List<String> {
+    ): List<ReadingPrediction> {
         val entries = shard(reading.first())
             ?.predictionEntries(reading, MAX_PREDICTION_DEPTH, MAX_PREDICTION_NODES)
             .orEmpty() + additionalEntries.filter {
@@ -218,10 +223,10 @@ internal class AzooKeyDictionary(
                     connectionScore(it.rcid, EOS_CID)) -
                     (it.ruby.length - reading.length) * 0.5f
             }
-            .map(Entry::word)
-            .filter(String::isNotBlank)
-            .distinct()
+            .filter { it.word.isNotBlank() }
+            .distinctBy(Entry::word)
             .take(limit)
+            .map { ReadingPrediction(it.ruby.toHiragana(), it.word) }
             .toList()
     }
 

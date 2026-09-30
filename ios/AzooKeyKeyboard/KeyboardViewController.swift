@@ -2,6 +2,8 @@ import UIKit
 import AzooKeyConverterBridge
 
 final class KeyboardViewController: UIInputViewController {
+    private enum DictionaryMode { case closed, list, edit }
+
     private let backgroundImageView = KeyboardBackgroundImageView()
     private let rootStack = UIStackView()
     private let candidateScroll = UIScrollView()
@@ -20,7 +22,18 @@ final class KeyboardViewController: UIInputViewController {
     private var rawRoman = ""
     private var lastDisplayed = ""
     private var candidates: [String] = []
+    private var dictionaryMode: DictionaryMode = .closed
+    private var dictionaryEditingId: Int?
+    private var dictionaryImportance = 3
+    private var dictionaryEnglishReading = false
+    private var dictionaryDeleteArmed = false
+    private weak var dictionaryReadingField: UITextField?
+    private weak var dictionaryWordField: UITextField?
+    private weak var dictionaryActiveField: UITextField?
+    private var candidatePredictionReadings: [String: String] = [:]
+    private var unknownPredictionTexts = Set<String>()
     private var candidateExpanded = false
+    private var candidateBarShowsTabs = true
     private var selectedCandidateText: String?
     private var mode = "japanese"
     private var layout = "flick"
@@ -53,6 +66,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        dictionaryMode = .closed
         reloadState()
         loadOSLexiconIfNeeded()
         resetComposition()
@@ -169,7 +183,7 @@ final class KeyboardViewController: UIInputViewController {
         hasLoadedState = true
         state = object
         settings = object["settings"] as? [String: Any] ?? [:]
-        reloadAzooKeyHotfixDictionary()
+        reloadConversionDictionary()
         if settings["memory_reset_setting"] != nil,
            settings["memory_reset_setting"] as? Bool != false {
             conversionEngine?.resetLearning()
@@ -183,7 +197,7 @@ final class KeyboardViewController: UIInputViewController {
         heightConstraint?.constant = 42 + 216 * scale
     }
 
-    private func reloadAzooKeyHotfixDictionary() {
+    private func reloadConversionDictionary() {
         let storageKey = "keynako_hotfix_dictionary_storage"
         let tagKey = "keynako_hotfix_dictionary_storage_latest_sha"
         let tag = state[tagKey] as? String
@@ -191,33 +205,52 @@ final class KeyboardViewController: UIInputViewController {
             ?? "none"
         let dictionary = state[storageKey] as? [String: Any]
             ?? state["azooKey_hotfix_dictionary_storage"] as? [String: Any]
-        guard let dictionary,
-              let metadata = dictionary["metadata"] as? [String: Any],
-              metadata["status"] as? String == "active",
-              let values = dictionary["data"] as? [[String: Any]] else {
-            conversionEngine?.updateHotfixDictionary([], version: "\(tag)|disabled")
-            return
+        var entries: [AzooKeyHotfixDictionaryEntry] = []
+        var hotfixVersion = "\(tag)|disabled"
+        if let dictionary,
+           let metadata = dictionary["metadata"] as? [String: Any],
+           metadata["status"] as? String == "active",
+           let values = dictionary["data"] as? [[String: Any]] {
+            entries = values.compactMap { value -> AzooKeyHotfixDictionaryEntry? in
+                guard let word = value["word"] as? String,
+                      let ruby = value["ruby"] as? String,
+                      let wordWeight = value["word_weight"] as? Double,
+                      let lcid = value["lcid"] as? Int,
+                      let rcid = value["rcid"] as? Int,
+                      let mid = value["mid"] as? Int else { return nil }
+                return AzooKeyHotfixDictionaryEntry(
+                    word: word,
+                    ruby: ruby,
+                    wordWeight: wordWeight,
+                    lcid: lcid,
+                    rcid: rcid,
+                    mid: mid
+                )
+            }
+            let lastUpdate = metadata["last_update"] as? String ?? "unknown"
+            hotfixVersion = "\(tag)|\(lastUpdate)|\(entries.count)"
         }
-        let entries = values.compactMap { value -> AzooKeyHotfixDictionaryEntry? in
-            guard let word = value["word"] as? String,
-                  let ruby = value["ruby"] as? String,
-                  let wordWeight = value["word_weight"] as? Double,
-                  let lcid = value["lcid"] as? Int,
-                  let rcid = value["rcid"] as? Int,
-                  let mid = value["mid"] as? Int else { return nil }
-            return AzooKeyHotfixDictionaryEntry(
+        var personalVersion = Hasher()
+        for item in state["userDictionary"] as? [[String: Any]] ?? [] {
+            guard item["isTemplateMode"] as? Bool != true,
+                  let ruby = item["ruby"] as? String, !ruby.isEmpty,
+                  let word = item["word"] as? String, !word.isEmpty else { continue }
+            let importance = min(5, max(1, item["importance"] as? Int ?? 3))
+            personalVersion.combine(ruby)
+            personalVersion.combine(word)
+            personalVersion.combine(importance)
+            entries.append(AzooKeyHotfixDictionaryEntry(
                 word: word,
                 ruby: ruby,
-                wordWeight: wordWeight,
-                lcid: lcid,
-                rcid: rcid,
-                mid: mid
-            )
+                wordWeight: Double(importance - 3) * 2 - 9,
+                lcid: 1285,
+                rcid: 1285,
+                mid: 501
+            ))
         }
-        let lastUpdate = metadata["last_update"] as? String ?? "unknown"
         conversionEngine?.updateHotfixDictionary(
             entries,
-            version: "\(tag)|\(lastUpdate)|\(entries.count)"
+            version: "\(hotfixVersion)|personal:\(personalVersion.finalize())"
         )
     }
 
@@ -338,7 +371,8 @@ final class KeyboardViewController: UIInputViewController {
             }
             for character in letters {
                 let base = String(character)
-                let label = shift || capsLock ? base.uppercased() : base
+                let label = shift || capsLock || textDocumentProxy.autocapitalizationType == .allCharacters
+                    ? base.uppercased() : base
                 row.addArrangedSubview(makeButton(label) { [weak self] in self?.input(label) })
             }
             if index == 2 {
@@ -448,7 +482,8 @@ final class KeyboardViewController: UIInputViewController {
     private func synchronizeKeyboardWithInput(force: Bool) {
         let keyboardType = textDocumentProxy.keyboardType ?? .default
         let contentType = textDocumentProxy.textContentType?.rawValue ?? ""
-        let signature = "\(keyboardType.rawValue)|\(contentType)"
+        let capitalization = textDocumentProxy.autocapitalizationType ?? .sentences
+        let signature = "\(keyboardType.rawValue)|\(contentType)|\(capitalization.rawValue)"
         guard force || signature != inputTraitSignature else { return }
         inputTraitSignature = signature
 
@@ -456,7 +491,8 @@ final class KeyboardViewController: UIInputViewController {
         if boolSetting("automatic_keyboard_switching", fallback: true) {
             requestedMode = requestedModeForCurrentInput(
                 keyboardType: keyboardType,
-                contentType: textDocumentProxy.textContentType
+                contentType: textDocumentProxy.textContentType,
+                capitalization: capitalization
             )
         } else {
             requestedMode = "japanese"
@@ -476,7 +512,8 @@ final class KeyboardViewController: UIInputViewController {
 
     private func requestedModeForCurrentInput(
         keyboardType: UIKeyboardType,
-        contentType: UITextContentType?
+        contentType: UITextContentType?,
+        capitalization: UITextAutocapitalizationType
     ) -> String {
         switch keyboardType {
         case .numberPad, .decimalPad, .asciiCapableNumberPad, .numbersAndPunctuation:
@@ -488,6 +525,7 @@ final class KeyboardViewController: UIInputViewController {
         default:
             break
         }
+        if capitalization == .allCharacters { return "english" }
         guard let contentType else { return "japanese" }
         switch contentType {
         case .emailAddress, .URL, .username, .password, .newPassword, .oneTimeCode:
@@ -953,6 +991,12 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderCandidates(showTabs: Bool? = nil) {
+        if dictionaryMode != .closed { return }
+        let tabsVisible = showTabs ?? (composing.isEmpty && rawRoman.isEmpty)
+        if tabsVisible != candidateBarShowsTabs {
+            candidateScroll.setContentOffset(.zero, animated: false)
+        }
+        candidateBarShowsTabs = tabsVisible
         candidateStack.removeAllArrangedSubviews()
         if showTabs == true {
             setCandidateExpanded(false)
@@ -966,7 +1010,7 @@ final class KeyboardViewController: UIInputViewController {
             renderCursorBar()
             return
         }
-        if showTabs ?? composing.isEmpty && rawRoman.isEmpty {
+        if tabsVisible {
             setCandidateExpanded(false)
             candidateExpandButton.isHidden = true
             if boolSetting("display_tab_bar_button", fallback: true) {
@@ -975,11 +1019,28 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         candidates = buildCandidates()
+        let dictionaryShortcut = makeCandidateButton("＋辞書") { [weak self] in
+            guard let self else { return }
+            let word = self.selectedCandidateText ?? self.candidates.first ?? ""
+            self.showDictionaryEditor(reading: self.candidatePredictionReadings[word] ?? self.composing, word: word)
+        }
+        candidateStack.addArrangedSubview(dictionaryShortcut)
         for (index, candidate) in candidates.enumerated() {
             let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
             button.longPressAction = { [weak self] in self?.showLegacyReportPrompt(candidate, index: index) }
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
             candidateStack.addArrangedSubview(button)
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.dictionaryMode == .closed, !self.candidateBarShowsTabs,
+                  self.candidateStack.arrangedSubviews.first === dictionaryShortcut,
+                  !self.candidates.isEmpty else { return }
+            let index = self.selectedCandidateText.flatMap { self.candidates.firstIndex(of: $0) } ?? 0
+            guard self.candidateStack.arrangedSubviews.count > index + 1 else { return }
+            self.candidateScroll.layoutIfNeeded()
+            let selectedView = self.candidateStack.arrangedSubviews[index + 1]
+            let frame = self.candidateStack.convert(selectedView.frame, to: self.candidateScroll)
+            self.candidateScroll.scrollRectToVisible(frame, animated: false)
         }
         candidateExpandButton.isHidden = candidates.count <= 3
         candidateExpandButton.backgroundColor = palette.key
@@ -1074,6 +1135,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderTabBar() {
+        candidateStack.addArrangedSubview(makeTabButton("辞書", action: showDictionaryList))
         var values = state["tabBar"] as? [String] ?? ["dismiss", "resize", "emoji", "japanese", "english"]
         let configured = Set(values)
         let customTabs = (state["customTabs"] as? [[String: Any]] ?? [])
@@ -1096,14 +1158,210 @@ final class KeyboardViewController: UIInputViewController {
             default:
                 title = value.hasPrefix("custom:") ? customTabName(String(value.dropFirst(7))) : value
             }
-            candidateStack.addArrangedSubview(makeCandidateButton(title) { [weak self] in self?.selectTab(value) })
+            candidateStack.addArrangedSubview(makeTabButton(title) { [weak self] in self?.selectTab(value) })
         }
         if boolSetting("enable_clipboard_history_manager_tab", fallback: false), !values.contains("clipboard") {
-            candidateStack.addArrangedSubview(makeCandidateButton("📋", action: showClipboardHistory))
+            candidateStack.addArrangedSubview(makeTabButton("📋", action: showClipboardHistory))
+        }
+    }
+
+    private func showDictionaryList() {
+        dictionaryMode = .list
+        dictionaryReadingField = nil
+        dictionaryWordField = nil
+        dictionaryActiveField = nil
+        dictionaryDeleteArmed = false
+        cursorBarVisible = false
+        candidateStack.removeAllArrangedSubviews()
+        candidateScroll.setContentOffset(.zero, animated: false)
+        candidateStack.addArrangedSubview(makeCandidateButton("＋単語") { [weak self] in self?.showDictionaryEditor() })
+        candidateStack.addArrangedSubview(makeCandidateButton("辞書を閉じる", action: closeDictionaryEditor))
+        candidateGrid.removeAllArrangedSubviews()
+        candidatePanelScroll.setContentOffset(.zero, animated: false)
+        let entries = state["userDictionary"] as? [[String: Any]] ?? []
+        for entry in entries where entry["isTemplateMode"] as? Bool != true {
+            guard let ruby = entry["ruby"] as? String, !ruby.isEmpty,
+                  let word = entry["word"] as? String, !word.isEmpty else { continue }
+            let id = (entry["id"] as? NSNumber)?.intValue
+            let importance = (entry["importance"] as? NSNumber)?.intValue ?? 3
+            let button = makeCandidateButton("\(ruby) → \(word)　重要度 \(importance)") { [weak self] in
+                self?.showDictionaryEditor(reading: ruby, word: word, id: id, importance: importance)
+            }
+            button.contentHorizontalAlignment = .left
+            button.titleLabel?.lineBreakMode = .byTruncatingTail
+            button.accessibilityLabel = "\(ruby) → \(word)　重要度 \(importance)"
+            button.heightAnchor.constraint(equalToConstant: 42).isActive = true
+            candidateGrid.addArrangedSubview(button)
+        }
+        if candidateGrid.arrangedSubviews.isEmpty {
+            let label = UILabel()
+            label.text = "登録した単語はまだないよ。＋単語から追加できる"
+            label.textColor = palette.text
+            label.textAlignment = .center
+            label.font = .systemFont(ofSize: 13)
+            candidateGrid.addArrangedSubview(label)
+        }
+        candidateExpandButton.isHidden = true
+        setCandidateExpanded(true)
+    }
+
+    private func showDictionaryEditor(
+        reading: String = "", word: String = "", id: Int? = nil, importance: Int = 3
+    ) {
+        dictionaryMode = .edit
+        dictionaryEditingId = id
+        dictionaryImportance = min(5, max(1, importance))
+        dictionaryEnglishReading = mode == "english" || (id != nil && reading.unicodeScalars.allSatisfy { $0.isASCII })
+        dictionaryDeleteArmed = false
+        candidateGrid.removeAllArrangedSubviews()
+        candidatePanelScroll.setContentOffset(.zero, animated: false)
+        func field(_ label: String, _ value: String) -> UITextField {
+            let view = UITextField()
+            view.placeholder = label
+            view.text = value
+            view.textColor = palette.text
+            view.backgroundColor = palette.key
+            view.borderStyle = .roundedRect
+            view.inputView = UIView(frame: .zero)
+            view.addTarget(self, action: #selector(dictionaryFieldDidBegin(_:)), for: .editingDidBegin)
+            view.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            candidateGrid.addArrangedSubview(view)
+            return view
+        }
+        dictionaryReadingField = field("読み（ローマ字も入力できる）", reading)
+        dictionaryWordField = field("単語", word)
+        dictionaryActiveField = reading.isEmpty ? dictionaryReadingField : dictionaryWordField
+        let hint = UILabel()
+        hint.text = "欄を選んで編集。漢字は候補から登録するか貼り付けできる"
+        hint.textColor = palette.text
+        hint.font = .systemFont(ofSize: 12)
+        hint.numberOfLines = 2
+        candidateGrid.addArrangedSubview(hint)
+        candidateExpandButton.isHidden = true
+        setCandidateExpanded(true)
+        renderDictionaryEditorActions()
+    }
+
+    @objc private func dictionaryFieldDidBegin(_ field: UITextField) {
+        dictionaryActiveField = field
+    }
+
+    private func renderDictionaryEditorActions() {
+        candidateStack.removeAllArrangedSubviews()
+        candidateScroll.setContentOffset(.zero, animated: false)
+        candidateStack.addArrangedSubview(makeCandidateButton("保存", action: saveDictionaryEntry))
+        candidateStack.addArrangedSubview(makeCandidateButton("戻る", action: showDictionaryList))
+        if dictionaryEditingId != nil {
+            candidateStack.addArrangedSubview(makeCandidateButton(dictionaryDeleteArmed ? "削除する" : "削除") { [weak self] in
+                guard let self else { return }
+                if self.dictionaryDeleteArmed { self.deleteDictionaryEntry() } else {
+                    self.dictionaryDeleteArmed = true
+                    self.renderDictionaryEditorActions()
+                }
+            })
+        }
+        candidateStack.addArrangedSubview(makeCandidateButton("貼付") { [weak self] in
+            guard let self, self.hasFullAccess, let value = UIPasteboard.general.string else { return }
+            self.editDictionaryText(value)
+        })
+        candidateStack.addArrangedSubview(makeCandidateButton(dictionaryEnglishReading ? "英語の読み" : "日本語の読み") { [weak self] in
+            guard let self else { return }
+            self.dictionaryEnglishReading.toggle()
+            self.renderDictionaryEditorActions()
+        })
+        candidateStack.addArrangedSubview(makeCandidateButton("重要度 \(dictionaryImportance)") { [weak self] in
+            guard let self else { return }
+            self.dictionaryImportance = self.dictionaryImportance % 5 + 1
+            self.renderDictionaryEditorActions()
+        })
+    }
+
+    private func saveDictionaryEntry() {
+        let rawReading = dictionaryReadingField?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let word = dictionaryWordField?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let ruby = dictionaryEnglishReading
+            ? rawReading.lowercased()
+            : katakanaToHiragana(romanToHiragana(rawReading.lowercased()))
+        guard !ruby.isEmpty, !word.isEmpty, ruby.count <= 128, word.count <= 128,
+              !ruby.contains("\t"), !word.contains("\t"),
+              !ruby.contains("\n"), !word.contains("\n") else {
+            renderDictionaryEditorActions()
+            candidateStack.addArrangedSubview(makeCandidateButton("読みと単語を確認してね", action: {}))
+            return
+        }
+        var entries = state["userDictionary"] as? [[String: Any]] ?? []
+        let nextId = (entries.compactMap { ($0["id"] as? NSNumber)?.intValue }.max() ?? -1) + 1
+        let editedIndex = dictionaryEditingId.flatMap { id in
+            entries.firstIndex { ($0["id"] as? NSNumber)?.intValue == id }
+        }
+        let duplicateIndex = entries.firstIndex {
+            ($0["isTemplateMode"] as? Bool) != true &&
+                ($0["ruby"] as? String) == ruby && ($0["word"] as? String) == word
+        }
+        if let editedIndex, let duplicateIndex, editedIndex != duplicateIndex {
+            renderDictionaryEditorActions()
+            candidateStack.addArrangedSubview(makeCandidateButton("同じ読みと単語が登録済みだよ", action: {}))
+            return
+        }
+        let index = editedIndex ?? duplicateIndex
+        var entry = index.map { entries[$0] } ?? [:]
+        entry["id"] = (entry["id"] as? NSNumber)?.intValue ?? nextId
+        entry["ruby"] = ruby
+        entry["word"] = word
+        entry["importance"] = dictionaryImportance
+        entry["shared"] = false
+        entry["isTemplateMode"] = false
+        if let index { entries[index] = entry } else { entries.append(entry) }
+        state["userDictionary"] = entries
+        saveState()
+        reloadConversionDictionary()
+        showDictionaryList()
+    }
+
+    private func deleteDictionaryEntry() {
+        guard let id = dictionaryEditingId else { return }
+        var entries = state["userDictionary"] as? [[String: Any]] ?? []
+        entries.removeAll { ($0["id"] as? NSNumber)?.intValue == id }
+        state["userDictionary"] = entries
+        saveState()
+        reloadConversionDictionary()
+        showDictionaryList()
+    }
+
+    private func closeDictionaryEditor() {
+        dictionaryMode = .closed
+        dictionaryReadingField = nil
+        dictionaryWordField = nil
+        dictionaryActiveField = nil
+        setCandidateExpanded(false)
+        renderCandidates()
+    }
+
+    private func editDictionaryText(_ value: String) {
+        guard let field = dictionaryActiveField,
+              !value.contains("\n"), !value.contains("\r") else { return }
+        let selection = field.selectedTextRange
+        let selectedCount = selection.flatMap { field.text(in: $0)?.count } ?? 0
+        guard (field.text?.count ?? 0) - selectedCount + value.count <= 128 else { return }
+        if let selection {
+            field.replace(selection, withText: value)
+        } else {
+            field.text = (field.text ?? "") + value
+        }
+    }
+
+    private func deleteDictionaryText() {
+        guard let field = dictionaryActiveField else { return }
+        if field.selectedTextRange != nil {
+            field.deleteBackward()
+        } else {
+            field.text = String((field.text ?? "").dropLast())
         }
     }
 
     private func selectTab(_ value: String) {
+        if dictionaryMode == .edit && !["dismiss", "japanese", "english"].contains(value) { return }
+        if dictionaryMode == .list { closeDictionaryEditor() }
         switch value {
         case "dismiss": dismissKeyboard()
         case "emoji": showEmoji()
@@ -1118,6 +1376,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func input(_ value: String) {
+        if dictionaryMode == .edit { editDictionaryText(value); return }
         if !value.isEmpty,
            value.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
             directCommit(value)
@@ -1142,11 +1401,17 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func inputEnglishText(_ value: String) {
-        let resolved = shift || capsLock ? value.uppercased() : value
+        if dictionaryMode == .edit { editDictionaryText(value); return }
+        let allCapsInput = textDocumentProxy.autocapitalizationType == .allCharacters
+        let resolved = shift || capsLock || allCapsInput ? value.uppercased() : value
         let isWordInput = !resolved.isEmpty && resolved.unicodeScalars.allSatisfy {
             (0x41 ... 0x5a).contains($0.value) || (0x61 ... 0x7a).contains($0.value)
         }
-        if isWordInput {
+        if allCapsInput {
+            // A host can commit uppercase text as soon as it arrives. Avoid
+            // rewriting that text as an active composition on the next key.
+            directCommit(resolved)
+        } else if isWordInput {
             composing += resolved
             updateComposition()
         } else {
@@ -1178,9 +1443,12 @@ final class KeyboardViewController: UIInputViewController {
             textDocumentProxy.setMarkedText(value, selectedRange: NSRange(location: value.utf16.count, length: 0))
             if commit { textDocumentProxy.unmarkText() }
         } else {
-            // insertText replaces a host selection. Doing this before the
-            // legacy delete-and-reinsert path prevents deleting past it.
-            textDocumentProxy.insertText("")
+            // Clear an actual host selection before replacing our displayed
+            // composition. An empty insert on every key can disturb editors
+            // that transform or immediately commit the inserted text.
+            if textDocumentProxy.selectedText?.isEmpty == false {
+                textDocumentProxy.insertText("")
+            }
             for _ in lastDisplayed { textDocumentProxy.deleteBackward() }
             textDocumentProxy.insertText(value)
         }
@@ -1225,6 +1493,10 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func directCommit(_ value: String, normalizePunctuation: Bool = true) {
+        if dictionaryMode == .edit {
+            if value.contains("\n") { saveDictionaryEntry() } else { editDictionaryText(value) }
+            return
+        }
         commitComposition()
         let input = normalizePunctuation ? punctuationForInputMode(value, mode: mode) : value
         if let closingDelimiter = closingDelimiter(for: input) {
@@ -1239,6 +1511,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func delete() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         if layout == "qwerty", !rawRoman.isEmpty {
             rawRoman.removeLast()
@@ -1272,6 +1545,7 @@ final class KeyboardViewController: UIInputViewController {
     /// The first press remains immediate. A second quick press completes the
     /// one word that was under the cursor before that first character moved.
     private func quickDelete() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         let now = CACurrentMediaTime()
         if let pending = pendingQuickWordDelete, now <= pending.deadline {
@@ -1346,6 +1620,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func deleteForward() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         guard composing.isEmpty, rawRoman.isEmpty,
               !(textDocumentProxy.documentContextAfterInput ?? "").isEmpty else { return }
@@ -1355,6 +1630,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func space() {
+        if dictionaryMode == .edit { editDictionaryText(" "); return }
         if composing.isEmpty, rawRoman.isEmpty {
             directCommit(" ")
         } else if mode == "english" {
@@ -1366,12 +1642,14 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func spaceWithoutConversion() {
+        if dictionaryMode == .edit { editDictionaryText(" "); return }
         commitComposition(useCandidate: false)
         directCommit(" ")
         refreshCursorBar()
     }
 
     private func enter() {
+        if dictionaryMode == .edit { saveDictionaryEntry(); return }
         commitComposition()
         textDocumentProxy.insertText("\n")
     }
@@ -1383,7 +1661,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setMode(_ newMode: String) {
-        if mode != "english" || newMode != "english" { commitComposition() }
+        if dictionaryMode != .edit, mode != "english" || newMode != "english" { commitComposition() }
         mode = newMode
         activeCustomTab = nil
         switch newMode {
@@ -1406,6 +1684,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         if definition.action == "space", value == "__cursor_repeat__" {
+            if dictionaryMode == .edit { return }
             textDocumentProxy.adjustTextPosition(byCharacterOffset: -1)
             refreshCursorBar()
             return
@@ -1452,13 +1731,18 @@ final class KeyboardViewController: UIInputViewController {
         guard let action else { return }
         let type = action["type"] as? String ?? "input"
         let value = action["value"] as? String ?? ""
+        if dictionaryMode == .edit && ![
+            "input", "directInput", "direct_input", "delete", "enter", "space",
+            "switchLayout", "paste", "__paste", "smart_delete_default", "smartDeleteDefault",
+            "smart_delete", "toggle_caps_lock_state", "toggleCapsLock", "dismiss", "dismiss_keyboard"
+        ].contains(type) { return }
         switch type {
         case "input":
             if let text = action["text"] as? String { custardInput(text) } else { customInput(value) }
         case "directInput": directCommit(value, normalizePunctuation: false)
         case "direct_input": directCommit(action["text"] as? String ?? "", normalizePunctuation: false)
         case "delete":
-            if deleteSelectedText() { return }
+            if dictionaryMode != .edit, deleteSelectedText() { return }
             let count = (action["count"] as? NSNumber)?.intValue ?? Int(value) ?? 1
             let boundedCount = min(100, max(-100, count))
             if allowQuickWordDelete, boundedCount == 1 {
@@ -1517,10 +1801,13 @@ final class KeyboardViewController: UIInputViewController {
             if index + 1 < actions.count,
                positiveBackwardDelete(actions[index]),
                isBackwardSmartDelete(actions[index + 1]) {
-                dispatchCombinedBackwardSmartDelete(
-                    deleteAction: actions[index],
-                    smartDeleteAction: actions[index + 1]
-                )
+                if dictionaryMode == .edit { deleteDictionaryText() }
+                else {
+                    dispatchCombinedBackwardSmartDelete(
+                        deleteAction: actions[index],
+                        smartDeleteAction: actions[index + 1]
+                    )
+                }
                 index += 2
             } else {
                 dispatch(
@@ -1625,29 +1912,39 @@ final class KeyboardViewController: UIInputViewController {
     ) -> String.Index {
         guard start < end else { return start }
         let segment = String(text[start ..< end])
-        guard !Self.indivisibleKanaWords.contains(segment),
+        guard !Self.indivisibleKanaWords.contains(segment), Self.systemDictionary[segment] == nil,
               segment.allSatisfy({ japaneseCharacterClass($0) == .hiragana }) else {
             return start
         }
 
         if let suffix = Self.japaneseAuxiliaries.first(where: {
             segment.count > $0.count && segment.hasSuffix($0)
-        }) ?? Self.japaneseParticles.first(where: {
-            segment.count > $0.count && segment.hasSuffix($0)
         }) {
             return text.index(end, offsetBy: -suffix.count)
         }
-
+        // In an all-kana run, は/の/に may be part of the word itself.
+        // を is a safer boundary without a morphological tokenizer.
+        if segment.count > 1, segment.hasSuffix("を") {
+            return text.index(before: end)
+        }
+        if let marker = text.range(of: "を", options: .backwards, range: start ..< end),
+           text.distance(from: start, to: marker.lowerBound) >= 2,
+           text.distance(from: marker.upperBound, to: end) >= 2 {
+            return marker.upperBound
+        }
+        for particle in Self.japaneseParticles where segment.count > particle.count && segment.hasSuffix(particle) {
+            if Self.systemDictionary[String(segment.dropLast(particle.count))] != nil {
+                return text.index(end, offsetBy: -particle.count)
+            }
+        }
         for particle in Self.japaneseParticles {
-            guard let range = text.range(
-                of: particle,
-                options: .backwards,
-                range: start ..< end
-            ), text.distance(from: start, to: range.lowerBound) >= 2,
-              text.distance(from: range.upperBound, to: end) >= 2 else { continue }
-            // Particle priority is intentional: を must win over a later に
-            // that begins a word such as にゅうりょく.
-            return range.upperBound
+            guard let range = text.range(of: particle, options: .backwards, range: start ..< end) else { continue }
+            let prefix = String(text[start ..< range.lowerBound])
+            let suffix = String(text[range.upperBound ..< end])
+            if prefix.count >= 2, suffix.count >= 2,
+               Self.systemDictionary[prefix] != nil, Self.systemDictionary[suffix] != nil {
+                return range.upperBound
+            }
         }
         return start
     }
@@ -1730,7 +2027,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private var shouldUppercaseEnglishLabels: Bool {
-        mode == "english" && (shift || capsLock)
+        mode == "english" && (shift || capsLock || textDocumentProxy.autocapitalizationType == .allCharacters)
     }
 
     private func customInput(_ value: String) {
@@ -1913,6 +2210,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDeleteDefault() {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         if !composing.isEmpty || !rawRoman.isEmpty {
             let count = backwardWordDeleteCount(in: composing)
@@ -1953,6 +2251,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func smartDelete(_ action: [String: Any]) {
+        if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         let backward = action["direction"] as? String == "backward"
         if backward {
@@ -2083,21 +2382,32 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func buildCandidates() -> [String] {
+        candidatePredictionReadings = [:]
+        unknownPredictionTexts = []
         guard !composing.isEmpty else { return [] }
         if mode == "english" { return buildEnglishCandidates(composing) }
         let reading = katakanaToHiragana(composing)
         var result: [String] = []
+        var exactUserTexts: [String] = []
         let learned = learnedCandidateEntries(learningScores(), english: false)
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
         var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
+        var predictionReadings: [String: String] = [:]
+        for entry in learned where entry.reading != reading {
+            if predictionReadings[entry.text] == nil { predictionReadings[entry.text] = entry.reading }
+        }
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
             let ranked = dictionary.sorted {
                 let left = $0["importance"] as? Int ?? 3
                 let right = $1["importance"] as? Int ?? 3
-                if left != right { return left > right }
                 let leftRuby = $0["ruby"] as? String ?? ""
                 let rightRuby = $1["ruby"] as? String ?? ""
+                let leftRemaining = max(0, katakanaToHiragana(leftRuby).count - reading.count)
+                let rightRemaining = max(0, katakanaToHiragana(rightRuby).count - reading.count)
+                let leftScore = min(5, max(1, left)) * 20 - min(1000, leftRemaining) * 4
+                let rightScore = min(5, max(1, right)) * 20 - min(1000, rightRemaining) * 4
+                if leftScore != rightScore { return leftScore > rightScore }
                 if leftRuby.count != rightRuby.count { return leftRuby.count < rightRuby.count }
                 return leftRuby < rightRuby
             }
@@ -2114,8 +2424,10 @@ final class KeyboardViewController: UIInputViewController {
                 guard let value, !value.isEmpty else { continue }
                 if ruby == reading {
                     result.append(value)
+                    exactUserTexts.append(value)
                 } else {
                     prefixPredictions.append(value)
+                    if predictionReadings[value] == nil { predictionReadings[value] = ruby }
                 }
             }
         }
@@ -2133,7 +2445,9 @@ final class KeyboardViewController: UIInputViewController {
             unicodeCandidate: boolSetting("unicode_candidate", fallback: true),
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
         ) ?? []
-        result.append(contentsOf: engineCandidates)
+        let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
+        result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
+        prefixPredictions.append(contentsOf: engineCandidates.filter { enginePredictionTexts.contains($0) })
         if boolSetting("use_OS_user_dict", fallback: true) {
             for ruby in osLexicon.keys.sorted(by: {
                 $0.count == $1.count ? $0 < $1 : $0.count < $1.count
@@ -2142,7 +2456,10 @@ final class KeyboardViewController: UIInputViewController {
                 if normalized == reading {
                     result.append(contentsOf: osLexicon[ruby] ?? [])
                 } else if normalized.hasPrefix(reading) {
-                    prefixPredictions.append(contentsOf: osLexicon[ruby] ?? [])
+                    for value in osLexicon[ruby] ?? [] {
+                        prefixPredictions.append(value)
+                        if predictionReadings[value] == nil { predictionReadings[value] = normalized }
+                    }
                 }
             }
         }
@@ -2150,7 +2467,10 @@ final class KeyboardViewController: UIInputViewController {
         for ruby in Self.systemDictionary.keys.sorted(by: {
             $0.count == $1.count ? $0 < $1 : $0.count < $1.count
         }) where ruby.count > reading.count && ruby.hasPrefix(reading) {
-            prefixPredictions.append(contentsOf: Self.systemDictionary[ruby] ?? [])
+            for value in Self.systemDictionary[ruby] ?? [] {
+                prefixPredictions.append(value)
+                if predictionReadings[value] == nil { predictionReadings[value] = ruby }
+            }
         }
         // A local completion must not displace an existing engine candidate or
         // become a live conversion when no complete conversion is available.
@@ -2178,6 +2498,10 @@ final class KeyboardViewController: UIInputViewController {
             result.append(rawRoman)
         }
         let exactLearning = learned.filter { $0.reading == reading }
+        let exactTexts = completeTexts.union(exactLearning.map(\.text))
+        candidatePredictionReadings = predictionReadings.filter { !exactTexts.contains($0.key) }
+        unknownPredictionTexts = enginePredictionTexts.subtracting(exactTexts)
+            .subtracting(Set(candidatePredictionReadings.keys))
         var scores: [String: Int] = [:]
         for entry in exactLearning {
             scores[entry.text] = max(scores[entry.text] ?? 0, entry.score)
@@ -2191,17 +2515,19 @@ final class KeyboardViewController: UIInputViewController {
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
         let learnedTexts = exactLearning.map(\.text)
-        let engineCandidate: String?
-        if zenzai != nil {
-            engineCandidate = engineCandidates.first {
-                !learnedTexts.contains($0) && $0 != hiragana && $0 != fullKatakana
-            }
-        } else {
-            engineCandidate = nil
+        let stableEngineCandidate = conversionEngine?.baselineTexts.first {
+            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && $0 != hiragana && $0 != fullKatakana
+        }
+        let engineCandidate = stableEngineCandidate ?? engineCandidates.first {
+            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && $0 != hiragana && $0 != fullKatakana
         }
         var prioritized: [String] = []
         prioritized.append(contentsOf: learnedTexts)
+        prioritized.append(contentsOf: exactUserTexts)
         if let engineCandidate { prioritized.append(engineCandidate) }
+        prioritized.append(contentsOf: Self.systemDictionary[reading] ?? [])
         prioritized.append(contentsOf: [hiragana, fullKatakana])
         prioritized.append(contentsOf: result)
         var seen = Set<String>()
@@ -2264,8 +2590,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func learnCandidate(input: String, candidate: String, english: Bool, explicitSelection: Bool) {
         guard intSetting("memory_learining_styple_setting", fallback: 0) == 0 else { return }
+        if !english, unknownPredictionTexts.contains(candidate) { return }
+        let learningReading = english ? input : (candidatePredictionReadings[candidate] ?? input)
         state["learning"] = recordCandidateLearning(
-            learningScores(), reading: input, text: candidate,
+            learningScores(), reading: learningReading, text: candidate,
             english: english, explicitSelection: explicitSelection
         )
         saveState()
@@ -2563,6 +2891,13 @@ final class KeyboardViewController: UIInputViewController {
         button.layer.cornerRadius = 6
         button.titleLabel?.font = .systemFont(ofSize: CGFloat(doubleSetting("result_view_font_size", fallback: 16).positiveOr(16)))
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 15, bottom: 0, right: 15)
+        return button
+    }
+
+    private func makeTabButton(_ title: String, action: @escaping () -> Void) -> ClosureButton {
+        let button = makeCandidateButton(title, action: action)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         return button
     }
 

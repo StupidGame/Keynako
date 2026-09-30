@@ -539,6 +539,15 @@ class UserDictionaryPage extends StatefulWidget {
 class _UserDictionaryPageState extends State<UserDictionaryPage> {
   var _query = '';
 
+  Future<void> _deleteEntry(
+    AppController controller,
+    UserDictionaryEntry entry,
+  ) async {
+    if (await _confirmDictionaryEntryDeletion(context, entry) && mounted) {
+      controller.removeDictionaryEntry(entry.id);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
@@ -586,6 +595,8 @@ class _UserDictionaryPageState extends State<UserDictionaryPage> {
                     child: const Icon(Icons.delete),
                   ),
                   direction: DismissDirection.endToStart,
+                  confirmDismiss: (_) =>
+                      _confirmDictionaryEntryDeletion(context, entry),
                   onDismissed: (_) =>
                       controller.removeDictionaryEntry(entry.id),
                   child: ListTile(
@@ -604,7 +615,12 @@ class _UserDictionaryPageState extends State<UserDictionaryPage> {
                           ? Icons.place_outlined
                           : Icons.text_fields,
                     ),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: IconButton(
+                      key: ValueKey('dictionary-delete-${entry.id}'),
+                      tooltip: '単語を削除',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _deleteEntry(controller, entry),
+                    ),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => UserDictionaryEditorPage(entry: entry),
@@ -619,6 +635,30 @@ class _UserDictionaryPageState extends State<UserDictionaryPage> {
       ),
     );
   }
+}
+
+Future<bool> _confirmDictionaryEntryDeletion(
+  BuildContext context,
+  UserDictionaryEntry entry,
+) async {
+  return await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('単語を削除'),
+          content: Text('「${entry.word}」（${entry.ruby}）をユーザ辞書から削除する？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('キャンセル'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('削除'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 }
 
 class UserDictionaryEditorPage extends StatefulWidget {
@@ -661,7 +701,15 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('ユーザ辞書を編集'),
-        actions: [TextButton(onPressed: _save, child: const Text('保存'))],
+        actions: [
+          if (widget.entry != null)
+            IconButton(
+              tooltip: '単語を削除',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: _delete,
+            ),
+          TextButton(onPressed: _save, child: const Text('保存')),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -739,6 +787,17 @@ class _UserDictionaryEditorPageState extends State<UserDictionaryEditorPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _delete() async {
+    final entry = widget.entry;
+    if (entry == null ||
+        !await _confirmDictionaryEntryDeletion(context, entry) ||
+        !mounted) {
+      return;
+    }
+    AppControllerScope.of(context).removeDictionaryEntry(entry.id);
+    Navigator.of(context).pop();
   }
 
   Future<void> _save() async {
