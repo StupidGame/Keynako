@@ -1383,7 +1383,9 @@ final class KeyboardViewController: UIInputViewController {
         case "japanese": setMode("japanese")
         case "english": setMode("english")
         case "clipboard": showClipboardHistory()
-        case "resize": showResizeControls()
+        case "resize":
+            if oneHandedMode == "full" { showResizeControls() }
+            else { setOneHandedMode("full") }
         default:
             if value.hasPrefix("custom:") {
                 switchToCustomLayout(String(value.dropFirst(7)))
@@ -1403,7 +1405,8 @@ final class KeyboardViewController: UIInputViewController {
         oneHandedMode = mode
         UserDefaults(suiteName: "group.com.azooKey.keyboard")?.set(mode, forKey: "keynako_one_handed_mode")
         applyOneHandedLayout()
-        showResizeControls()
+        if mode == "full" { renderCandidates() }
+        else { showResizeControls() }
     }
 
     private func applyOneHandedLayout() {

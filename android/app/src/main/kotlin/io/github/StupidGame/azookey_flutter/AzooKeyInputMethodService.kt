@@ -2392,7 +2392,9 @@ class AzooKeyInputMethodService : InputMethodService() {
             value.startsWith("custom:") -> {
                 switchToCustomLayout(value.removePrefix("custom:"))
             }
-            value == "resize" -> showResizeControls()
+            value == "resize" -> {
+                if (oneHandedMode == "full") showResizeControls() else setOneHandedMode("full")
+            }
         }
     }
 
@@ -2417,7 +2419,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             .putString(ONE_HANDED_MODE_KEY, value)
             .apply()
         applyKeyboardWidth()
-        showResizeControls()
+        if (oneHandedMode == "full") renderCandidates() else showResizeControls()
     }
 
     private fun applyKeyboardWidth() {
