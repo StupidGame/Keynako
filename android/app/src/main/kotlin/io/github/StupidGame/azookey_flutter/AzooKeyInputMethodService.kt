@@ -2342,7 +2342,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         cursorBarView = bar
         candidateRow.addView(
             bar,
-            LinearLayout.LayoutParams(resources.displayMetrics.widthPixels, dp(43)),
+            LinearLayout.LayoutParams(
+                keyboardSurface.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels,
+                dp(43),
+            ),
         )
         bar.post { bar.refresh() }
     }
@@ -3986,6 +3989,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val center = width / 2f
+            if (!settings.optBoolean("use_move_cursor_bar_beta", true)) {
+                canvas.drawColor(palette.key)
+                symbolPaint.textSize = dp(17).toFloat()
+                symbolPaint.color = palette.text
+                val baseline = height / 2f - (symbolPaint.ascent() + symbolPaint.descent()) / 2f
+                canvas.drawText("‹‹", dp(22).toFloat(), baseline, symbolPaint)
+                canvas.drawText("カーソルを移動", center, baseline, symbolPaint)
+                canvas.drawText("››", width - dp(22).toFloat(), baseline, symbolPaint)
+                return
+            }
             val radius = width / 2f
             val gradient = RadialGradient(center, height / 2f, radius, palette.key, palette.background, Shader.TileMode.CLAMP)
             canvas.drawPaint(Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient })

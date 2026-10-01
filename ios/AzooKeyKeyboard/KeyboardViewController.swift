@@ -1127,6 +1127,7 @@ final class KeyboardViewController: UIInputViewController {
             before: before,
             after: after,
             palette: palette,
+            reflectStyle: boolSetting("use_move_cursor_bar_beta", fallback: true),
             fontSize: CGFloat(doubleSetting("result_view_font_size", fallback: 16).positiveOr(16)),
             onMove: { [weak self] count in
                 self?.textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
@@ -3273,6 +3274,7 @@ private struct FlickDefinition {
 /// and a horizontal swipe advances one character per accumulated distance.
 private final class CursorBarView: UIView {
     private let palette: KeyboardPalette
+    private let reflectStyle: Bool
     private let fontSize: CGFloat
     private let onMove: (Int) -> Void
     private var line: [String] = []
@@ -3297,10 +3299,12 @@ private final class CursorBarView: UIView {
         before: String,
         after: String,
         palette: KeyboardPalette,
+        reflectStyle: Bool,
         fontSize: CGFloat,
         onMove: @escaping (Int) -> Void
     ) {
         self.palette = palette
+        self.reflectStyle = reflectStyle
         self.fontSize = fontSize
         self.onMove = onMove
         super.init(frame: .zero)
@@ -3356,6 +3360,20 @@ private final class CursorBarView: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
+        if !reflectStyle {
+            palette.key.setFill()
+            context.fill(bounds)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 17),
+                .foregroundColor: palette.text,
+            ]
+            ("‹‹" as NSString).draw(at: CGPoint(x: 12, y: bounds.midY - 11), withAttributes: attributes)
+            let label = "カーソルを移動" as NSString
+            let labelWidth = label.size(withAttributes: attributes).width
+            label.draw(at: CGPoint(x: bounds.midX - labelWidth / 2, y: bounds.midY - 11), withAttributes: attributes)
+            ("››" as NSString).draw(at: CGPoint(x: bounds.width - 35, y: bounds.midY - 11), withAttributes: attributes)
+            return
+        }
         let colors = [palette.key.cgColor, palette.background.cgColor] as CFArray
         if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
             context.drawRadialGradient(gradient, startCenter: CGPoint(x: bounds.midX, y: bounds.midY), startRadius: 1, endCenter: CGPoint(x: bounds.midX, y: bounds.midY), endRadius: bounds.width / 2, options: [])
