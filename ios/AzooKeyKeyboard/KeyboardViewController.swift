@@ -12,6 +12,8 @@ final class KeyboardViewController: UIInputViewController {
     private let candidatePanelScroll = UIScrollView()
     private let candidateGrid = UIStackView()
     private let keyboardStack = UIStackView()
+    private let resizeHandle = UIButton(type: .system)
+    private var horizontalKeyboardConstraints: [NSLayoutConstraint] = []
     private var heightConstraint: NSLayoutConstraint?
     private var candidatePanelHeightConstraint: NSLayoutConstraint?
 
@@ -41,6 +43,8 @@ final class KeyboardViewController: UIInputViewController {
     private var shift = false
     private var capsLock = false
     private var activeCustomTab: String?
+    private var oneHandedMode = "full"
+    private var oneHandedWidth: CGFloat = 0.78
     private var cursorBarVisible = false
     private weak var cursorBarView: CursorBarView?
     private var pendingQuickWordDelete: PendingQuickWordDelete?
@@ -60,6 +64,7 @@ final class KeyboardViewController: UIInputViewController {
         super.viewDidLoad()
         configureView()
         reloadState()
+        applyOneHandedLayout()
         loadOSLexiconIfNeeded()
         renderCandidates()
         renderKeyboard()
@@ -69,6 +74,7 @@ final class KeyboardViewController: UIInputViewController {
         super.viewWillAppear(animated)
         dictionaryMode = .closed
         reloadState()
+        applyOneHandedLayout()
         loadOSLexiconIfNeeded()
         resetComposition()
         cursorBarVisible = false
@@ -106,11 +112,15 @@ final class KeyboardViewController: UIInputViewController {
             backgroundImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             backgroundImageView.topAnchor.constraint(equalTo: view.topAnchor),
             backgroundImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             rootStack.topAnchor.constraint(equalTo: view.topAnchor),
             rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        resizeHandle.translatesAutoresizingMaskIntoConstraints = false
+        resizeHandle.setTitle("⋮", for: .normal)
+        resizeHandle.titleLabel?.font = .systemFont(ofSize: 25)
+        resizeHandle.accessibilityLabel = "片手モードの幅を調整"
+        resizeHandle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragResizeHandle(_:))))
+        view.addSubview(resizeHandle)
 
         candidateStack.axis = .horizontal
         candidateStack.alignment = .fill
@@ -170,6 +180,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func reloadState() {
         let defaults = UserDefaults(suiteName: "group.com.azooKey.keyboard")!
+        let savedMode = defaults.string(forKey: "keynako_one_handed_mode") ?? "full"
+        oneHandedMode = ["left", "right"].contains(savedMode) ? savedMode : "full"
+        let savedWidth = defaults.object(forKey: "keynako_one_handed_width") as? NSNumber
+        oneHandedWidth = CGFloat(savedWidth?.doubleValue ?? 0.78).clamped(to: 0.6 ... 0.92)
         guard let value = defaults.string(forKey: "azookey_flutter_state"),
               let data = value.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -1029,7 +1043,7 @@ final class KeyboardViewController: UIInputViewController {
         candidateStack.addArrangedSubview(dictionaryShortcut)
         for (index, candidate) in candidates.enumerated() {
             let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
-            button.longPressAction = { [weak self] in self?.showLegacyReportPrompt(candidate, index: index) }
+            button.longPressAction = { [weak self] in self?.showCandidatePreview(candidate, index: index) }
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
             candidateStack.addArrangedSubview(button)
         }
@@ -1077,8 +1091,7 @@ final class KeyboardViewController: UIInputViewController {
                 let candidate = candidates[index]
                 let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
                 button.longPressAction = { [weak self] in
-                    self?.setCandidateExpanded(false)
-                    self?.showLegacyReportPrompt(candidate, index: index)
+                    self?.showCandidatePreview(candidate, index: index)
                 }
                 button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
                 row.addArrangedSubview(button)
@@ -1370,10 +1383,66 @@ final class KeyboardViewController: UIInputViewController {
         case "japanese": setMode("japanese")
         case "english": setMode("english")
         case "clipboard": showClipboardHistory()
+        case "resize": showResizeControls()
         default:
             if value.hasPrefix("custom:") {
                 switchToCustomLayout(String(value.dropFirst(7)))
             }
+        }
+    }
+
+    private func showResizeControls() {
+        candidateStack.removeAllArrangedSubviews()
+        candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "left" ? "✓ 左寄せ" : "← 左寄せ") { [weak self] in self?.setOneHandedMode("left") })
+        candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "full" ? "✓ 標準" : "↔ 標準") { [weak self] in self?.setOneHandedMode("full") })
+        candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "right" ? "✓ 右寄せ" : "右寄せ →") { [weak self] in self?.setOneHandedMode("right") })
+        candidateStack.addArrangedSubview(makeCandidateButton("閉じる") { [weak self] in self?.renderCandidates() })
+    }
+
+    private func setOneHandedMode(_ mode: String) {
+        oneHandedMode = mode
+        UserDefaults(suiteName: "group.com.azooKey.keyboard")?.set(mode, forKey: "keynako_one_handed_mode")
+        applyOneHandedLayout()
+        showResizeControls()
+    }
+
+    private func applyOneHandedLayout() {
+        NSLayoutConstraint.deactivate(horizontalKeyboardConstraints)
+        let width = rootStack.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: oneHandedMode == "full" ? 1 : oneHandedWidth)
+        let position: NSLayoutConstraint
+        if oneHandedMode == "right" {
+            position = rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        } else {
+            position = rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        }
+        horizontalKeyboardConstraints = [width, position]
+        if oneHandedMode != "full" {
+            let handleEdge = oneHandedMode == "right"
+                ? resizeHandle.leadingAnchor.constraint(equalTo: rootStack.leadingAnchor)
+                : resizeHandle.trailingAnchor.constraint(equalTo: rootStack.trailingAnchor)
+            horizontalKeyboardConstraints += [
+                handleEdge,
+                resizeHandle.centerYAnchor.constraint(equalTo: rootStack.centerYAnchor),
+                resizeHandle.widthAnchor.constraint(equalToConstant: 22),
+                resizeHandle.heightAnchor.constraint(equalToConstant: 64),
+            ]
+        }
+        NSLayoutConstraint.activate(horizontalKeyboardConstraints)
+        resizeHandle.isHidden = oneHandedMode == "full"
+        resizeHandle.backgroundColor = palette.special
+        resizeHandle.setTitleColor(palette.text, for: .normal)
+        resizeHandle.layer.cornerRadius = 8
+    }
+
+    @objc private func dragResizeHandle(_ recognizer: UIPanGestureRecognizer) {
+        guard oneHandedMode != "full", recognizer.state == .changed || recognizer.state == .ended,
+              view.bounds.width > 0 else { return }
+        let x = recognizer.location(in: view).x
+        oneHandedWidth = ((oneHandedMode == "right" ? view.bounds.width - x : x) / view.bounds.width)
+            .clamped(to: 0.6 ... 0.92)
+        applyOneHandedLayout()
+        if recognizer.state == .ended {
+            UserDefaults(suiteName: "group.com.azooKey.keyboard")?.set(Double(oneHandedWidth), forKey: "keynako_one_handed_width")
         }
     }
 
@@ -1691,6 +1760,13 @@ final class KeyboardViewController: UIInputViewController {
             refreshCursorBar()
             return
         }
+        if definition.action == "space", value.hasPrefix("__cursor_drag__:") {
+            if dictionaryMode == .edit { return }
+            let delta = Int(value.dropFirst("__cursor_drag__:".count)) ?? 0
+            textDocumentProxy.adjustTextPosition(byCharacterOffset: delta)
+            refreshCursorBar()
+            return
+        }
         guard let action = definition.action else {
             input(value)
             return
@@ -1699,6 +1775,10 @@ final class KeyboardViewController: UIInputViewController {
         case "delete":
             if value == "×" { smartDeleteDefault() }
             else if value == "__delete_repeat__" { delete() }
+            else if value.hasPrefix("__delete_drag__:") {
+                let count = min(100, max(0, Int(value.dropFirst("__delete_drag__:".count)) ?? 0))
+                for _ in 0 ..< count { delete() }
+            }
             else { quickDelete() }
         case "space":
             switch value {
@@ -2788,6 +2868,27 @@ final class KeyboardViewController: UIInputViewController {
         })
     }
 
+    private func showCandidatePreview(_ candidate: String, index: Int) {
+        setCandidateExpanded(true)
+        candidateExpandButton.isHidden = true
+        candidateGrid.removeAllArrangedSubviews()
+        let enlarged = UILabel()
+        enlarged.text = candidate
+        enlarged.font = .systemFont(ofSize: 42)
+        enlarged.textColor = palette.text
+        enlarged.textAlignment = .center
+        enlarged.numberOfLines = 0
+        enlarged.lineBreakMode = .byCharWrapping
+        enlarged.accessibilityLabel = "拡大した変換候補: \(candidate)"
+        enlarged.heightAnchor.constraint(greaterThanOrEqualToConstant: 168).isActive = true
+        candidateGrid.addArrangedSubview(enlarged)
+        candidateStack.removeAllArrangedSubviews()
+        candidateStack.addArrangedSubview(makeCandidateButton("戻る") { [weak self] in self?.renderCandidates(showTabs: false) })
+        candidateStack.addArrangedSubview(makeCandidateButton("誤変換を報告") { [weak self] in
+            self?.showLegacyReportPrompt(candidate, index: index)
+        })
+    }
+
     private func submitPendingReport() {
         guard let report = pendingReport else { return }
         candidateStack.removeAllArrangedSubviews()
@@ -2921,13 +3022,21 @@ final class KeyboardViewController: UIInputViewController {
                     if quickWordDelete { self?.quickDelete() } else { action() }
                     self?.feedback()
                 },
-                repeatAction: { [weak self] in action(); self?.feedback() }
+                repeatAction: { [weak self] in action(); self?.feedback() },
+                dragDelete: { [weak self] count in
+                    for _ in 0 ..< count { action() }
+                    self?.feedback()
+                }
             )
             deleteButton.setTitle(title, for: .normal)
             style(deleteButton, special: special)
             return deleteButton
         }
         if title == "space" || title == "空白" || title == "次候補" {
+            let cursorDrag: ((Int) -> Void)? = title == "次候補" ? nil : { [weak self] count in
+                self?.textDocumentProxy.adjustTextPosition(byCharacterOffset: count)
+                self?.refreshCursorBar()
+            }
             let spaceButton = RepeatActionButton(
                 action: { [weak self] in action(); self?.feedback() },
                 longPress: { [weak self] in
@@ -2937,7 +3046,8 @@ final class KeyboardViewController: UIInputViewController {
                     } else {
                         selectNextCandidate()
                     }
-                }
+                },
+                dragCursor: cursorDrag
             )
             spaceButton.setTitle(title, for: .normal)
             style(spaceButton, special: special)
@@ -3435,13 +3545,18 @@ private final class CursorBarView: UIView {
 private final class RepeatDeleteButton: UIButton {
     private let tap: () -> Void
     private let repeatAction: () -> Void
+    private let dragDelete: (Int) -> Void
     private var longPressWorkItem: DispatchWorkItem?
     private var repeatTimer: Timer?
     private var didLongPress = false
+    private var dragStarted = false
+    private var dragCount = 0
+    private var startX: CGFloat = 0
 
-    init(tap: @escaping () -> Void, repeatAction: @escaping () -> Void) {
+    init(tap: @escaping () -> Void, repeatAction: @escaping () -> Void, dragDelete: @escaping (Int) -> Void) {
         self.tap = tap
         self.repeatAction = repeatAction
+        self.dragDelete = dragDelete
         super.init(frame: .zero)
     }
 
@@ -3450,6 +3565,9 @@ private final class RepeatDeleteButton: UIButton {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         didLongPress = false
+        dragStarted = false
+        dragCount = 0
+        startX = touches.first?.location(in: self).x ?? 0
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.didLongPress = true
@@ -3463,18 +3581,37 @@ private final class RepeatDeleteButton: UIButton {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let x = touches.first?.location(in: self).x ?? startX
+        let distance = startX - x
+        if dragStarted || distance >= 20 {
+            dragStarted = true
+            longPressWorkItem?.cancel()
+            repeatTimer?.invalidate()
+            repeatTimer = nil
+            dragCount = min(100, max(0, Int((distance / 18).rounded())))
+            setTitle(dragCount == 0 ? "⌫" : "⌫ \(dragCount)", for: .normal)
+            accessibilityLabel = "\(dragCount)文字を削除"
+        }
+        super.touchesMoved(touches, with: event)
+    }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
         super.touchesEnded(touches, with: event)
-        if !didLongPress { tap() }
+        setTitle("⌫", for: .normal)
+        if dragStarted {
+            if dragCount > 0 { dragDelete(dragCount) }
+        } else if !didLongPress { tap() }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
+        setTitle("⌫", for: .normal)
         super.touchesCancelled(touches, with: event)
     }
 }
@@ -3482,13 +3619,18 @@ private final class RepeatDeleteButton: UIButton {
 private final class RepeatActionButton: UIButton {
     private let press: () -> Void
     private let longPress: () -> Void
+    private let dragCursor: ((Int) -> Void)?
     private var longPressWorkItem: DispatchWorkItem?
     private var repeatTimer: Timer?
     private var didLongPress = false
+    private var cursorDragging = false
+    private var startX: CGFloat = 0
+    private var dragStep = 0
 
-    init(action: @escaping () -> Void, longPress: @escaping () -> Void) {
+    init(action: @escaping () -> Void, longPress: @escaping () -> Void, dragCursor: ((Int) -> Void)? = nil) {
         self.press = action
         self.longPress = longPress
+        self.dragCursor = dragCursor
         super.init(frame: .zero)
     }
 
@@ -3497,6 +3639,9 @@ private final class RepeatActionButton: UIButton {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         didLongPress = false
+        cursorDragging = false
+        dragStep = 0
+        startX = touches.first?.location(in: self).x ?? 0
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.didLongPress = true
@@ -3508,12 +3653,25 @@ private final class RepeatActionButton: UIButton {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if didLongPress, let dragCursor {
+            let x = touches.first?.location(in: self).x ?? startX
+            let step = Int(((x - startX) / 18).rounded())
+            if step != dragStep {
+                dragCursor(step - dragStep)
+                dragStep = step
+                cursorDragging = true
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
         super.touchesEnded(touches, with: event)
-        if !didLongPress { press() }
+        if !didLongPress && !cursorDragging { press() }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -3535,6 +3693,10 @@ private final class FlickButton: UIButton {
     private var longPressFlicked = false
     private var cursorLongPressed = false
     private var cursorLongPressScheduled = false
+    private var cursorDragging = false
+    private var cursorDragStep = 0
+    private var deleteDragging = false
+    private var deleteDragCount = 0
 
     init(definition: FlickDefinition, sensitivity: CGFloat, callback: @escaping (String) -> Void) {
         self.definition = definition
@@ -3553,6 +3715,10 @@ private final class FlickButton: UIButton {
         longPressFlicked = false
         cursorLongPressed = false
         cursorLongPressScheduled = false
+        cursorDragging = false
+        cursorDragStep = 0
+        deleteDragging = false
+        deleteDragCount = 0
         guard definition.action == "delete" || definition.action == "space" else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -3578,7 +3744,12 @@ private final class FlickButton: UIButton {
         longPressWorkItem?.cancel()
         repeatTimer?.invalidate()
         repeatTimer = nil
-        guard (!didLongPress || longPressFlicked) && !cursorLongPressed else { return }
+        if deleteDragging {
+            setTitle(definition.label, for: .normal)
+            if deleteDragCount > 0 { callback("__delete_drag__:\(deleteDragCount)") }
+            return
+        }
+        guard (!didLongPress || longPressFlicked) && !cursorLongPressed && !cursorDragging else { return }
         let end = touches.first?.location(in: self) ?? start
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -3599,6 +3770,7 @@ private final class FlickButton: UIButton {
         repeatTimer?.invalidate()
         repeatTimer = nil
         cursorLongPressScheduled = false
+        setTitle(definition.label, for: .normal)
         super.touchesCancelled(touches, with: event)
     }
 
@@ -3606,6 +3778,28 @@ private final class FlickButton: UIButton {
         guard let point = touches.first?.location(in: self) else { return }
         let dx = point.x - start.x
         let dy = point.y - start.y
+        if definition.action == "delete", didLongPress {
+            let count = min(100, max(0, Int((-dx / 18).rounded())))
+            if deleteDragging || count > 0 {
+                deleteDragging = true
+                deleteDragCount = count
+                repeatTimer?.invalidate()
+                repeatTimer = nil
+                setTitle(count == 0 ? definition.label : "⌫ \(count)", for: .normal)
+            }
+            return
+        }
+        if definition.action == "space", didLongPress {
+            let step = Int((dx / 18).rounded())
+            if step != cursorDragStep {
+                repeatTimer?.invalidate()
+                repeatTimer = nil
+                callback("__cursor_drag__:\(step - cursorDragStep)")
+                cursorDragStep = step
+                cursorDragging = true
+            }
+            return
+        }
         if abs(dx) >= 20 * sensitivity || abs(dy) >= 20 * sensitivity {
             longPressWorkItem?.cancel()
             if didLongPress {
