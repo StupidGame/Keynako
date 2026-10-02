@@ -139,6 +139,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var allCapsInput = false
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
+    private var oneHandedWidth = 0.78f
+    private var resizeHandle: TextView? = null
     private var candidates = mutableListOf<String>()
     private var candidatePredictionReadings = emptyMap<String, String>()
     private var candidateExpanded = false
@@ -214,6 +216,35 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ),
         )
+        resizeHandle = TextView(this).apply {
+            text = "⋮"
+            textSize = 24f
+            gravity = Gravity.CENTER
+            setTextColor(palette.text)
+            background = roundedDrawable(palette.special, dp(8).toFloat())
+            contentDescription = "片手モードの幅を調整"
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> true
+                    MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                        val origin = IntArray(2)
+                        inputViewFrame.getLocationOnScreen(origin)
+                        val available = inputViewFrame.width.coerceAtLeast(1)
+                        val x = event.rawX - origin[0]
+                        oneHandedWidth = (if (oneHandedMode == "right")
+                            (available - x) / available else x / available).coerceIn(0.6f, 0.92f)
+                        applyKeyboardWidth()
+                        if (event.actionMasked == MotionEvent.ACTION_UP) {
+                            getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
+                                .edit().putFloat(ONE_HANDED_WIDTH_KEY, oneHandedWidth).apply()
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+        resizeHandle?.let { keyboardSurface.addView(it, FrameLayout.LayoutParams(dp(22), dp(64))) }
         applyKeyboardBackground()
         applyKeyboardWidth()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -331,6 +362,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         oneHandedMode = preferences.getString(ONE_HANDED_MODE_KEY, "full")
             ?.takeIf { it == "left" || it == "right" }
             ?: "full"
+        oneHandedWidth = preferences.getFloat(ONE_HANDED_WIDTH_KEY, 0.78f).coerceIn(0.6f, 0.92f)
         val restoredState = try {
             value?.takeIf(String::isNotBlank)?.let(::JSONObject)
         } catch (_: Exception) {
@@ -1988,7 +2020,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 background = roundedDrawable(palette.key, dp(6).toFloat())
                 setOnClickListener { commitCandidate(index) }
                 setOnLongClickListener {
-                    showLegacyReportPrompt(candidate, index)
+                    showCandidatePreview(candidate, index)
                     true
                 }
             }, candidateButtonLayoutParams())
@@ -2028,9 +2060,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         background = roundedDrawable(palette.key, dp(6).toFloat())
                         setOnClickListener { commitCandidate(index) }
                         setOnLongClickListener {
-                            candidateExpanded = false
-                            candidatePanel.visibility = View.GONE
-                            showLegacyReportPrompt(candidate, index)
+                            showCandidatePreview(candidate, index)
                             true
                         }
                     }, LinearLayout.LayoutParams(0, dp(43), 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
@@ -2312,7 +2342,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         cursorBarView = bar
         candidateRow.addView(
             bar,
-            LinearLayout.LayoutParams(resources.displayMetrics.widthPixels, dp(43)),
+            LinearLayout.LayoutParams(
+                keyboardSurface.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels,
+                dp(43),
+            ),
         )
         bar.post { bar.refresh() }
     }
@@ -2360,7 +2393,9 @@ class AzooKeyInputMethodService : InputMethodService() {
             value.startsWith("custom:") -> {
                 switchToCustomLayout(value.removePrefix("custom:"))
             }
-            value == "resize" -> showResizeControls()
+            value == "resize" -> {
+                if (oneHandedMode == "full") showResizeControls() else setOneHandedMode("full")
+            }
         }
     }
 
@@ -2385,15 +2420,16 @@ class AzooKeyInputMethodService : InputMethodService() {
             .putString(ONE_HANDED_MODE_KEY, value)
             .apply()
         applyKeyboardWidth()
-        showResizeControls()
+        if (oneHandedMode == "full") renderCandidates() else showResizeControls()
     }
 
     private fun applyKeyboardWidth() {
         if (!::root.isInitialized) return
+        val availableWidth = inputViewFrame.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val width = if (oneHandedMode == "full") {
             FrameLayout.LayoutParams.MATCH_PARENT
         } else {
-            (resources.displayMetrics.widthPixels * 0.78f).toInt()
+            (availableWidth * oneHandedWidth).toInt()
         }
         val horizontalGravity = when (oneHandedMode) {
             "left" -> Gravity.START
@@ -2405,6 +2441,15 @@ class AzooKeyInputMethodService : InputMethodService() {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             horizontalGravity or Gravity.BOTTOM,
         )
+        resizeHandle?.let { handle ->
+            handle.visibility = if (oneHandedMode == "full") View.GONE else View.VISIBLE
+            handle.setTextColor(palette.text)
+            handle.background = roundedDrawable(palette.special, dp(8).toFloat())
+            handle.layoutParams = FrameLayout.LayoutParams(
+                dp(22), dp(64),
+                (if (oneHandedMode == "right") Gravity.START else Gravity.END) or Gravity.CENTER_VERTICAL,
+            )
+        }
         keyboardSurface.requestLayout()
         inputViewFrame.requestLayout()
     }
@@ -2832,6 +2877,30 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
         addCandidateButton("キャンセル") { renderCandidates(false) }
+    }
+
+    private fun showCandidatePreview(candidate: String, index: Int) {
+        candidateExpanded = true
+        candidatePanel.visibility = View.VISIBLE
+        candidateExpandButton.visibility = View.GONE
+        candidatePanelContent.removeAllViews()
+        candidatePanelContent.addView(TextView(this).apply {
+            text = candidate
+            textLocale = Locale.JAPAN
+            textSize = 42f
+            gravity = Gravity.CENTER
+            setTextColor(palette.text)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            minHeight = dp(168)
+            contentDescription = "拡大した変換候補: $candidate"
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        candidateRow.removeAllViews()
+        addCandidateButton("戻る") { renderCandidates(false) }
+        addCandidateButton("誤変換を報告") {
+            candidatePanel.visibility = View.GONE
+            candidateExpanded = false
+            showLegacyReportPrompt(candidate, index)
+        }
     }
 
     private fun maybeOfferReportWithoutFiltering(report: WrongConversionReport) {
@@ -3920,6 +3989,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val center = width / 2f
+            if (!settings.optBoolean("use_move_cursor_bar_beta", true)) {
+                canvas.drawColor(palette.key)
+                symbolPaint.textSize = dp(17).toFloat()
+                symbolPaint.color = palette.text
+                val baseline = height / 2f - (symbolPaint.ascent() + symbolPaint.descent()) / 2f
+                canvas.drawText("‹‹", dp(22).toFloat(), baseline, symbolPaint)
+                canvas.drawText("カーソルを移動", center, baseline, symbolPaint)
+                canvas.drawText("››", width - dp(22).toFloat(), baseline, symbolPaint)
+                return
+            }
             val radius = width / 2f
             val gradient = RadialGradient(center, height / 2f, radius, palette.key, palette.background, Shader.TileMode.CLAMP)
             canvas.drawPaint(Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient })
@@ -4062,6 +4141,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var activeInstance: AzooKeyInputMethodService? = null
 
         private const val ONE_HANDED_MODE_KEY = "keynako_one_handed_mode"
+        private const val ONE_HANDED_WIDTH_KEY = "keynako_one_handed_width"
         private const val PREDICTION_LIMIT = 32
 
         internal fun withOpacity(color: Int, opacity: Double): Int {
