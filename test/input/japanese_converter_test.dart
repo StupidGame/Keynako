@@ -141,6 +141,42 @@ void main() {
     },
   );
 
+  test('combines personal and active shared words in one sentence', () {
+    final data = AppData.defaults();
+    data.userDictionary.add(
+      const UserDictionaryEntry(id: 30, ruby: 'わたし', word: '私'),
+    );
+    data.azooKeyHotfixDictionary = AzooKeyHotfixDictionary.fromJson({
+      'metadata': {
+        'status': 'active',
+        'name': 'test',
+        'description': 'test',
+        'version': '1',
+        'last_update': '2026-09-22',
+      },
+      'data': [
+        {
+          'word': '猫',
+          'ruby': 'ネコ',
+          'word_weight': -5,
+          'lcid': 1285,
+          'rcid': 1285,
+          'mid': 501,
+          'date': '2026-09-22',
+          'author': 'test',
+          'importance': 5,
+        },
+      ],
+    });
+
+    final candidates = converter.candidates(input: 'わたしはねこ', data: data);
+    expect(candidates.map((candidate) => candidate.text), contains('私は猫'));
+    expect(
+      candidates.firstWhere((candidate) => candidate.text == '私は猫').source,
+      'user-combination',
+    );
+  });
+
   test('provides half-width kana and full-width roman candidates', () {
     final data = AppData.defaults();
     final kana = converter.candidates(input: 'がくせい', data: data);

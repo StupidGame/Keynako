@@ -86,6 +86,21 @@ int main() {
     assert(std::any_of(personal_dictionary.candidates().begin(), personal_dictionary.candidates().end(),
         [](const auto &candidate) { return candidate.text == "個人語" &&
             candidate.source == "personal-prediction"; }));
+    ImeSession combined_dictionary;
+    keynako::DictionaryEntry shared_name{"れいな", "レイナ", 3};
+    shared_name.source = "shared";
+    keynako::DictionaryEntry personal_name{"まきな", "マキナ", 3};
+    personal_name.source = "personal";
+    combined_dictionary.set_user_dictionary({shared_name, personal_name});
+    for (const char value : std::string("makinatoreina")) combined_dictionary.append_ascii(value);
+    assert(std::any_of(combined_dictionary.candidates().begin(), combined_dictionary.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "マキナとレイナ" &&
+            candidate.source == "dictionary-combination"; }));
+    ImeSession mixed_dictionary;
+    mixed_dictionary.set_user_dictionary({{"ねこ", "猫", 3}});
+    for (const char value : std::string("watashihaneko")) mixed_dictionary.append_ascii(value);
+    assert(std::any_of(mixed_dictionary.candidates().begin(), mixed_dictionary.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "私は猫"; }));
     ImeSession ranked_prediction;
     ranked_prediction.set_user_dictionary({
         {"テストケース", "長い補完", 3},

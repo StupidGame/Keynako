@@ -50,6 +50,36 @@ void main() {
     expect(values.first.source, 'user-prefix');
   });
 
+  test('combines personal and shared dictionary words across a particle', () {
+    final candidates = converter.candidates(
+      input: 'まきなとれいな',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'まきな', value: 'マキナ'),
+          ConversionDictionaryEntry(
+            reading: 'れいな',
+            value: 'レイナ',
+            wordWeight: -7,
+          ),
+        ],
+      ),
+    );
+
+    expect(candidates.first.text, 'マキナとレイナ');
+    expect(candidates.first.source, 'user-combination');
+  });
+
+  test('combines a registered word with a built-in word', () {
+    final candidates = converter.candidates(
+      input: 'わたしはねこ',
+      options: const ConversionOptions(
+        userDictionary: [ConversionDictionaryEntry(reading: 'ねこ', value: '猫')],
+      ),
+    );
+
+    expect(candidates.map((candidate) => candidate.text), contains('私は猫'));
+  });
+
   test('orders user dictionary entries by importance', () {
     final candidates = converter.candidates(
       input: 'きーなこ',

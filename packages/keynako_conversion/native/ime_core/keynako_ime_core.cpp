@@ -84,6 +84,80 @@ void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> 
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
 }
 
+std::vector<std::string> dictionary_combinations(
+    const std::string &reading, const std::vector<DictionaryEntry> &entries) {
+    struct Match { std::size_t end; std::string value; int score; bool registered; };
+    struct Path { std::string text; int score; int words; int registered_words; };
+    if (reading.empty() || entries.empty()) return {};
+    std::vector<std::vector<Match>> matches(reading.size());
+    bool registered_match = false;
+    const auto add = [&](const std::string &ruby, const std::string &value,
+                         int importance, bool registered) {
+        if (ruby.empty() || value.empty() || ruby.size() > reading.size()) return;
+        std::size_t start = reading.find(ruby);
+        while (start != std::string::npos) {
+            matches[start].push_back({start + ruby.size(), value,
+                (registered ? static_cast<int>(utf8_character_count(ruby)) * 18 - 28
+                            : static_cast<int>(utf8_character_count(ruby)) * 15 - 30)
+                    + std::clamp(importance, 1, 5) * 4,
+                registered});
+            if (registered) registered_match = true;
+            start = reading.find(ruby, start + 1);
+        }
+    };
+    for (const auto &entry : entries) {
+        add(convert_kana(entry.reading, false), entry.value, entry.importance, true);
+    }
+    if (!registered_match) return {};
+    for (const auto &[ruby, values] : kDictionary) {
+        for (std::size_t i = 0; i < std::min<std::size_t>(2, values.size()); ++i) {
+            add(ruby, values[i], 3, false);
+        }
+    }
+
+    std::vector<std::vector<Path>> beams(reading.size() + 1);
+    beams[0].push_back({"", 0, 0, 0});
+    const auto by_score = [](const Path &left, const Path &right) {
+        return left.score > right.score;
+    };
+    const auto push = [&](std::size_t end, Path path) {
+        auto &paths = beams[end];
+        paths.push_back(std::move(path));
+        if (paths.size() > 48) {
+            std::stable_sort(paths.begin(), paths.end(), by_score);
+            paths.resize(16);
+        }
+    };
+    for (std::size_t index = 0; index < reading.size(); ++index) {
+        auto current = beams[index];
+        std::stable_sort(current.begin(), current.end(), by_score);
+        if (current.size() > 16) current.resize(16);
+        const unsigned char first = static_cast<unsigned char>(reading[index]);
+        const std::size_t step = first < 0x80 ? 1 : (first & 0xe0) == 0xc0 ? 2
+            : (first & 0xf0) == 0xe0 ? 3 : (first & 0xf8) == 0xf0 ? 4 : 1;
+        const std::size_t next = std::min(reading.size(), index + step);
+        for (const auto &path : current) {
+            push(next, {path.text + reading.substr(index, next - index),
+                path.score - 3, path.words, path.registered_words});
+            for (const auto &match : matches[index]) {
+                push(match.end, {path.text + match.value, path.score + match.score,
+                    path.words + 1, path.registered_words + (match.registered ? 1 : 0)});
+            }
+        }
+    }
+    auto ranked = beams.back();
+    std::stable_sort(ranked.begin(), ranked.end(), by_score);
+    std::vector<std::string> result;
+    std::unordered_set<std::string> seen;
+    for (const auto &path : ranked) {
+        if (path.words < 2 || path.registered_words < 1 || path.text == reading ||
+            !seen.insert(path.text).second) continue;
+        result.push_back(path.text);
+        if (result.size() >= 8) break;
+    }
+    return result;
+}
+
 bool is_literal_candidate_suffix(char value) {
     return value == '!' || value == '?' || value == '/';
 }
@@ -586,6 +660,9 @@ void ImeSession::rebuild_candidates() {
         });
     for (const auto &entry : shared_predictions) {
         append_prediction(entry.text, entry.source.c_str());
+    }
+    for (auto &value : dictionary_combinations(conversion_reading, user_dictionary_)) {
+        append_converted(std::move(value), "dictionary-combination");
     }
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;

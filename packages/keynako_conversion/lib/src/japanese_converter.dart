@@ -2,6 +2,29 @@ import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
 
+class _DictionaryMatch {
+  const _DictionaryMatch(this.end, this.value, this.score, this.registered);
+
+  final int end;
+  final String value;
+  final int score;
+  final bool registered;
+}
+
+class _DictionaryPath {
+  const _DictionaryPath(
+    this.text,
+    this.score,
+    this.words,
+    this.registeredWords,
+  );
+
+  final String text;
+  final int score;
+  final int words;
+  final int registeredWords;
+}
+
 /// Stateless, platform-independent Japanese input transforms and candidates.
 class JapaneseConverter {
   const JapaneseConverter();
@@ -431,6 +454,19 @@ class JapaneseConverter {
         ConversionCandidate(text: value, reading: reading, score: 250),
       );
     }
+    for (final path in _dictionaryCombinations(
+      reading,
+      options.userDictionary,
+    )) {
+      values.add(
+        ConversionCandidate(
+          text: path.text,
+          reading: reading,
+          source: 'user-combination',
+          score: 300 + (path.score ~/ 4).clamp(0, 50),
+        ),
+      );
+    }
     if (predictionLimit > 0) {
       for (final entry in _dictionary.entries) {
         if (entry.key.length <= reading.length ||
@@ -592,7 +628,12 @@ class JapaneseConverter {
         .where(
           (candidate) =>
               pinnedTexts.contains(candidate.text) ||
-              const {'user', 'system', 'learned'}.contains(candidate.source),
+              const {
+                'user',
+                'user-combination',
+                'system',
+                'learned',
+              }.contains(candidate.source),
         )
         .toList();
     final conversionTexts = conversions
@@ -614,6 +655,95 @@ class JapaneseConverter {
         return score != 0 ? score : left.$1.compareTo(right.$1);
       });
     return indexed.map((entry) => entry.$2).toList();
+  }
+
+  List<_DictionaryPath> _dictionaryCombinations(
+    String reading,
+    List<ConversionDictionaryEntry> entries,
+  ) {
+    if (reading.length < 2) return const [];
+    final matches = List.generate(reading.length, (_) => <_DictionaryMatch>[]);
+    var hasRegisteredMatch = false;
+    void add(String ruby, String value, int importance, bool registered) {
+      if (ruby.isEmpty || value.isEmpty || ruby.length > reading.length) return;
+      var start = reading.indexOf(ruby);
+      while (start >= 0) {
+        matches[start].add(
+          _DictionaryMatch(
+            start + ruby.length,
+            value,
+            (registered ? ruby.length * 18 - 28 : ruby.length * 15 - 30) +
+                importance * 4,
+            registered,
+          ),
+        );
+        if (registered) hasRegisteredMatch = true;
+        start = reading.indexOf(ruby, start + 1);
+      }
+    }
+
+    for (final entry in entries) {
+      if (entry.template) continue;
+      add(
+        katakanaToHiragana(entry.reading),
+        entry.value,
+        entry.importance.clamp(1, 5).toInt(),
+        true,
+      );
+    }
+    if (!hasRegisteredMatch) return const [];
+    for (final entry in _dictionary.entries) {
+      for (final value in entry.value.take(2)) {
+        add(entry.key, value, 3, false);
+      }
+    }
+
+    final beams = List.generate(reading.length + 1, (_) => <_DictionaryPath>[]);
+    beams[0].add(const _DictionaryPath('', 0, 0, 0));
+    void push(int end, _DictionaryPath path) {
+      final paths = beams[end]..add(path);
+      if (paths.length > 48) {
+        paths.sort((a, b) => b.score.compareTo(a.score));
+        paths.removeRange(16, paths.length);
+      }
+    }
+
+    for (var index = 0; index < reading.length; index++) {
+      final current = beams[index]..sort((a, b) => b.score.compareTo(a.score));
+      for (final path in current.take(16)) {
+        push(
+          index + 1,
+          _DictionaryPath(
+            path.text + reading.substring(index, index + 1),
+            path.score - 3,
+            path.words,
+            path.registeredWords,
+          ),
+        );
+        for (final match in matches[index]) {
+          push(
+            match.end,
+            _DictionaryPath(
+              path.text + match.value,
+              path.score + match.score,
+              path.words + 1,
+              path.registeredWords + (match.registered ? 1 : 0),
+            ),
+          );
+        }
+      }
+    }
+    final ranked =
+        beams.last
+            .where((path) => path.words >= 2 && path.registeredWords >= 1)
+            .toList()
+          ..sort((a, b) => b.score.compareTo(a.score));
+    final unique = <String, _DictionaryPath>{};
+    for (final path in ranked) {
+      if (path.text != reading) unique.putIfAbsent(path.text, () => path);
+      if (unique.length >= 8) break;
+    }
+    return unique.values.toList();
   }
 
   String _renderTemplate(ConversionDictionaryEntry entry) {

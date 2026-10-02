@@ -47,12 +47,14 @@ import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEntry
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
+import io.github.StupidGame.azookey_flutter.conversion.DictionaryCombinationEntry
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.bestLiveJapaneseConversion
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
+import io.github.StupidGame.azookey_flutter.conversion.dictionaryCombinationCandidates
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandidates
@@ -2696,6 +2698,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                 mid = 501,
             )
         }
+        val combinedWords = dictionaryCombinationCandidates(
+            reading,
+            hotfixDictionaryEntries.map { DictionaryCombinationEntry(it.ruby, it.word) } +
+                personalEntries.map { DictionaryCombinationEntry(it.ruby, it.word) },
+        )
         val officialCandidates = runCatching {
             azooKeyDictionary.candidates(
                 reading,
@@ -2708,7 +2715,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         }.getOrElse {
             DictionaryCandidates(emptyList(), emptyList())
         }
-        values.addAll(officialCandidates.conversions)
+        values.addAll(officialCandidates.conversions.take(1))
+        values.addAll(combinedWords)
+        values.addAll(officialCandidates.conversions.drop(1))
         if (officialCandidates.conversions.isEmpty()) {
             systemDictionary[reading]?.let(values::addAll)
         }

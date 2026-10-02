@@ -50,6 +50,7 @@ final class KeyboardViewController: UIInputViewController {
     private var pendingQuickWordDelete: PendingQuickWordDelete?
     private var pendingReport: WrongConversionReport?
     private var osLexicon: [String: [String]] = [:]
+    private var conversionDictionaryEntries: [AzooKeyHotfixDictionaryEntry] = []
     private var backgroundImageSignature: String?
     private var hasLoadedState = false
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
@@ -262,6 +263,7 @@ final class KeyboardViewController: UIInputViewController {
                 mid: 501
             ))
         }
+        conversionDictionaryEntries = entries
         conversionEngine?.updateHotfixDictionary(
             entries,
             version: "\(hotfixVersion)|personal:\(personalVersion.finalize())"
@@ -2531,6 +2533,8 @@ final class KeyboardViewController: UIInputViewController {
         ) ?? []
         let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
         result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
+        let combinedTexts = dictionaryCombinations(reading)
+        result.append(contentsOf: combinedTexts)
         prefixPredictions.append(contentsOf: engineCandidates.filter { enginePredictionTexts.contains($0) })
         if boolSetting("use_OS_user_dict", fallback: true) {
             for ruby in osLexicon.keys.sorted(by: {
@@ -2611,11 +2615,91 @@ final class KeyboardViewController: UIInputViewController {
         prioritized.append(contentsOf: learnedTexts)
         prioritized.append(contentsOf: exactUserTexts)
         if let engineCandidate { prioritized.append(engineCandidate) }
+        prioritized.append(contentsOf: combinedTexts)
         prioritized.append(contentsOf: Self.systemDictionary[reading] ?? [])
         prioritized.append(contentsOf: [hiragana, fullKatakana])
         prioritized.append(contentsOf: result)
         var seen = Set<String>()
         return prioritized.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private func dictionaryCombinations(_ reading: String) -> [String] {
+        struct Match {
+            let end: Int
+            let value: String
+            let score: Int
+            let registered: Bool
+        }
+        struct Path {
+            let text: String
+            let score: Int
+            let words: Int
+            let registeredWords: Int
+        }
+        let characters = Array(reading)
+        if characters.count < 2 || conversionDictionaryEntries.isEmpty { return [] }
+        var matches = Array(repeating: [Match](), count: characters.count)
+        var hasRegisteredMatch = false
+        func add(_ rawRuby: String, _ value: String, _ importance: Int, _ registered: Bool) {
+            let normalized = katakanaToHiragana(rawRuby)
+            guard reading.contains(normalized) else { return }
+            let ruby = Array(normalized)
+            guard !ruby.isEmpty, !value.isEmpty, ruby.count <= characters.count else { return }
+            for start in 0...(characters.count - ruby.count) {
+                guard characters[start..<(start + ruby.count)].elementsEqual(ruby) else { continue }
+                matches[start].append(Match(
+                    end: start + ruby.count,
+                    value: value,
+                    score: (registered ? ruby.count * 18 - 28 : ruby.count * 15 - 30)
+                        + min(5, max(1, importance)) * 4,
+                    registered: registered
+                ))
+                if registered { hasRegisteredMatch = true }
+            }
+        }
+        for entry in conversionDictionaryEntries {
+            add(entry.ruby, entry.word, 3, true)
+        }
+        if !hasRegisteredMatch { return [] }
+        for (ruby, values) in Self.systemDictionary {
+            for value in values.prefix(2) { add(ruby, value, 3, false) }
+        }
+
+        var beams = Array(repeating: [Path](), count: characters.count + 1)
+        beams[0].append(Path(text: "", score: 0, words: 0, registeredWords: 0))
+        func push(_ end: Int, _ path: Path) {
+            beams[end].append(path)
+            if beams[end].count > 48 {
+                beams[end].sort { $0.score > $1.score }
+                let count = beams[end].count
+                beams[end].removeSubrange(16..<count)
+            }
+        }
+        for index in characters.indices {
+            let current = beams[index].sorted { $0.score > $1.score }.prefix(16)
+            for path in current {
+                push(index + 1, Path(
+                    text: path.text + String(characters[index]),
+                    score: path.score - 3,
+                    words: path.words,
+                    registeredWords: path.registeredWords
+                ))
+                for match in matches[index] {
+                    push(match.end, Path(
+                        text: path.text + match.value,
+                        score: path.score + match.score,
+                        words: path.words + 1,
+                        registeredWords: path.registeredWords + (match.registered ? 1 : 0)
+                    ))
+                }
+            }
+        }
+        var seen = Set<String>()
+        return Array(beams.last!.sorted { $0.score > $1.score }
+            .filter { $0.words >= 2 && $0.registeredWords >= 1 && $0.text != reading }
+            .map(\.text)
+            .filter { seen.insert($0).inserted }
+            .prefix(8))
     }
 
     private func buildEnglishCandidates(_ input: String) -> [String] {
