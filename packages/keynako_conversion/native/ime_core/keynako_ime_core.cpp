@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -82,6 +83,105 @@ std::size_t utf8_character_count(const std::string &value) {
 void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> &seen,
                    std::string text, const char *source) {
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
+}
+
+bool ascii_digits(const std::string &value) {
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char character) { return character >= '0' && character <= '9'; });
+}
+
+std::vector<std::string> email_address_candidates(const std::string &input) {
+    static const std::vector<std::string> domains = {
+        "@gmail.com", "@icloud.com", "@yahoo.co.jp", "@au.com",
+        "@docomo.ne.jp", "@excite.co.jp", "@ezweb.ne.jp", "@googlemail.com",
+        "@hotmail.co.jp", "@hotmail.com", "@i.softbank.jp", "@live.jp",
+        "@me.com", "@mineo.jp", "@nifty.com", "@outlook.com", "@outlook.jp",
+        "@softbank.ne.jp", "@yahoo.ne.jp", "@ybb.ne.jp", "@ymobile.ne.jp",
+    };
+    const auto at = input.rfind('@');
+    if (at == std::string::npos) return {};
+    const std::string local = input.substr(0, at);
+    if (!std::all_of(local.begin(), local.end(), [](unsigned char value) {
+            return std::isalnum(value) || value == '.' || value == '_' ||
+                value == '+' || value == '-';
+        })) return {};
+    std::string prefix = input.substr(at);
+    std::transform(prefix.begin(), prefix.end(), prefix.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    std::vector<std::string> result;
+    for (const auto &domain : domains) {
+        if (domain.rfind(prefix, 0) == 0) result.push_back(local + domain);
+    }
+    return result;
+}
+
+std::vector<std::string> special_complete_candidates(const std::string &reading) {
+    std::vector<std::string> result;
+    const bool negative = !reading.empty() && reading.front() == '-';
+    const std::string unsigned_text = negative ? reading.substr(1) : reading;
+    const auto dot = unsigned_text.find('.');
+    const std::string integer = unsigned_text.substr(0, dot);
+    const std::string fractional = dot == std::string::npos ? "" : unsigned_text.substr(dot + 1);
+    if (ascii_digits(integer) &&
+        (dot == std::string::npos ||
+         (ascii_digits(fractional) && fractional.find('.') == std::string::npos))) {
+        if (integer.size() > 3) {
+            std::string grouped;
+            for (std::size_t index = 0; index < integer.size(); ++index) {
+                if (index > 0 && (integer.size() - index) % 3 == 0) grouped.push_back(',');
+                grouped.push_back(integer[index]);
+            }
+            result.push_back((negative ? "-" : "") + grouped +
+                (dot == std::string::npos ? "" : "." + fractional));
+        }
+        if (!negative && dot == std::string::npos && integer.size() >= 3 && integer.size() <= 4) {
+            const int hours = std::stoi(integer.substr(0, integer.size() - 2));
+            const int minutes = std::stoi(integer.substr(integer.size() - 2));
+            if (hours <= 24 && minutes <= 59) {
+                result.push_back(integer.substr(0, integer.size() - 2) + ":" +
+                    integer.substr(integer.size() - 2));
+            }
+        }
+    }
+    const std::string year_suffix = "ねん";
+    if (reading.size() == 4 + year_suffix.size() &&
+        reading.compare(4, year_suffix.size(), year_suffix) == 0 &&
+        ascii_digits(reading.substr(0, 4))) {
+        const int year = std::stoi(reading.substr(0, 4));
+        const std::vector<std::tuple<int, int, std::string>> eras = {
+            {2019, 2018, "令和"}, {1989, 1988, "平成"},
+            {1926, 1925, "昭和"}, {1912, 1911, "大正"}, {1868, 1867, "明治"},
+        };
+        for (const auto &[start, offset, name] : eras) {
+            if (year >= start) {
+                result.push_back(name + (year == start ? "元" : std::to_string(year - offset)) + "年");
+                break;
+            }
+        }
+        if (year == 2019) result.push_back("平成31年");
+        if (year == 1989) result.push_back("昭和64年");
+        if (year == 1926) result.push_back("大正15年");
+        if (year == 1912) result.push_back("明治45年");
+        if (year == 1868) result.push_back("慶應4年");
+    }
+    if (reading.size() > year_suffix.size() &&
+        reading.compare(reading.size() - year_suffix.size(), year_suffix.size(), year_suffix) == 0) {
+        const std::vector<std::pair<std::string, int>> eras = {
+            {"めいじ", 1867}, {"たいしょう", 1911}, {"しょうわ", 1925},
+            {"へいせい", 1988}, {"れいわ", 2018},
+        };
+        for (const auto &[name, offset] : eras) {
+            if (reading.rfind(name, 0) != 0) continue;
+            const auto year = reading.substr(name.size(),
+                reading.size() - name.size() - year_suffix.size());
+            if (year == "がん") result.push_back(std::to_string(offset + 1) + "年");
+            else if (year.size() <= 2 && ascii_digits(year)) {
+                result.push_back(std::to_string(offset + std::stoi(year)) + "年");
+            }
+            break;
+        }
+    }
+    return result;
 }
 
 std::vector<std::string> dictionary_combinations(
@@ -573,6 +673,12 @@ void ImeSession::rebuild_candidates() {
         std::string upper = raw_input_;
         std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char value) { return static_cast<char>(std::toupper(value)); });
         append_unique(candidates_, seen, std::move(upper), "english-upper");
+        for (auto &value : email_address_candidates(raw_input_)) {
+            append_unique(candidates_, seen, std::move(value), "email-prediction");
+        }
+        for (auto &value : special_complete_candidates(raw_input_)) {
+            append_unique(candidates_, seen, std::move(value), "special");
+        }
         return;
     }
 
@@ -690,6 +796,12 @@ void ImeSession::rebuild_candidates() {
         for (const auto &value : dictionary->second) {
             append_converted(value, "dictionary");
         }
+    }
+    for (auto &value : special_complete_candidates(conversion_reading)) {
+        append_converted(std::move(value), "special");
+    }
+    for (auto &value : email_address_candidates(conversion_input)) {
+        append_prediction(std::move(value), "email-prediction");
     }
     static const auto fallback_predictions = [] {
         std::vector<std::pair<std::string, std::vector<std::string>>> entries(

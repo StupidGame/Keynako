@@ -44,6 +44,7 @@ import android.widget.TextView
 import androidx.exifinterface.media.ExifInterface
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
+import io.github.StupidGame.azookey_flutter.conversion.AzooKeySpecialCandidates
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEntry
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
@@ -560,6 +561,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderFlick(scale: Double) {
+        val spaceLabel = if (settings.optBoolean("use_next_candidate_key", false)) "次候補" else "空白"
+        val spaceUp = if (settings.optBoolean("enable_paste_button_on_flick_cursorbar_key", false)) "貼付" else "　"
         val keys = if (mode == "english") listOf(
             listOf(
                 FlickKey("☆123", action = "symbols", special = true, customTarget = "symbols_tab"),
@@ -573,7 +576,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("GHI", "g", "h", "i", "4", null),
                 FlickKey("JKL", "j", "k", "l", "5", null),
                 FlickKey("MNO", "m", "n", "o", "6", null),
-                FlickKey("空白", "空白", "←", "　", "→", "\t", action = "space", special = true),
+                FlickKey(spaceLabel, spaceLabel, "←", spaceUp, "→", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -602,7 +605,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("た", "た", "ち", "つ", "て", "と"),
                 FlickKey("な", "な", "に", "ぬ", "ね", "の"),
                 FlickKey("は", "は", "ひ", "ふ", "へ", "ほ"),
-                FlickKey("空白", "空白", "←", "　", "→", "\t", action = "space", special = true),
+                FlickKey(spaceLabel, spaceLabel, "←", spaceUp, "→", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -650,9 +653,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
         for ((rowIndex, letters) in rows.withIndex()) {
             val row = newRow(scale)
-            if (rowIndex == 2) {
+            if (rowIndex == 2 && mode == "english") {
                 row.addView(
-                    createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() },
+                    createKey(
+                        if (settings.optBoolean("use_shift_key", false)) {
+                            if (capsLock) "⇪" else "⇧"
+                        } else "Aa",
+                        true,
+                        scale,
+                    ) { toggleShift() },
                     weightParams(1.4f),
                 )
             }
@@ -1635,7 +1644,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                         } else if (isSpace && direction == "right") {
                             moveCursor(1)
                         } else if (isSpace && direction == "up") {
-                            inputText("　")
+                            if (settings.optBoolean("enable_paste_button_on_flick_cursorbar_key", false)) {
+                                paste()
+                            } else {
+                                inputText("　")
+                            }
                         } else if (isSpace && direction == "down") {
                             inputText("\t")
                         } else if (isDelete && direction == "left") {
@@ -2406,8 +2419,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         addCandidateButton(if (oneHandedMode == "left") "✓ 左寄せ" else "← 左寄せ") {
             setOneHandedMode("left")
         }
-        addCandidateButton(if (oneHandedMode == "full") "✓ 標準" else "↔ 標準") {
-            setOneHandedMode("full")
+        if (oneHandedMode == "full" ||
+            !settings.optBoolean("hide_reset_button_in_one_handed_mode", false)) {
+            addCandidateButton(if (oneHandedMode == "full") "✓ 標準" else "↔ 標準") {
+                setOneHandedMode("full")
+            }
         }
         addCandidateButton(if (oneHandedMode == "right") "✓ 右寄せ" else "右寄せ →") {
             setOneHandedMode("right")
@@ -2542,7 +2558,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             inputEnglishText(input)
             return
         }
-        if (shouldDirectCommitJapaneseInput(input)) {
+        if (shouldDirectCommitJapaneseInput(input) &&
+            !(layout == "qwerty" && input.all(Char::isDigit))) {
             directCommit(input)
             return
         }
@@ -2567,7 +2584,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             // Some editors replace all-caps composing text with committed text.
             // Replacing that composition on the next key would duplicate it.
             directCommit(resolved)
-        } else if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+        } else if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' } ||
+            AzooKeySpecialCandidates.canContinueEmail(composing, resolved)) {
             prepareSelectionForInput()
             composing += resolved
             updateComposition()
@@ -2653,7 +2671,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
-        if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
+        val specialCandidates = AzooKeySpecialCandidates.complete(reading)
+        if (shouldDirectCommitJapaneseInput(reading) && specialCandidates.isEmpty()) return listOf(reading)
         val values = linkedSetOf<String>()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
@@ -2717,6 +2736,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         values.addAll(officialCandidates.conversions.take(1))
         values.addAll(combinedWords)
+        values.addAll(specialCandidates)
         values.addAll(officialCandidates.conversions.drop(1))
         if (officialCandidates.conversions.isEmpty()) {
             systemDictionary[reading]?.let(values::addAll)
@@ -2733,6 +2753,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                 predictionReadings.getOrPut(prediction.text) { prediction.reading }
             }
             predictedValues.addAll(officialCandidates.predictions)
+            for (email in AzooKeySpecialCandidates.emails(if (layout == "qwerty") rawRoman else reading)) {
+                predictedValues.add(email)
+                predictionReadings.getOrPut(email) { email }
+            }
             for ((text, ruby) in officialCandidates.predictionReadings) {
                 predictionReadings.getOrPut(text) { ruby }
             }
@@ -2797,7 +2821,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
 
-        return englishPredictionCandidates(input, preferred, PREDICTION_LIMIT, learningScores())
+        val ranked = englishPredictionCandidates(input, preferred, PREDICTION_LIMIT, learningScores())
+        return (ranked.take(1) + AzooKeySpecialCandidates.emails(input) +
+            AzooKeySpecialCandidates.complete(input) + ranked.drop(1))
+            .distinct().take(PREDICTION_LIMIT)
     }
 
     private fun commitCandidate(index: Int) {
@@ -2964,8 +2991,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }
     }
 
+    private fun shouldStopLearningForSearch(): Boolean =
+        settings.optBoolean("stop_learning_when_search", false) &&
+            currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) == EditorInfo.IME_ACTION_SEARCH
+
     private fun learnCandidate(reading: String, candidate: String, explicitSelection: Boolean = false) {
-        if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) != 0) return
+        if (sensitiveInput || shouldStopLearningForSearch() ||
+            settings.optInt("memory_learining_styple_setting", 0) != 0) return
         val scores = learningScores().toMutableMap()
         recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
         state.put("learning", JSONObject(scores))
@@ -3204,14 +3236,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (dictionaryMode == DictionaryMode.EDIT) { editDictionaryText(" "); return }
         if (composing.isEmpty() && rawRoman.isEmpty()) {
             directCommit(" ")
+        } else if (layout == "flick" && settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
+            selectNextCandidate()
         } else if (mode == "english") {
             commitComposition()
             directCommit(" ")
-        } else if (settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
-            selectedCandidate = (selectedCandidate + 1) % candidates.size
-            candidateSelectedExplicitly = true
-            currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
-            renderCandidates(false)
         } else {
             commitComposition()
         }

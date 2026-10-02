@@ -80,6 +80,8 @@ public final class AzooKeyConversionEngine {
         modelURL: URL?,
         inferenceLimit: Int,
         learningMode: Int,
+        englishCandidateInRoman2KanaInput: Bool,
+        typographyCandidate: Bool,
         fullWidthRomanCandidate: Bool,
         halfWidthKanaCandidate: Bool,
         unicodeCandidate: Bool,
@@ -129,6 +131,9 @@ public final class AzooKeyConversionEngine {
         if !unicodeCandidate {
             providers.removeAll { $0 is UnicodeSpecialCandidateProvider }
         }
+        if typographyCandidate {
+            providers.append(TypographySpecialCandidateProvider())
+        }
         func options(
             for mode: ConvertRequestOptions.ZenzaiMode,
             predictiveInput: Bool
@@ -138,7 +143,7 @@ public final class AzooKeyConversionEngine {
                 requireJapanesePrediction: .autoMix,
                 requireEnglishPrediction: .disabled,
                 keyboardLanguage: .ja_JP,
-                englishCandidateInRoman2KanaInput: true,
+                englishCandidateInRoman2KanaInput: englishCandidateInRoman2KanaInput,
                 fullWidthRomanCandidate: fullWidthRomanCandidate,
                 halfWidthKanaCandidate: halfWidthKanaCandidate,
                 learningType: learningType,

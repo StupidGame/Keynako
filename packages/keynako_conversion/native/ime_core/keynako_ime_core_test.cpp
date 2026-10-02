@@ -101,6 +101,22 @@ int main() {
     for (const char value : std::string("watashihaneko")) mixed_dictionary.append_ascii(value);
     assert(std::any_of(mixed_dictionary.candidates().begin(), mixed_dictionary.candidates().end(),
         [](const auto &candidate) { return candidate.text == "私は猫"; }));
+    ImeSession special_number;
+    for (const char value : std::string("1234")) special_number.append_ascii(value);
+    assert(std::any_of(special_number.candidates().begin(), special_number.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "1,234" && candidate.source == "special"; }));
+    assert(std::any_of(special_number.candidates().begin(), special_number.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "12:34" && candidate.source == "special"; }));
+    ImeSession special_year;
+    for (const char value : std::string("2019nen")) special_year.append_ascii(value);
+    assert(std::any_of(special_year.candidates().begin(), special_year.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "令和元年" && candidate.source == "special"; }));
+    ImeSession special_email;
+    special_email.set_mode(keynako::InputMode::english);
+    for (const char value : std::string("azooKey@g")) special_email.append_ascii(value);
+    assert(std::any_of(special_email.candidates().begin(), special_email.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "azooKey@gmail.com" &&
+            candidate.source == "email-prediction"; }));
     ImeSession ranked_prediction;
     ranked_prediction.set_user_dictionary({
         {"テストケース", "長い補完", 3},

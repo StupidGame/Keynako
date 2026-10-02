@@ -1,3 +1,4 @@
+import 'azookey_special_candidates.dart';
 import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
@@ -467,6 +468,28 @@ class JapaneseConverter {
         ),
       );
     }
+    for (final value in AzooKeySpecialCandidates.complete(reading)) {
+      values.add(
+        ConversionCandidate(
+          text: value,
+          reading: reading,
+          source: 'special',
+          score: 165,
+        ),
+      );
+    }
+    if (predictionLimit > 0) {
+      for (final value in AzooKeySpecialCandidates.emailAddresses(input)) {
+        prefixPredictions.add(
+          ConversionCandidate(
+            text: value,
+            reading: value,
+            source: 'special-prediction',
+            score: 170,
+          ),
+        );
+      }
+    }
     if (predictionLimit > 0) {
       for (final entry in _dictionary.entries) {
         if (entry.key.length <= reading.length ||
@@ -633,6 +656,7 @@ class JapaneseConverter {
                 'user-combination',
                 'system',
                 'learned',
+                'special',
               }.contains(candidate.source),
         )
         .toList();
