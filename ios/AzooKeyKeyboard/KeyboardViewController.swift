@@ -357,7 +357,7 @@ final class KeyboardViewController: UIInputViewController {
                 [.action("☆123", "symbols", target: "symbols_tab"), .init("@#/&_", ["@", "#", "/", "&", "_"]), .init("ABC", ["a", "b", "c", "2", ""]), .init("DEF", ["d", "e", "f", "3", ""]), .delete("⌫")],
                 [.action("ABC", "english", target: "abc_tab"), .init("GHI", ["g", "h", "i", "4", ""]), .init("JKL", ["j", "k", "l", "5", ""]), .init("MNO", ["m", "n", "o", "6", ""]), .space(spaceLabel, pasteOnCursorKey: pasteOnCursorKey)],
                 [.action("あいう", "japanese", target: "hira_tab"), .init("PQRS", ["p", "q", "r", "s", "7"]), .init("TUV", ["t", "u", "v", "8", ""]), .init("WXYZ", ["w", "x", "y", "z", "9"]), .action("改行", "enter")],
-                [.action("🌐", "nextKeyboard"), .action("a/A", "shiftEnglish"), .init("'\"()", ["'", "\"", "(", ")", ""]), .init(".,?!", [".", ",", "?", "!", "'"], target: "kana_symbols"), .action("改行", "enter")],
+                [.action("🌐", "nextKeyboard"), .action("a/A", "upperLowerEnglish"), .init("'\"()", ["'", "\"", "(", ")", ""]), .init(".,?!", [".", ",", "?", "!", "'"], target: "kana_symbols"), .action("改行", "enter")],
             ]
         } else {
             rows = [
@@ -1798,7 +1798,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func handleFlickValue(_ value: String, definition: FlickDefinition) {
         feedback()
-        if definition.action == "shiftEnglish", value == "__capslock__" {
+        if definition.action == "upperLowerEnglish", value == "__capslock__" {
             capsLock.toggle()
             shift = capsLock
             renderKeyboard()
@@ -1854,7 +1854,8 @@ final class KeyboardViewController: UIInputViewController {
         case "japanese": setMode("japanese")
         case "english": setMode("english")
         case "kogana": transformLastCharacter()
-        case "shiftEnglish": pressAa()
+        case "shiftEnglish": toggleShift()
+        case "upperLowerEnglish": pressAa()
         case "nextKeyboard": advanceToNextInputMode()
         default: break
         }
@@ -3854,11 +3855,11 @@ private final class FlickButton: UIButton {
         cursorDragStep = 0
         deleteDragging = false
         deleteDragCount = 0
-        guard definition.action == "delete" || definition.action == "space" || definition.action == "shiftEnglish" else { return }
+        guard definition.action == "delete" || definition.action == "space" || definition.action == "upperLowerEnglish" else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.didLongPress = true
-            if self.definition.action == "shiftEnglish" {
+            if self.definition.action == "upperLowerEnglish" {
                 self.callback("__capslock__")
             } else if self.definition.action == "delete" {
                 self.callback("__delete_repeat__")

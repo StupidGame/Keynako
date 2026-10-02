@@ -587,7 +587,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             ),
             listOf(
                 FlickKey(""),
-                FlickKey(if (shift || capsLock || allCapsInput) "A/a" else "a/A", action = "shiftEnglish", special = true),
+                FlickKey(if (shift || capsLock || allCapsInput) "A/a" else "a/A", action = "upperLowerEnglish", special = true),
                 FlickKey("'\"()", "'", "\"", "(", ")", null),
                 FlickKey(".,?!", ".", ",", "?", "!", "'", customTarget = "kana_symbols"),
                 FlickKey(""),
@@ -1544,7 +1544,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var textDragMoved = false
         val isDelete = key.action == "delete"
         val isSpace = key.action == "space"
-        val isAa = key.action == "shiftEnglish"
+        val isAa = key.action == "upperLowerEnglish"
         val repeat = object : Runnable {
             override fun run() {
                 if (!repeating) return
@@ -3336,7 +3336,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             "japanese" -> setMode("japanese")
             "english" -> setMode("english")
             "kogana" -> transformLastCharacter()
-            "shiftEnglish" -> pressAa()
+            "shiftEnglish" -> toggleShift()
+            "upperLowerEnglish" -> pressAa()
             "nextKeyboard" -> nextKeyboard()
         }
     }
