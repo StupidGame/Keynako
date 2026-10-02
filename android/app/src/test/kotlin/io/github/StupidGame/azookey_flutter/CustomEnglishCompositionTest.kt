@@ -144,12 +144,12 @@ class CustomEnglishCompositionTest {
     @Test
     fun aaKeyChangesThePreviousLetterWithoutChangingCustomShift() {
         dispatch(tabAction("qwerty_english", "system"))
-        input("h")
+        dispatch(JSONObject().put("type", "input").put("value", "h"))
         ReflectionHelpers.callInstanceMethod<Unit>(
             service, "dispatchNamedAction", ClassParameter.from(String::class.java, "upperLowerEnglish"),
         )
         assertComposing("H")
-        input("a")
+        dispatch(JSONObject().put("type", "input").put("value", "a"))
         assertComposing("Ha")
     }
 
