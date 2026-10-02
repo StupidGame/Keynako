@@ -309,6 +309,13 @@ const List<SettingDescriptor> settingCatalog = [
     ],
   ),
   SettingDescriptor(
+    group: '学習機能',
+    key: 'stop_learning_when_search',
+    title: '検索時は学習を停止',
+    explanation: '検索欄で入力した単語は新たに学習しません。',
+    kind: SettingKind.toggle,
+  ),
+  SettingDescriptor(
     group: '協力',
     key: 'enable_wrong_conversion_report',
     title: '共有変換辞書へ改善を送信',

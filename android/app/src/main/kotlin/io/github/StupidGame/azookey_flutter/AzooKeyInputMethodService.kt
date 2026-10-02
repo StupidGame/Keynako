@@ -651,19 +651,13 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun renderQwerty(scale: Double) {
         val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        val english = mode == "english"
+        val useShift = english && settings.optBoolean("use_shift_key", false)
+        val legacyShift = useShift && settings.optBoolean("keep_deprecated_shift_key_behavior", true)
         for ((rowIndex, letters) in rows.withIndex()) {
             val row = newRow(scale)
-            if (rowIndex == 2 && mode == "english") {
-                row.addView(
-                    createKey(
-                        if (settings.optBoolean("use_shift_key", false)) {
-                            if (capsLock) "⇪" else "⇧"
-                        } else "Aa",
-                        true,
-                        scale,
-                    ) { toggleShift() },
-                    weightParams(1.4f),
-                )
+            if (rowIndex == 1 && legacyShift) {
+                row.addView(createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() }, weightParams(1.3f))
             }
             for (letter in letters) {
                 val label = if (shift || capsLock || allCapsInput) letter.uppercase() else letter.toString()
@@ -671,12 +665,28 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             if (rowIndex == 2) {
                 row.addView(createKey("⌫", true, scale) { quickDelete() }, weightParams(1.4f))
+            } else if (rowIndex == 1 && english) {
+                val label = if (useShift) "." else if (capsLock) "⇪" else "Aa"
+                val key = createKey(label, true, scale) {
+                    if (useShift) inputText(".") else pressAa()
+                }
+                if (!useShift) key.setOnLongClickListener {
+                    capsLock = !capsLock
+                    shift = capsLock
+                    renderKeyboard()
+                    true
+                }
+                row.addView(key, weightParams(1.3f))
             }
             keyboardContainer.addView(row)
         }
         val bottom = newRow(scale)
         bottom.addView(createKey("☆123", true, scale) { setMode("symbols") }, weightParams(1.5f))
-        bottom.addView(View(this), weightParams(1.2f))
+        if (useShift && !legacyShift) {
+            bottom.addView(createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() }, weightParams(1.2f))
+        } else {
+            bottom.addView(View(this), weightParams(1.2f))
+        }
         bottom.addView(createKey("space", false, scale) { space() }, weightParams(4f))
         bottom.addView(createKey("return", true, scale) { enter() }, weightParams(2f))
         keyboardContainer.addView(bottom)
@@ -1279,7 +1289,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             "enter" -> createKey("改行", true, scale) { enter() }
             "upper_lower" -> createKey("Aa", true, scale) {
-                if (mode == "english") toggleShift() else transformLastCharacter()
+                if (mode == "english") pressAa() else transformLastCharacter()
             }
             "next_candidate" -> createKey(if (composing.isEmpty()) "空白" else "次候補", true, scale) {
                 if (candidates.isEmpty()) space() else {
@@ -1534,6 +1544,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var textDragMoved = false
         val isDelete = key.action == "delete"
         val isSpace = key.action == "space"
+        val isAa = key.action == "shiftEnglish"
         val repeat = object : Runnable {
             override fun run() {
                 if (!repeating) return
@@ -1542,9 +1553,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
         val longPress = Runnable {
-            if (!isDelete && !isSpace) return@Runnable
+            if (!isDelete && !isSpace && !isAa) return@Runnable
             longPressed = true
-            if (composing.isEmpty() && rawRoman.isEmpty()) {
+            if (isAa) {
+                capsLock = !capsLock
+                shift = capsLock
+            } else if (composing.isEmpty() && rawRoman.isEmpty()) {
                 textDragSession = TextSelectionSession.capture(currentInputConnection)
                 textDragStep = 0
                 textDragMoved = false
@@ -1573,7 +1587,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     textDragSession = null
                     textDragStep = 0
                     textDragMoved = false
-                    if (isDelete || isSpace) handler.postDelayed(longPress, longPressDelay())
+                    if (isDelete || isSpace || isAa) handler.postDelayed(longPress, longPressDelay())
                     target.isPressed = true
                     showFlickGuide(target, key.label, key.left, key.up, key.right, key.down)
                     true
@@ -1662,6 +1676,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         }
                         feedback(target)
                     }
+                    if (isAa && longPressed) renderKeyboard()
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -3279,6 +3294,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         renderKeyboard()
     }
 
+    private fun pressAa() {
+        if (capsLock) {
+            capsLock = false
+            shift = false
+            renderKeyboard()
+        } else {
+            transformLastCharacter()
+        }
+    }
+
     private fun setMode(newMode: String) {
         if (dictionaryMode != DictionaryMode.EDIT && (mode != "english" || newMode != "english")) commitComposition()
         mode = newMode
@@ -3311,7 +3336,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "japanese" -> setMode("japanese")
             "english" -> setMode("english")
             "kogana" -> transformLastCharacter()
-            "shiftEnglish" -> toggleShift()
+            "shiftEnglish" -> pressAa()
             "nextKeyboard" -> nextKeyboard()
         }
     }
@@ -3852,7 +3877,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun transformLastCharacter() {
         if (composing.isNotEmpty()) {
             val last = composing.last().toString()
-            val transformed = kanaCharacterFormReplacement(last) ?: return
+            val transformed = if (mode == "english" && last.single().isLetter() && last.single().code < 128) {
+                if (last == last.uppercase(Locale.ROOT)) last.lowercase(Locale.ROOT) else last.uppercase(Locale.ROOT)
+            } else kanaCharacterFormReplacement(last) ?: return
             composing = composing.dropLast(1) + transformed
             updateComposition()
             return
@@ -3860,7 +3887,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         val connection = currentInputConnection ?: return
         val before = connection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
         val last = before.takeLast(1)
-        val transformed = kanaCharacterFormReplacement(last) ?: return
+        val transformed = if (mode == "english" && last.length == 1 && last[0].isLetter() && last[0].code < 128) {
+            if (last == last.uppercase(Locale.ROOT)) last.lowercase(Locale.ROOT) else last.uppercase(Locale.ROOT)
+        } else kanaCharacterFormReplacement(last) ?: return
         connection.deleteSurroundingText(last.length, 0)
         connection.commitText(transformed, 1)
     }

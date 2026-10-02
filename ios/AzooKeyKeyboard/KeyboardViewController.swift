@@ -383,12 +383,18 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderQwerty() {
+        let english = mode == "english"
+        let useShift = english && boolSetting("use_shift_key", fallback: false)
+        let legacyShift: Bool
+        if #available(iOS 18, *) {
+            legacyShift = false
+        } else {
+            legacyShift = useShift && boolSetting("keep_deprecated_shift_key_behavior", fallback: true)
+        }
         for (index, letters) in ["qwertyuiop", "asdfghjkl", "zxcvbnm"].enumerated() {
             let row = makeRow()
-            if index == 2, mode == "english" {
-                let shiftLabel = boolSetting("use_shift_key", fallback: false)
-                    ? (capsLock ? "⇪" : "⇧") : "Aa"
-                row.addArrangedSubview(makeButton(shiftLabel, special: true, action: toggleShift))
+            if index == 1, legacyShift {
+                row.addArrangedSubview(makeButton(capsLock ? "⇪" : "⇧", special: true, action: toggleShift))
             }
             for character in letters {
                 let base = String(character)
@@ -400,15 +406,31 @@ final class KeyboardViewController: UIInputViewController {
                 row.addArrangedSubview(
                     makeButton("⌫", special: true, quickWordDelete: true, action: delete)
                 )
+            } else if index == 1, english {
+                if useShift {
+                    row.addArrangedSubview(makeButton(".") { [weak self] in self?.input(".") })
+                } else {
+                    let aaKey = makeButton(capsLock ? "⇪" : "Aa", special: true) { [weak self] in
+                        self?.pressAa()
+                    }
+                    aaKey.addGestureRecognizer(UILongPressGestureRecognizer(
+                        target: self, action: #selector(toggleCapsLockFromAa(_:))
+                    ))
+                    row.addArrangedSubview(aaKey)
+                }
             }
             keyboardStack.addArrangedSubview(row)
         }
         let bottom = makeRow()
+        bottom.distribution = .fill
         bottom.addArrangedSubview(makeButton("☆123", special: true) { [weak self] in self?.setMode("symbols") })
         bottom.addArrangedSubview(makeButton("🌐", special: true, action: advanceToNextInputMode))
+        if useShift && !legacyShift {
+            bottom.addArrangedSubview(makeButton(capsLock ? "⇪" : "⇧", special: true, action: toggleShift))
+        }
         let space = makeButton("space", action: self.space)
         bottom.addArrangedSubview(space)
-        space.widthAnchor.constraint(equalTo: bottom.widthAnchor, multiplier: 0.42).isActive = true
+        space.widthAnchor.constraint(equalTo: bottom.widthAnchor, multiplier: useShift && !legacyShift ? 0.35 : 0.42).isActive = true
         bottom.addArrangedSubview(makeButton("return", special: true, action: enter))
         keyboardStack.addArrangedSubview(bottom)
     }
@@ -766,7 +788,7 @@ final class KeyboardViewController: UIInputViewController {
         case "enter": return makeButton("改行", special: true, action: enter)
         case "upper_lower": return makeButton("Aa", special: true) { [weak self] in
             guard let self else { return }
-            mode == "english" ? toggleShift() : transformLastCharacter()
+            mode == "english" ? pressAa() : transformLastCharacter()
         }
         case "next_candidate": return makeButton(composing.isEmpty ? "空白" : "次候補", special: true) { [weak self] in self?.selectNextCandidate() }
         case "flick_kogaki": return makeButton("小ﾞﾟ", special: true, action: transformLastCharacter)
@@ -1744,6 +1766,23 @@ final class KeyboardViewController: UIInputViewController {
         renderKeyboard()
     }
 
+    private func pressAa() {
+        if capsLock {
+            capsLock = false
+            shift = false
+            renderKeyboard()
+        } else {
+            transformLastCharacter()
+        }
+    }
+
+    @objc private func toggleCapsLockFromAa(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        capsLock.toggle()
+        shift = capsLock
+        renderKeyboard()
+    }
+
     private func setMode(_ newMode: String) {
         if dictionaryMode != .edit, mode != "english" || newMode != "english" { commitComposition() }
         mode = newMode
@@ -1759,6 +1798,12 @@ final class KeyboardViewController: UIInputViewController {
 
     private func handleFlickValue(_ value: String, definition: FlickDefinition) {
         feedback()
+        if definition.action == "shiftEnglish", value == "__capslock__" {
+            capsLock.toggle()
+            shift = capsLock
+            renderKeyboard()
+            return
+        }
         if definition.action == "space", value == "__space_longpress__" {
             if candidates.isEmpty {
                 if !cursorBarVisible { toggleCursorBar() }
@@ -1809,18 +1854,36 @@ final class KeyboardViewController: UIInputViewController {
         case "japanese": setMode("japanese")
         case "english": setMode("english")
         case "kogana": transformLastCharacter()
-        case "shiftEnglish": toggleShift()
+        case "shiftEnglish": pressAa()
         case "nextKeyboard": advanceToNextInputMode()
         default: break
         }
     }
 
     private func transformLastCharacter() {
-        guard let last = composing.last else { return }
-        let value = kanaCharacterForms[String(last)] ?? String(last)
-        composing.removeLast()
-        composing += value
-        updateComposition()
+        if let last = composing.last {
+            let character = String(last)
+            let value: String
+            if mode == "english", character.range(of: #"^[A-Za-z]$"#, options: .regularExpression) != nil {
+                value = character == character.uppercased() ? character.lowercased() : character.uppercased()
+            } else {
+                value = kanaCharacterForms[character] ?? character
+            }
+            composing.removeLast()
+            composing += value
+            updateComposition()
+        } else if let last = textDocumentProxy.documentContextBeforeInput?.last {
+            let character = String(last)
+            let value: String
+            if mode == "english", character.range(of: #"^[A-Za-z]$"#, options: .regularExpression) != nil {
+                value = character == character.uppercased() ? character.lowercased() : character.uppercased()
+            } else {
+                guard let transformed = kanaCharacterForms[character] else { return }
+                value = transformed
+            }
+            textDocumentProxy.deleteBackward()
+            textDocumentProxy.insertText(value)
+        }
     }
 
     private func dispatch(
@@ -3791,11 +3854,13 @@ private final class FlickButton: UIButton {
         cursorDragStep = 0
         deleteDragging = false
         deleteDragCount = 0
-        guard definition.action == "delete" || definition.action == "space" else { return }
+        guard definition.action == "delete" || definition.action == "space" || definition.action == "shiftEnglish" else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.didLongPress = true
-            if self.definition.action == "delete" {
+            if self.definition.action == "shiftEnglish" {
+                self.callback("__capslock__")
+            } else if self.definition.action == "delete" {
                 self.callback("__delete_repeat__")
                 self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
                     self?.callback("__delete_repeat__")
