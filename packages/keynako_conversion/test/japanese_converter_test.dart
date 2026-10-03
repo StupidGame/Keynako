@@ -36,6 +36,25 @@ void main() {
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
 
+  test('hides selected additional emoji without hiding a personal word', () {
+    const options = ConversionOptions(
+      emojiDenylist: {'🕷', '🕸'},
+      userDictionary: [ConversionDictionaryEntry(reading: 'くも', value: '🕷️')],
+    );
+    final values = converter.candidates(input: 'くも', options: options);
+    expect(values.where((value) => value.text == '🕷️').length, 1);
+    expect(values.first.source, 'user');
+    expect(values.map((value) => value.text), isNot(contains('🕸️')));
+    final withoutPersonalWord = converter.candidates(
+      input: 'くも',
+      options: const ConversionOptions(emojiDenylist: {'🕷', '🕸'}),
+    );
+    expect(
+      withoutPersonalWord.map((value) => value.text),
+      isNot(contains('🕷️')),
+    );
+  });
+
   test('applies a personal word to the start of a longer reading', () {
     final values = converter.candidates(
       input: 'てすとかな',

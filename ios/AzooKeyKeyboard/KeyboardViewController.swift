@@ -1530,6 +1530,7 @@ final class KeyboardViewController: UIInputViewController {
     private func updateComposition() {
         selectedCandidateText = nil
         candidates = buildCandidates()
+        if completeStableFirstClauseIfNeeded() { return }
         let displayed: String
         if mode == "english" {
             displayed = composing
@@ -1540,6 +1541,29 @@ final class KeyboardViewController: UIInputViewController {
         }
         replaceDisplayed(with: displayed, commit: false)
         renderCandidates(showTabs: false)
+    }
+
+    private func completeStableFirstClauseIfNeeded() -> Bool {
+        guard mode == "japanese", boolSetting("live_conversion", fallback: true),
+              let clause = conversionEngine?.completedClause,
+              composing.hasPrefix(clause.reading),
+              composing.count > clause.reading.count,
+              candidates.first?.hasPrefix(clause.text) == true else { return false }
+        let remaining = String(composing.dropFirst(clause.reading.count))
+        var remainingRoman = ""
+        if layout == "qwerty" {
+            guard let split = rawRoman.indices.first(where: { index in
+                romanToHiragana(String(rawRoman[..<index])) == clause.reading &&
+                    romanToHiragana(String(rawRoman[index...])) == remaining
+            }) else { return false }
+            remainingRoman = String(rawRoman[split...])
+        }
+        replaceDisplayed(with: clause.text, commit: true)
+        conversionEngine?.commit(candidateText: clause.text, learningMode: effectiveLearningMode())
+        composing = remaining
+        rawRoman = remainingRoman
+        updateComposition()
+        return true
     }
 
     private func replaceDisplayed(with value: String, commit: Bool) {
@@ -2595,7 +2619,8 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
         let zenzai = zenzaiConfiguration()
-        let engineCandidates = conversionEngine?.candidates(
+        let blockedEmoji = blockedAdditionalEmoji()
+        let engineCandidates = (conversionEngine?.candidates(
             reading: composing,
             rawRoman: layout == "qwerty" ? rawRoman : nil,
             leftContext: textDocumentProxy.documentContextBeforeInput,
@@ -2603,13 +2628,15 @@ final class KeyboardViewController: UIInputViewController {
             modelURL: zenzai?.url,
             inferenceLimit: zenzai?.inferenceLimit ?? 1,
             learningMode: intSetting("memory_learining_styple_setting", fallback: 0),
+            automaticCompletionStrength: boolSetting("live_conversion", fallback: true)
+                ? intSetting("automatic_completion_strength", fallback: 1) : 0,
             englishCandidateInRoman2KanaInput: boolSetting("roman_english_candidate", fallback: true),
             typographyCandidate: boolSetting("typography_roman_candidate", fallback: true),
             fullWidthRomanCandidate: boolSetting("full_roman_candidate", fallback: true),
             halfWidthKanaCandidate: boolSetting("half_kana_candidate", fallback: true),
             unicodeCandidate: boolSetting("unicode_candidate", fallback: true),
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
-        ) ?? []
+        ) ?? []).filter { !blockedEmoji.contains(Self.normalizedEmoji($0)) || exactUserTexts.contains($0) }
         let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
         result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
         let combinedTexts = dictionaryCombinations(reading)
@@ -2656,7 +2683,9 @@ final class KeyboardViewController: UIInputViewController {
         let katakana = hiraganaToKatakana(composing)
         if katakana != composing { result.append(katakana) }
         if boolSetting("emoji_dictionary_enabled", fallback: true) {
-            result.append(contentsOf: Self.emojiDictionary[composing] ?? [])
+            result.append(contentsOf: (Self.emojiDictionary[composing] ?? []).filter {
+                !blockedEmoji.contains(Self.normalizedEmoji($0))
+            })
         }
         if boolSetting("kaomoji_dictionary_enabled", fallback: false) {
             result.append(contentsOf: Self.kaomojiDictionary[composing] ?? [])
@@ -2684,6 +2713,7 @@ final class KeyboardViewController: UIInputViewController {
         let learnedTexts = exactLearning.map(\.text)
         let stableEngineCandidate = conversionEngine?.baselineTexts.first {
             !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && !blockedEmoji.contains(Self.normalizedEmoji($0))
                 && $0 != hiragana && $0 != fullKatakana
         }
         let engineCandidate = stableEngineCandidate ?? engineCandidates.first {
@@ -2700,6 +2730,20 @@ final class KeyboardViewController: UIInputViewController {
         prioritized.append(contentsOf: result)
         var seen = Set<String>()
         return prioritized.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private func blockedAdditionalEmoji() -> Set<String> {
+        var blocked = Set<String>()
+        if boolSetting("hide_cockroach_emoji", fallback: false) { blocked.insert("🪳") }
+        if boolSetting("hide_mosquito_emoji", fallback: false) { blocked.insert("🦟") }
+        if boolSetting("hide_spider_emoji", fallback: false) { blocked.formUnion(["🕸", "🕷"]) }
+        if boolSetting("hide_worm_emoji", fallback: false) { blocked.insert("🪱") }
+        return blocked
+    }
+
+    private static func normalizedEmoji(_ value: String) -> String {
+        value.replacingOccurrences(of: "\u{FE0F}", with: "")
+            .replacingOccurrences(of: "\u{FE0E}", with: "")
     }
 
     private func dictionaryCombinations(_ reading: String) -> [String] {
@@ -3082,6 +3126,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func resetComposition() {
+        conversionEngine?.stopComposition()
         selectedCandidateText = nil
         composing = ""
         rawRoman = ""
@@ -3244,7 +3289,10 @@ final class KeyboardViewController: UIInputViewController {
         "かんたん": ["簡単"], "むずかしい": ["難しい"], "おおきい": ["大きい"], "ちいさい": ["小さい"],
         "はやい": ["早い", "速い"], "おそい": ["遅い"], "いい": ["いい", "良い"], "わるい": ["悪い"],
     ]
-    private static let emojiDictionary = ["えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"]]
+    private static let emojiDictionary = [
+        "えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"],
+        "ごきぶり": ["🪳"], "か": ["🦟"], "くも": ["🕷️", "🕸️"], "みみず": ["🪱"],
+    ]
     private static let kaomojiDictionary = ["えがお": ["( ´ ▽ ` )", "(^_^)"], "かなしい": ["( ; _ ; )", "(´；ω；`)"]]
     private static let emailDomains = [
         "@gmail.com", "@icloud.com", "@yahoo.co.jp", "@au.com",

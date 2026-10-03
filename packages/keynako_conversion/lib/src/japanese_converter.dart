@@ -241,6 +241,10 @@ class JapaneseConverter {
     'ありがとう': ['🙏', '😊'],
     'ねこ': ['🐈', '🐱'],
     'いぬ': ['🐕', '🐶'],
+    'ごきぶり': ['🪳'],
+    'か': ['🦟'],
+    'くも': ['🕷️', '🕸️'],
+    'みみず': ['🪱'],
   };
 
   static const Map<String, List<String>> _kaomoji = {
@@ -554,6 +558,10 @@ class JapaneseConverter {
     }
     if (options.emojiCandidate) {
       for (final value in _emoji[reading] ?? const <String>[]) {
+        if (options.emojiDenylist.contains(
+          value.replaceAll('\uFE0F', '').replaceAll('\uFE0E', ''),
+        ))
+          continue;
         values.add(
           ConversionCandidate(
             text: value,

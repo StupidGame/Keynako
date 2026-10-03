@@ -49,6 +49,8 @@ import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEn
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCombinationEntry
+import io.github.StupidGame.azookey_flutter.conversion.CompletedClause
+import io.github.StupidGame.azookey_flutter.conversion.StableClauseCompletion
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
@@ -138,6 +140,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var capsLock = false
     private var selectedCandidate = 0
     private var candidateSelectedExplicitly = false
+    private val stableClauseCompletion = StableClauseCompletion()
     private var sensitiveInput = false
     private var allCapsInput = false
     private var activeCustomTab: String? = null
@@ -2629,8 +2632,58 @@ class AzooKeyInputMethodService : InputMethodService() {
             reading
         }
         currentInputConnection?.setComposingText(displayed, 1)
+        if (completeStableFirstClauseIfNeeded(reading)) return
         renderCandidateValues()
         requestZenzaiCandidates(reading, candidates.toList())
+    }
+
+    private fun completeStableFirstClauseIfNeeded(reading: String): Boolean {
+        if (mode != "japanese" || !settings.optBoolean("live_conversion", true)) {
+            stableClauseCompletion.reset()
+            return false
+        }
+        val candidate = candidates.firstOrNull().orEmpty()
+        val entries = buildList {
+            val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
+            for (index in 0 until dictionary.length()) {
+                val entry = dictionary.optJSONObject(index) ?: continue
+                if (entry.optBoolean("isTemplateMode", false)) continue
+                val ruby = katakanaToHiragana(entry.optString("ruby"))
+                val word = entry.optString("word")
+                if (reading.startsWith(ruby) && candidate.startsWith(word)) add(CompletedClause(ruby, word))
+            }
+            for (entry in hotfixDictionaryEntries) {
+                val ruby = katakanaToHiragana(entry.ruby)
+                if (reading.startsWith(ruby) && candidate.startsWith(entry.word)) {
+                    add(CompletedClause(ruby, entry.word))
+                }
+            }
+            for ((ruby, words) in systemDictionary) {
+                if (reading.startsWith(ruby)) {
+                    for (word in words) if (candidate.startsWith(word)) add(CompletedClause(ruby, word))
+                }
+            }
+        }
+        val clause = stableClauseCompletion.observe(
+            reading,
+            candidate,
+            entries,
+            settings.optInt("automatic_completion_strength", 1),
+        ) ?: return false
+        val remaining = reading.removePrefix(clause.reading)
+        val remainingRoman = if (layout == "qwerty") {
+            (0..rawRoman.length).firstOrNull { split ->
+                romanToHiragana(rawRoman.take(split)) == clause.reading &&
+                    romanToHiragana(rawRoman.drop(split)) == remaining
+            }?.let { rawRoman.drop(it) } ?: return false
+        } else ""
+        val connection = currentInputConnection ?: return false
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        if (!connection.commitText(clause.text, 1)) return false
+        composing = remaining
+        rawRoman = remainingRoman
+        updateComposition()
+        return true
     }
 
     private fun requestZenzaiCandidates(reading: String, baseCandidates: List<String>) {
@@ -2680,6 +2733,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
+    private fun blockedAdditionalEmoji(): Set<String> = buildSet {
+        if (settings.optBoolean("hide_cockroach_emoji", false)) add("🪳")
+        if (settings.optBoolean("hide_mosquito_emoji", false)) add("🦟")
+        if (settings.optBoolean("hide_spider_emoji", false)) addAll(listOf("🕸", "🕷"))
+        if (settings.optBoolean("hide_worm_emoji", false)) add("🪱")
+    }
+
     private fun buildCandidates(): List<String> {
         val input = displayReading()
         candidatePredictionReadings = emptyMap()
@@ -2689,6 +2749,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val specialCandidates = AzooKeySpecialCandidates.complete(reading)
         if (shouldDirectCommitJapaneseInput(reading) && specialCandidates.isEmpty()) return listOf(reading)
         val values = linkedSetOf<String>()
+        val blockedEmoji = blockedAdditionalEmoji()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
         val predictionReadings = mutableMapOf<String, String>()
@@ -2749,11 +2810,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         }.getOrElse {
             DictionaryCandidates(emptyList(), emptyList())
         }
-        values.addAll(officialCandidates.conversions.take(1))
+        val explicitWords = (personalEntries + hotfixDictionaryEntries).mapTo(mutableSetOf()) { it.word }
+        val allowedOfficialConversions = officialCandidates.conversions.filter {
+            it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
+        }
+        values.addAll(allowedOfficialConversions.take(1))
         values.addAll(combinedWords)
         values.addAll(specialCandidates)
-        values.addAll(officialCandidates.conversions.drop(1))
-        if (officialCandidates.conversions.isEmpty()) {
+        values.addAll(allowedOfficialConversions.drop(1))
+        if (allowedOfficialConversions.isEmpty()) {
             systemDictionary[reading]?.let(values::addAll)
         }
         val completeConversions = values.toSet()
@@ -2767,7 +2832,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                 predictedValues.add(prediction.text)
                 predictionReadings.getOrPut(prediction.text) { prediction.reading }
             }
-            predictedValues.addAll(officialCandidates.predictions)
+            predictedValues.addAll(officialCandidates.predictions.filter {
+                it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
+            })
             for (email in AzooKeySpecialCandidates.emails(if (layout == "qwerty") rawRoman else reading)) {
                 predictedValues.add(email)
                 predictionReadings.getOrPut(email) { email }
@@ -2790,7 +2857,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (layout == "qwerty" && settings.optBoolean("typography_roman_candidate", true) && rawRoman.isNotEmpty()) {
             values.add(toMathematicalBold(rawRoman))
         }
-        if (settings.optBoolean("emoji_dictionary_enabled", true)) emojiDictionary[reading]?.let(values::addAll)
+        if (settings.optBoolean("emoji_dictionary_enabled", true)) {
+            emojiDictionary[reading]?.filter {
+                it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
+            }?.let(values::addAll)
+        }
         if (settings.optBoolean("kaomoji_dictionary_enabled", false)) kaomojiDictionary[reading]?.let(values::addAll)
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
         val learning = learningScores()
@@ -2864,6 +2935,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         learnSelectedCandidate(displayReading(), candidate, explicitSelection = true)
         composing = ""
         rawRoman = ""
+        stableClauseCompletion.reset()
         selectedCandidate = 0
         candidateSelectedExplicitly = false
         renderCandidates()
@@ -3038,6 +3110,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly)
         composing = ""
         rawRoman = ""
+        stableClauseCompletion.reset()
         selectedCandidate = 0
         candidateSelectedExplicitly = false
         renderCandidates()
@@ -3074,6 +3147,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         composing = ""
         rawRoman = ""
+        stableClauseCompletion.reset()
         selectedCandidate = 0
         candidateSelectedExplicitly = false
         candidates.clear()
@@ -4300,6 +4374,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             "おめでとう" to listOf("🎉", "🎊"),
             "ねこ" to listOf("🐈", "🐱"),
             "いぬ" to listOf("🐕", "🐶"),
+            "ごきぶり" to listOf("🪳"),
+            "か" to listOf("🦟"),
+            "くも" to listOf("🕷️", "🕸️"),
+            "みみず" to listOf("🪱"),
         )
         private val kaomojiDictionary = mapOf(
             "えがお" to listOf("( ´ ▽ ` )", "(^_^)", "(๑˃̵ᴗ˂̵)"),

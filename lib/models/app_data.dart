@@ -52,6 +52,10 @@ const Map<String, dynamic> defaultKeyboardSettings = {
   'display_tab_bar_button': true,
   'emoji_dictionary_enabled': true,
   'kaomoji_dictionary_enabled': false,
+  'hide_cockroach_emoji': false,
+  'hide_mosquito_emoji': false,
+  'hide_spider_emoji': false,
+  'hide_worm_emoji': false,
 };
 
 class UserDictionaryEntry {
