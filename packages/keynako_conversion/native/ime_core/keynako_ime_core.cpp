@@ -930,15 +930,17 @@ void ImeSession::rebuild_candidates() {
         static_cast<std::ptrdiff_t>(std::min<std::size_t>(1, candidates_.size()));
     std::size_t promoted = 0;
     for (auto &prediction : prefix_predictions) {
-        const bool registered = prediction.source == "personal-prediction" ||
-            prediction.source == "shared-prediction" ||
-            std::any_of(user_dictionary_.begin(), user_dictionary_.end(), [&](const auto &entry) {
+        if (promoted >= 4) break;
+        bool registered = prediction.source == "personal-prediction" ||
+            prediction.source == "shared-prediction";
+        if (!registered && prediction.source == "learned-prediction") {
+            registered = std::any_of(user_dictionary_.begin(), user_dictionary_.end(), [&](const auto &entry) {
                 return entry.value == prediction.text &&
                     entry.reading.size() > conversion_reading.size() &&
                     entry.reading.rfind(conversion_reading, 0) == 0;
             });
-        if (!registered) continue;
-        if (promoted >= 4 || !seen.insert(prediction.text).second) continue;
+        }
+        if (!registered || !seen.insert(prediction.text).second) continue;
         insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
         ++promoted;
     }
