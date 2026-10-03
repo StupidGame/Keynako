@@ -302,9 +302,23 @@ int main() {
     assert(committed_prefix == "私");
     assert(stable_clause.reading().rfind("は", 0) == 0);
     assert(stable_clause.selected_text().rfind("は", 0) == 0);
+    ImeSession strong_clause;
+    assert(strong_clause.set_bundled_dictionary_path(dictionary_path));
+    strong_clause.set_automatic_completion_strength(4);
+    assert(strong_clause.automatic_completion_strength() == 4);
+    std::size_t strong_completed_at = 0;
+    const std::string phrase = "watashihakyouToukyounoekidetomodachitoaimashita";
+    for (std::size_t index = 0; index < phrase.size(); ++index) {
+        strong_clause.append_ascii(phrase[index]);
+        if (!strong_clause.take_completed_clause().empty()) {
+            strong_completed_at = index + 1;
+            break;
+        }
+    }
+    assert(strong_completed_at > 0 && strong_completed_at < phrase.size());
     ImeSession disabled_clause;
     assert(disabled_clause.set_bundled_dictionary_path(dictionary_path));
-    disabled_clause.set_live_conversion(false);
+    disabled_clause.set_automatic_completion_strength(0);
     for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
         disabled_clause.append_ascii(value);
         assert(disabled_clause.take_completed_clause().empty());

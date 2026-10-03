@@ -36,6 +36,8 @@ public:
     InputMode mode() const { return mode_; }
     void set_live_conversion(bool enabled);
     bool live_conversion() const { return live_conversion_; }
+    void set_automatic_completion_strength(int strength);
+    int automatic_completion_strength() const { return automatic_completion_strength_; }
     void append_ascii(char value);
     void append_literal_ascii(char value);
     // Returns a stable converted prefix and keeps its unread suffix composing.
@@ -78,6 +80,7 @@ private:
 
     InputMode mode_ = InputMode::japanese;
     bool live_conversion_ = true;
+    int automatic_completion_strength_ = 1;
     bool converting_ = false;
     bool live_conversion_suspended_ = false;
     std::string raw_input_;

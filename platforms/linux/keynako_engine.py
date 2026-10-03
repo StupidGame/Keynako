@@ -29,6 +29,9 @@ class NativeSession:
         self.library.keynako_ime_create.restype = ctypes.c_void_p
         self.library.keynako_ime_destroy.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_set_mode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        self.library.keynako_ime_set_automatic_completion_strength.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        self.library.keynako_ime_automatic_completion_strength.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_automatic_completion_strength.restype = ctypes.c_int
         self.library.keynako_ime_append_ascii.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_take_completed_clause.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_take_completed_clause.restype = ctypes.c_char_p
@@ -84,6 +87,12 @@ class NativeSession:
 
     def set_mode(self, english: bool) -> None:
         self.library.keynako_ime_set_mode(self.handle, int(english))
+
+    def automatic_completion_strength(self) -> int:
+        return self.library.keynako_ime_automatic_completion_strength(self.handle)
+
+    def set_automatic_completion_strength(self, strength: int) -> None:
+        self.library.keynako_ime_set_automatic_completion_strength(self.handle, strength)
 
     def append(self, value: str) -> None:
         self.library.keynako_ime_append_ascii(self.handle, ord(value))
@@ -191,6 +200,18 @@ class KeynakoEngine(IBus.Engine):
         )
         properties = IBus.PropList()
         properties.append(self.mode_property)
+        self.completion_property = IBus.Property.new(
+            "AutomaticCompletion",
+            IBus.PropType.NORMAL,
+            IBus.Text.new_from_string("自動確定: 弱い"),
+            "",
+            IBus.Text.new_from_string("押すたびに自動確定の速さを変更します"),
+            True,
+            True,
+            IBus.PropState.UNCHECKED,
+            None,
+        )
+        properties.append(self.completion_property)
         self.refresh_dictionary_property = IBus.Property.new(
             "RefreshDictionary",
             IBus.PropType.NORMAL,
@@ -528,6 +549,15 @@ class KeynakoEngine(IBus.Engine):
 
     def do_property_activate(self, prop_name: str, prop_state: int) -> None:
         del prop_state
+        if prop_name == "AutomaticCompletion":
+            strength = (self.session.automatic_completion_strength() + 1) % 5
+            self.session.set_automatic_completion_strength(strength)
+            labels = ("無効", "弱い", "普通", "強い", "非常に強い")
+            self.completion_property.set_label(IBus.Text.new_from_string(
+                f"自動確定: {labels[strength]}",
+            ))
+            self.update_property(self.completion_property)
+            return
         if prop_name == "RefreshDictionary":
             self._request_shared_dictionary_refresh(force=True)
             return

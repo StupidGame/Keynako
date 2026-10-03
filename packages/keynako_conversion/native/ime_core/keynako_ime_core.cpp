@@ -390,6 +390,10 @@ void ImeSession::set_mode(InputMode mode) {
     converting_ = was_converting && !candidates_.empty();
 }
 void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; reset_stable_clause(); }
+void ImeSession::set_automatic_completion_strength(int strength) {
+    automatic_completion_strength_ = std::clamp(strength, 0, 4);
+    reset_stable_clause();
+}
 void ImeSession::append_ascii(char value) {
     append_ascii_internal(value, is_literal_candidate_suffix(value), false);
 }
@@ -451,7 +455,8 @@ void ImeSession::reset_stable_clause() {
 }
 
 void ImeSession::observe_stable_clause() {
-    if (mode_ != InputMode::japanese || !live_conversion_ || live_conversion_suspended_ ||
+    if (mode_ != InputMode::japanese || !live_conversion_ || automatic_completion_strength_ == 0 ||
+        live_conversion_suspended_ ||
         converting_ || has_literal_suffix() || candidates_.empty() || selected_index_ != 0) {
         reset_stable_clause();
         return;
@@ -495,8 +500,8 @@ void ImeSession::observe_stable_clause() {
     stable_raw_input_ = raw_input_;
     stable_clause_reading_ = clause_reading;
     stable_clause_text_ = clause_text;
-    // azooKey's weak automatic completion waits for sixteen stable updates.
-    if (stable_clause_count_ >= 16) {
+    static constexpr int thresholds[] = {0, 16, 13, 10, 6};
+    if (stable_clause_count_ >= thresholds[automatic_completion_strength_]) {
         completed_clause_text_ = clause_text;
         completed_clause_raw_length_ = split;
     }

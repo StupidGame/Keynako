@@ -87,6 +87,7 @@ constexpr UINT kMenuLiveConversion = 3;
 constexpr UINT kMenuRefreshDictionary = 4;
 constexpr UINT kMenuSettings = 5;
 constexpr UINT kMenuPersonalDictionary = 6;
+constexpr UINT kMenuCompletionStrengthFirst = 10;
 constexpr UINT kCandidateSendShared = 1;
 constexpr UINT kCandidateSavePersonal = 2;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
@@ -267,6 +268,11 @@ public:
 
     keynako::InputMode input_mode() const { return session_.mode(); }
     bool live_conversion() const { return session_.live_conversion(); }
+    int automatic_completion_strength() const { return session_.automatic_completion_strength(); }
+    void set_automatic_completion_strength(int strength) {
+        session_.set_automatic_completion_strength(strength);
+        if (language_bar_) language_bar_->notify_mode_changed();
+    }
     void set_input_mode(keynako::InputMode mode, ITfContext *context = nullptr) {
         if (session_.mode() == mode) return;
         const bool has_composition = !session_.raw_input().empty();
@@ -2057,6 +2063,16 @@ STDMETHODIMP LanguageBarItem::InitMenu(ITfMenu *menu) {
     add_item(kMenuEnglish, japanese ? 0 : TF_LBMENUF_CHECKED, L"英数 (A)");
     add_item(kMenuLiveConversion, owner_->live_conversion() ? TF_LBMENUF_CHECKED : 0,
              L"ライブ変換");
+    constexpr const wchar_t *strength_labels[] = {
+        L"自動確定: 無効", L"自動確定: 弱い", L"自動確定: 普通",
+        L"自動確定: 強い", L"自動確定: 非常に強い",
+    };
+    for (UINT strength = 0; strength < 5; ++strength) {
+        add_item(kMenuCompletionStrengthFirst + strength,
+                 owner_->automatic_completion_strength() == static_cast<int>(strength)
+                     ? TF_LBMENUF_CHECKED : 0,
+                 strength_labels[strength]);
+    }
     menu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
     add_item(kMenuRefreshDictionary, 0, L"共有辞書を今すぐ更新");
     add_item(kMenuPersonalDictionary, 0, L"個人辞書を編集");
@@ -2066,6 +2082,11 @@ STDMETHODIMP LanguageBarItem::InitMenu(ITfMenu *menu) {
 
 STDMETHODIMP LanguageBarItem::OnMenuSelect(UINT id) {
     if (!owner_) return E_FAIL;
+    if (id >= kMenuCompletionStrengthFirst && id < kMenuCompletionStrengthFirst + 5) {
+        owner_->set_automatic_completion_strength(
+            static_cast<int>(id - kMenuCompletionStrengthFirst));
+        return S_OK;
+    }
     switch (id) {
         case kMenuJapanese: owner_->set_input_mode(keynako::InputMode::japanese); break;
         case kMenuEnglish: owner_->set_input_mode(keynako::InputMode::english); break;

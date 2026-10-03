@@ -55,6 +55,7 @@ static NSString *PairedDelimiter(unichar value) {
 - (void)selectJapaneseMode:(id)sender;
 - (void)selectEnglishMode:(id)sender;
 - (void)toggleLiveConversion:(id)sender;
+- (void)selectAutomaticCompletionStrength:(id)sender;
 @end
 
 @implementation KeynakoInputController {
@@ -214,6 +215,23 @@ static NSString *PairedDelimiter(unichar value) {
         ? NSControlStateValueOn
         : NSControlStateValueOff;
     [menu addItem:live];
+    NSMenuItem *completion = [[NSMenuItem alloc]
+        initWithTitle:@"自動確定の速さ" action:nil keyEquivalent:@""];
+    NSMenu *completionMenu = [[NSMenu alloc] initWithTitle:@"自動確定の速さ"];
+    NSArray<NSString *> *strengthLabels = @[@"無効", @"弱い", @"普通", @"強い", @"非常に強い"];
+    for (NSInteger strength = 0; strength < static_cast<NSInteger>(strengthLabels.count); ++strength) {
+        NSMenuItem *item = [[NSMenuItem alloc]
+            initWithTitle:strengthLabels[strength]
+                    action:@selector(selectAutomaticCompletionStrength:)
+             keyEquivalent:@""];
+        item.target = self;
+        item.tag = strength;
+        item.state = _session.automatic_completion_strength() == strength
+            ? NSControlStateValueOn : NSControlStateValueOff;
+        [completionMenu addItem:item];
+    }
+    completion.submenu = completionMenu;
+    [menu addItem:completion];
     [menu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *refresh = [[NSMenuItem alloc]
         initWithTitle:@"共有辞書を今すぐ更新"
@@ -249,6 +267,10 @@ static NSString *PairedDelimiter(unichar value) {
     _session.set_live_conversion(!_session.live_conversion());
     id client = [self client];
     if (client && !_session.raw_input().empty()) [self updateMarkedText:client];
+}
+
+- (void)selectAutomaticCompletionStrength:(id)sender {
+    _session.set_automatic_completion_strength(static_cast<int>([sender tag]));
 }
 
 - (void)refreshSharedDictionary:(id)sender {

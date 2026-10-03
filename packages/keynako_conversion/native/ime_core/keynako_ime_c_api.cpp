@@ -31,6 +31,12 @@ void keynako_ime_set_mode(keynako_ime_session session, int english) {
 void keynako_ime_set_live_conversion(keynako_ime_session session, int enabled) {
     if (auto *value = cast(session)) value->set_live_conversion(enabled != 0);
 }
+void keynako_ime_set_automatic_completion_strength(keynako_ime_session session, int strength) {
+    if (auto *value = cast(session)) value->set_automatic_completion_strength(strength);
+}
+int keynako_ime_automatic_completion_strength(keynako_ime_session session) {
+    return session ? cast(session)->automatic_completion_strength() : 0;
+}
 void keynako_ime_append_ascii(keynako_ime_session session, int value) {
     if (auto *target = cast(session); target && value >= 0 && value <= 0x7f) target->append_ascii(static_cast<char>(value));
 }

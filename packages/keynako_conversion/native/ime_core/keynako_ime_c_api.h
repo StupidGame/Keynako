@@ -18,6 +18,8 @@ KEYNAKO_IME_EXPORT keynako_ime_session keynako_ime_create(void);
 KEYNAKO_IME_EXPORT void keynako_ime_destroy(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_set_mode(keynako_ime_session session, int english);
 KEYNAKO_IME_EXPORT void keynako_ime_set_live_conversion(keynako_ime_session session, int enabled);
+KEYNAKO_IME_EXPORT void keynako_ime_set_automatic_completion_strength(keynako_ime_session session, int strength);
+KEYNAKO_IME_EXPORT int keynako_ime_automatic_completion_strength(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_append_ascii(keynako_ime_session session, int value);
 KEYNAKO_IME_EXPORT const char *keynako_ime_take_completed_clause(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_backspace(keynako_ime_session session);
