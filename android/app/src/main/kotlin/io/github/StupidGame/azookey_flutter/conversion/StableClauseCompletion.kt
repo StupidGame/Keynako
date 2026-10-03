@@ -32,7 +32,7 @@ class StableClauseCompletion {
             return null
         }
         val clause = entries.asSequence().filter { entry ->
-            entry.reading.length >= 2 && entry.reading.length < reading.length &&
+            entry.reading.length >= 2 && entry.reading.length < reading.length && entry.text.isNotBlank() &&
                 reading.startsWith(entry.reading) && entry.text != entry.reading &&
                 candidate.length > entry.text.length && candidate.startsWith(entry.text)
         }.maxWithOrNull(compareBy<CompletedClause> { it.reading.length }.thenBy { it.text.length })

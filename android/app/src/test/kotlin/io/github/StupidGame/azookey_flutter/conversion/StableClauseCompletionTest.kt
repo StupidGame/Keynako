@@ -21,4 +21,12 @@ class StableClauseCompletionTest {
         assertNull(completion.observe("わたしはね", "別の候補", entries, 4))
         assertNull(completion.observe("わたしはねこ", "私は猫", entries, 0))
     }
+
+    @Test fun neverCompletesAnEmptyDictionaryWord() {
+        val completion = StableClauseCompletion()
+        val entries = listOf(CompletedClause("わたし", ""))
+        for (reading in listOf("わたしは", "わたしはね", "わたしはねこ", "わたしはねこで", "わたしはねこです", "わたしはねこですか")) {
+            assertNull(completion.observe(reading, "私は猫ですか", entries, 4))
+        }
+    }
 }
