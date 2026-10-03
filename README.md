@@ -18,7 +18,7 @@ Keynakoは、Swift製の日本語キーボードアプリazooKeyをベースに�
 - Zenzai v3.2 small／xsmallによる完全オフライン変換
 - Windows TSF／macOS InputMethodKit／Linux IBusへ登録できる日本語・英語IME、ライブ変換、共有辞書、候補選択、Zenzai
 
-予測候補は、読みの一致、辞書の重要度、補完する長さを考慮して並べます。AndroidとPCの標準辞書では文頭・文末への接続スコアも使い、活用途中の語より自然な語を優先します。AndroidとFlutterの変換では、選択履歴から辞書にない語も再表示し、短い読みからの予測にも利用します。学習無効時は履歴を使いません。Flutterアプリの変換にも有効なKeynako共有辞書を反映します。
+予測候補は、読みの一致、辞書の重要度、補完する長さを考慮して並べます。AndroidとPCの標準辞書では文頭・文末への接続スコアも使い、活用途中の語より自然な語を優先します。Android・iOS・Flutter・PCの変換では、選択履歴から辞書にない語も再表示し、学習した長い読みを「かめ」「かめん」のような入力途中から候補欄の手前に表示します。入力途中の読みを自動確定はしません。学習無効時は履歴を使いません。Flutterアプリの変換にも有効なKeynako共有辞書を反映します。
 
 候補を明示的に選び直すと、同じ読みの過去の候補を弱め、今回選んだ語を優先します。学習スコアには上限があり、過去の確定回数が多くても選び直しを反映します。Android・iOSでは既存の学習データを引き継ぎ、英語の学習無効設定も尊重します。Zenzaiの結果を受け取った後も学習順位と手動選択を維持します。PCアプリとPCシステムIMEの選択学習はセッション内で有効です。PCシステムIMEは直近4096種類の読みを保持し、キャンセルした入力は学習しません。
 
@@ -101,7 +101,7 @@ flutter run -d windows # linux、macosも指定可能
 
 ## azooKey / Custard互換性
 
-Keynako 3.1は、azooKeyの安定版[v3.1](https://github.com/azooKey/azooKey/releases/tag/v3.1)を基準にし、2026年9月17日時点の`main`（[`754a9ad`](https://github.com/azooKey/azooKey/commit/754a9ad17cf300596d761845466b9faa652835f5)）までの変更を確認しています。この更新では、[#761](https://github.com/azooKey/azooKey/pull/761)の複合ラベル仕様に合わせ、英語カスタム配列のラベルがShift／Caps Lockへ追従します。iOS 27向けのSwiftUI固有修正など、UIKitで実装するKeynakoに該当しない変更は取り込んでいません。かな漢字変換パッケージ、標準辞書、Zenzaiモデルは、azooKey v3.1が使用する互換リビジョンを維持しています。
+Keynako 3.1は、azooKeyの安定版[v3.1.1](https://github.com/azooKey/azooKey/releases/tag/v3.1.1)を基準にし、2026年9月17日時点の`main`（[`754a9ad`](https://github.com/azooKey/azooKey/commit/754a9ad17cf300596d761845466b9faa652835f5)）までの変更を確認しています。この更新では、[#761](https://github.com/azooKey/azooKey/pull/761)の複合ラベル仕様に合わせ、英語カスタム配列のラベルがShift／Caps Lockへ追従します。iOS 27向けのSwiftUI固有修正など、UIKitで実装するKeynakoに該当しない変更は取り込んでいません。かな漢字変換パッケージ、標準辞書、Zenzaiモデルは、azooKey v3.1.1が使用する互換リビジョンを維持しています。
 
 「拡張」の読み込みボタンへCustard URLを入力すると、元のazooKeyと同じJSON形式を単体・配列のどちらでも読み込めます。`https://custard.azookey.com/tab/...` は公式API URLへ自動変換されます。キー座標とサイズ、system key、複数アクション、長押し開始・反復、フリック／PCバリエーションは定義を無損失で保持し、AndroidとiOSのネイティブキーボードが直接実行します。Custardの`input`／`direct_input`でも開き記号は対応する閉じ記号を補完し、カーソルを内側へ移動します。
 

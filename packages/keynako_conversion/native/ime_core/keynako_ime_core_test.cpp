@@ -73,8 +73,50 @@ int main() {
     for (const char value : std::string("niho")) prefix_prediction.append_ascii(value);
     assert(prefix_prediction.display_text() == "にほ");
     assert(prefix_prediction.candidates().size() >= 4);
-    assert(prefix_prediction.candidates()[2].text == "日本");
-    assert(prefix_prediction.candidates()[2].source == "shared-prediction");
+    assert(prefix_prediction.candidates()[1].text == "日本");
+    assert(prefix_prediction.candidates()[1].source == "shared-prediction");
+    ImeSession rider_prediction;
+    rider_prediction.set_user_dictionary({{"かめんらいだー", "仮面ライダー", 3}});
+    for (const auto &raw : {"kame", "kamen"}) {
+        rider_prediction.clear();
+        for (const char value : std::string(raw)) rider_prediction.append_ascii(value);
+        const auto &values = rider_prediction.candidates();
+        const auto found = std::find_if(values.begin(), values.end(), [](const auto &candidate) {
+            return candidate.text == "仮面ライダー" &&
+                candidate.source.find("prediction") != std::string::npos;
+        });
+        assert(found != values.end());
+        assert(found - values.begin() < 3);
+        assert(rider_prediction.candidate_reading(static_cast<std::size_t>(found - values.begin())) ==
+            "かめんらいだー");
+        assert(rider_prediction.display_text() != "仮面ライダー");
+        assert(rider_prediction.begin_conversion());
+        assert(rider_prediction.select_candidate(static_cast<std::size_t>(found - values.begin())));
+        rider_prediction.learn_selected();
+        rider_prediction.cancel_conversion();
+        rider_prediction.clear();
+        for (const char value : std::string(raw)) rider_prediction.append_ascii(value);
+        assert(rider_prediction.candidates().front().text != "仮面ライダー");
+        assert(rider_prediction.display_text() != "仮面ライダー");
+    }
+    ImeSession learned_rider;
+    for (const char value : std::string("kamenraida-")) learned_rider.append_ascii(value);
+    learned_rider.insert_zenzai_candidate("仮面ライダー");
+    assert(learned_rider.selected_text() == "仮面ライダー");
+    learned_rider.learn_selected();
+    for (const auto &raw : {"kame", "kamen"}) {
+        learned_rider.clear();
+        for (const char value : std::string(raw)) learned_rider.append_ascii(value);
+        assert(learned_rider.candidates().front().text != "仮面ライダー");
+        assert(learned_rider.candidates().size() > 1);
+        assert(learned_rider.candidates()[1].text == "仮面ライダー");
+        assert(learned_rider.candidates()[1].source == "learned-prediction");
+        assert(learned_rider.candidate_reading(1) == "かめんらいだー");
+        assert(learned_rider.display_text() != "仮面ライダー");
+        assert(learned_rider.begin_conversion());
+        assert(learned_rider.select_candidate(1));
+        learned_rider.learn_selected();
+    }
     keynako::DictionaryEntry personal_entry{"てすと", "個人語", 5};
     personal_entry.source = "personal";
     ImeSession personal_dictionary;
@@ -101,6 +143,22 @@ int main() {
     for (const char value : std::string("watashihaneko")) mixed_dictionary.append_ascii(value);
     assert(std::any_of(mixed_dictionary.candidates().begin(), mixed_dictionary.candidates().end(),
         [](const auto &candidate) { return candidate.text == "私は猫"; }));
+    ImeSession special_number;
+    for (const char value : std::string("1234")) special_number.append_ascii(value);
+    assert(std::any_of(special_number.candidates().begin(), special_number.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "1,234" && candidate.source == "special"; }));
+    assert(std::any_of(special_number.candidates().begin(), special_number.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "12:34" && candidate.source == "special"; }));
+    ImeSession special_year;
+    for (const char value : std::string("2019nen")) special_year.append_ascii(value);
+    assert(std::any_of(special_year.candidates().begin(), special_year.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "令和元年" && candidate.source == "special"; }));
+    ImeSession special_email;
+    special_email.set_mode(keynako::InputMode::english);
+    for (const char value : std::string("azooKey@g")) special_email.append_ascii(value);
+    assert(std::any_of(special_email.candidates().begin(), special_email.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "azooKey@gmail.com" &&
+            candidate.source == "email-prediction"; }));
     ImeSession ranked_prediction;
     ranked_prediction.set_user_dictionary({
         {"テストケース", "長い補完", 3},
@@ -109,15 +167,15 @@ int main() {
     });
     for (const char value : std::string("tesu")) ranked_prediction.append_ascii(value);
     assert(ranked_prediction.display_text() == "てす");
-    assert(ranked_prediction.candidates()[2].text == "重要な補完");
-    assert(ranked_prediction.candidates()[3].text == "短い補完");
+    assert(ranked_prediction.candidates()[1].text == "重要な補完");
+    assert(ranked_prediction.candidates()[2].text == "短い補完");
     ImeSession closer_prediction;
     closer_prediction.set_user_dictionary({
         {"テストケースナガイヨソク", "遠い高重要度", 5},
         {"テスト", "近い補完", 4},
     });
     for (const char value : std::string("tesu")) closer_prediction.append_ascii(value);
-    assert(closer_prediction.candidates()[2].text == "近い補完");
+    assert(closer_prediction.candidates()[1].text == "近い補完");
     ranked_prediction.clear();
     ranked_prediction.append_ascii('/');
     assert(std::none_of(ranked_prediction.candidates().begin(), ranked_prediction.candidates().end(),
@@ -276,6 +334,37 @@ int main() {
         "わたしはきょうとうきょうのえきでともだちとあいました", 1);
     assert(!long_sentence.empty() &&
            long_sentence.front() == "私は今日東京の駅で友達と会いました");
+    ImeSession stable_clause;
+    assert(stable_clause.set_bundled_dictionary_path(dictionary_path));
+    std::string committed_prefix;
+    for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
+        stable_clause.append_ascii(value);
+        committed_prefix += stable_clause.take_completed_clause();
+    }
+    assert(committed_prefix == "私");
+    assert(stable_clause.reading().rfind("は", 0) == 0);
+    assert(stable_clause.selected_text().rfind("は", 0) == 0);
+    ImeSession strong_clause;
+    assert(strong_clause.set_bundled_dictionary_path(dictionary_path));
+    strong_clause.set_automatic_completion_strength(4);
+    assert(strong_clause.automatic_completion_strength() == 4);
+    std::size_t strong_completed_at = 0;
+    const std::string phrase = "watashihakyouToukyounoekidetomodachitoaimashita";
+    for (std::size_t index = 0; index < phrase.size(); ++index) {
+        strong_clause.append_ascii(phrase[index]);
+        if (!strong_clause.take_completed_clause().empty()) {
+            strong_completed_at = index + 1;
+            break;
+        }
+    }
+    assert(strong_completed_at > 0 && strong_completed_at < phrase.size());
+    ImeSession disabled_clause;
+    assert(disabled_clause.set_bundled_dictionary_path(dictionary_path));
+    disabled_clause.set_automatic_completion_strength(0);
+    for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
+        disabled_clause.append_ascii(value);
+        assert(disabled_clause.take_completed_clause().empty());
+    }
     ImeSession personal_phrase;
     assert(personal_phrase.set_bundled_dictionary_path(dictionary_path));
     personal_phrase.set_user_dictionary({personal_entry});

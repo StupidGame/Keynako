@@ -1,3 +1,4 @@
+import 'azookey_special_candidates.dart';
 import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
@@ -93,6 +94,26 @@ class EnglishConverter {
           ),
         );
       }
+    }
+    for (final value in AzooKeySpecialCandidates.emailAddresses(input)) {
+      values.add(
+        ConversionCandidate(
+          text: value,
+          reading: value,
+          source: 'email-prediction',
+          score: 205,
+        ),
+      );
+    }
+    for (final value in AzooKeySpecialCandidates.complete(input)) {
+      values.add(
+        ConversionCandidate(
+          text: value,
+          reading: input,
+          source: 'special',
+          score: 190,
+        ),
+      );
     }
     for (final word in _words.where(
       (word) => word.toLowerCase().startsWith(normalized),

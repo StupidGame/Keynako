@@ -44,10 +44,13 @@ import android.widget.TextView
 import androidx.exifinterface.media.ExifInterface
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
+import io.github.StupidGame.azookey_flutter.conversion.AzooKeySpecialCandidates
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEntry
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCandidates
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryCombinationEntry
+import io.github.StupidGame.azookey_flutter.conversion.CompletedClause
+import io.github.StupidGame.azookey_flutter.conversion.StableClauseCompletion
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
@@ -62,6 +65,7 @@ import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
+import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
@@ -137,6 +141,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var capsLock = false
     private var selectedCandidate = 0
     private var candidateSelectedExplicitly = false
+    private val stableClauseCompletion = StableClauseCompletion()
     private var sensitiveInput = false
     private var allCapsInput = false
     private var activeCustomTab: String? = null
@@ -560,6 +565,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderFlick(scale: Double) {
+        val spaceLabel = if (settings.optBoolean("use_next_candidate_key", false)) "次候補" else "空白"
+        val spaceUp = if (settings.optBoolean("enable_paste_button_on_flick_cursorbar_key", false)) "貼付" else "　"
         val keys = if (mode == "english") listOf(
             listOf(
                 FlickKey("☆123", action = "symbols", special = true, customTarget = "symbols_tab"),
@@ -573,7 +580,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("GHI", "g", "h", "i", "4", null),
                 FlickKey("JKL", "j", "k", "l", "5", null),
                 FlickKey("MNO", "m", "n", "o", "6", null),
-                FlickKey("空白", "空白", "←", "　", "→", "\t", action = "space", special = true),
+                FlickKey(spaceLabel, spaceLabel, "←", spaceUp, "→", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -584,7 +591,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             ),
             listOf(
                 FlickKey(""),
-                FlickKey(if (shift || capsLock || allCapsInput) "A/a" else "a/A", action = "shiftEnglish", special = true),
+                FlickKey(if (shift || capsLock || allCapsInput) "A/a" else "a/A", action = "upperLowerEnglish", special = true),
                 FlickKey("'\"()", "'", "\"", "(", ")", null),
                 FlickKey(".,?!", ".", ",", "?", "!", "'", customTarget = "kana_symbols"),
                 FlickKey(""),
@@ -602,7 +609,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 FlickKey("た", "た", "ち", "つ", "て", "と"),
                 FlickKey("な", "な", "に", "ぬ", "ね", "の"),
                 FlickKey("は", "は", "ひ", "ふ", "へ", "ほ"),
-                FlickKey("空白", "空白", "←", "　", "→", "\t", action = "space", special = true),
+                FlickKey(spaceLabel, spaceLabel, "←", spaceUp, "→", "\t", action = "space", special = true),
             ),
             listOf(
                 FlickKey("あいう", action = "japanese", special = true, customTarget = "hira_tab"),
@@ -648,13 +655,13 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun renderQwerty(scale: Double) {
         val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        val english = mode == "english"
+        val useShift = english && settings.optBoolean("use_shift_key", false)
+        val legacyShift = useShift && settings.optBoolean("keep_deprecated_shift_key_behavior", true)
         for ((rowIndex, letters) in rows.withIndex()) {
             val row = newRow(scale)
-            if (rowIndex == 2) {
-                row.addView(
-                    createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() },
-                    weightParams(1.4f),
-                )
+            if (rowIndex == 1 && legacyShift) {
+                row.addView(createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() }, weightParams(1.3f))
             }
             for (letter in letters) {
                 val label = if (shift || capsLock || allCapsInput) letter.uppercase() else letter.toString()
@@ -662,12 +669,28 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             if (rowIndex == 2) {
                 row.addView(createKey("⌫", true, scale) { quickDelete() }, weightParams(1.4f))
+            } else if (rowIndex == 1 && english) {
+                val label = if (useShift) "." else if (capsLock) "⇪" else "Aa"
+                val key = createKey(label, true, scale) {
+                    if (useShift) inputText(".") else pressAa()
+                }
+                if (!useShift) key.setOnLongClickListener {
+                    capsLock = !capsLock
+                    shift = capsLock
+                    renderKeyboard()
+                    true
+                }
+                row.addView(key, weightParams(1.3f))
             }
             keyboardContainer.addView(row)
         }
         val bottom = newRow(scale)
         bottom.addView(createKey("☆123", true, scale) { setMode("symbols") }, weightParams(1.5f))
-        bottom.addView(View(this), weightParams(1.2f))
+        if (useShift && !legacyShift) {
+            bottom.addView(createKey(if (capsLock) "⇪" else "⇧", true, scale) { toggleShift() }, weightParams(1.2f))
+        } else {
+            bottom.addView(View(this), weightParams(1.2f))
+        }
         bottom.addView(createKey("space", false, scale) { space() }, weightParams(4f))
         bottom.addView(createKey("return", true, scale) { enter() }, weightParams(2f))
         keyboardContainer.addView(bottom)
@@ -1270,7 +1293,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             "enter" -> createKey("改行", true, scale) { enter() }
             "upper_lower" -> createKey("Aa", true, scale) {
-                if (mode == "english") toggleShift() else transformLastCharacter()
+                if (mode == "english") pressAa() else transformLastCharacter()
             }
             "next_candidate" -> createKey(if (composing.isEmpty()) "空白" else "次候補", true, scale) {
                 if (candidates.isEmpty()) space() else {
@@ -1525,6 +1548,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var textDragMoved = false
         val isDelete = key.action == "delete"
         val isSpace = key.action == "space"
+        val isAa = key.action == "upperLowerEnglish"
         val repeat = object : Runnable {
             override fun run() {
                 if (!repeating) return
@@ -1533,9 +1557,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
         val longPress = Runnable {
-            if (!isDelete && !isSpace) return@Runnable
+            if (!isDelete && !isSpace && !isAa) return@Runnable
             longPressed = true
-            if (composing.isEmpty() && rawRoman.isEmpty()) {
+            if (isAa) {
+                capsLock = !capsLock
+                shift = capsLock
+            } else if (composing.isEmpty() && rawRoman.isEmpty()) {
                 textDragSession = TextSelectionSession.capture(currentInputConnection)
                 textDragStep = 0
                 textDragMoved = false
@@ -1564,7 +1591,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     textDragSession = null
                     textDragStep = 0
                     textDragMoved = false
-                    if (isDelete || isSpace) handler.postDelayed(longPress, longPressDelay())
+                    if (isDelete || isSpace || isAa) handler.postDelayed(longPress, longPressDelay())
                     target.isPressed = true
                     showFlickGuide(target, key.label, key.left, key.up, key.right, key.down)
                     true
@@ -1635,7 +1662,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                         } else if (isSpace && direction == "right") {
                             moveCursor(1)
                         } else if (isSpace && direction == "up") {
-                            inputText("　")
+                            if (settings.optBoolean("enable_paste_button_on_flick_cursorbar_key", false)) {
+                                paste()
+                            } else {
+                                inputText("　")
+                            }
                         } else if (isSpace && direction == "down") {
                             inputText("\t")
                         } else if (isDelete && direction == "left") {
@@ -1649,6 +1680,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         }
                         feedback(target)
                     }
+                    if (isAa && longPressed) renderKeyboard()
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -2406,8 +2438,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         addCandidateButton(if (oneHandedMode == "left") "✓ 左寄せ" else "← 左寄せ") {
             setOneHandedMode("left")
         }
-        addCandidateButton(if (oneHandedMode == "full") "✓ 標準" else "↔ 標準") {
-            setOneHandedMode("full")
+        if (oneHandedMode == "full" ||
+            !settings.optBoolean("hide_reset_button_in_one_handed_mode", false)) {
+            addCandidateButton(if (oneHandedMode == "full") "✓ 標準" else "↔ 標準") {
+                setOneHandedMode("full")
+            }
         }
         addCandidateButton(if (oneHandedMode == "right") "✓ 右寄せ" else "右寄せ →") {
             setOneHandedMode("right")
@@ -2473,7 +2508,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun showEmoji() {
+        candidateExpanded = false
+        candidatePanel.visibility = View.GONE
+        candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
+        candidateScroll.scrollTo(0, 0)
+        addCandidateButton("閉じる") { renderCandidates() }
         val emoji = listOf("😀", "😃", "😊", "😂", "🥰", "😍", "😭", "😡", "👍", "🙏", "❤️", "🎉", "✨", "⭐️")
         for (value in emoji) addCandidateButton(value) { directCommit(value) }
     }
@@ -2542,7 +2582,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             inputEnglishText(input)
             return
         }
-        if (shouldDirectCommitJapaneseInput(input)) {
+        if (shouldDirectCommitJapaneseInput(input) &&
+            !(layout == "qwerty" && input.all(Char::isDigit))) {
             directCommit(input)
             return
         }
@@ -2567,7 +2608,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             // Some editors replace all-caps composing text with committed text.
             // Replacing that composition on the next key would duplicate it.
             directCommit(resolved)
-        } else if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+        } else if (resolved.all { it in 'a'..'z' || it in 'A'..'Z' } ||
+            AzooKeySpecialCandidates.canContinueEmail(composing, resolved)) {
             prepareSelectionForInput()
             composing += resolved
             updateComposition()
@@ -2596,8 +2638,59 @@ class AzooKeyInputMethodService : InputMethodService() {
             reading
         }
         currentInputConnection?.setComposingText(displayed, 1)
+        if (completeStableFirstClauseIfNeeded(reading)) return
         renderCandidateValues()
         requestZenzaiCandidates(reading, candidates.toList())
+    }
+
+    private fun completeStableFirstClauseIfNeeded(reading: String): Boolean {
+        if (mode != "japanese" || !settings.optBoolean("live_conversion", true)) {
+            stableClauseCompletion.reset()
+            return false
+        }
+        val candidate = candidates.firstOrNull().orEmpty()
+        val entries = buildList {
+            val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
+            for (index in 0 until dictionary.length()) {
+                val entry = dictionary.optJSONObject(index) ?: continue
+                if (entry.optBoolean("isTemplateMode", false)) continue
+                val ruby = katakanaToHiragana(entry.optString("ruby"))
+                val word = entry.optString("word")
+                if (reading.startsWith(ruby) && candidate.startsWith(word)) add(CompletedClause(ruby, word))
+            }
+            for (entry in hotfixDictionaryEntries) {
+                val ruby = katakanaToHiragana(entry.ruby)
+                if (reading.startsWith(ruby) && candidate.startsWith(entry.word)) {
+                    add(CompletedClause(ruby, entry.word))
+                }
+            }
+            for ((ruby, words) in systemDictionary) {
+                if (reading.startsWith(ruby)) {
+                    for (word in words) if (candidate.startsWith(word)) add(CompletedClause(ruby, word))
+                }
+            }
+        }
+        val clause = stableClauseCompletion.observe(
+            reading,
+            candidate,
+            entries,
+            settings.optInt("automatic_completion_strength", 1),
+            rawInput = if (layout == "qwerty") rawRoman else reading,
+        ) ?: return false
+        val remaining = reading.removePrefix(clause.reading)
+        val remainingRoman = if (layout == "qwerty") {
+            (0..rawRoman.length).firstOrNull { split ->
+                romanToHiragana(rawRoman.take(split)) == clause.reading &&
+                    romanToHiragana(rawRoman.drop(split)) == remaining
+            }?.let { rawRoman.drop(it) } ?: return false
+        } else ""
+        val connection = currentInputConnection ?: return false
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        if (!connection.commitText(clause.text, 1)) return false
+        composing = remaining
+        rawRoman = remainingRoman
+        updateComposition()
+        return true
     }
 
     private fun requestZenzaiCandidates(reading: String, baseCandidates: List<String>) {
@@ -2647,14 +2740,23 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
+    private fun blockedAdditionalEmoji(): Set<String> = buildSet {
+        if (settings.optBoolean("hide_cockroach_emoji", false)) add("🪳")
+        if (settings.optBoolean("hide_mosquito_emoji", false)) add("🦟")
+        if (settings.optBoolean("hide_spider_emoji", false)) addAll(listOf("🕸", "🕷"))
+        if (settings.optBoolean("hide_worm_emoji", false)) add("🪱")
+    }
+
     private fun buildCandidates(): List<String> {
         val input = displayReading()
         candidatePredictionReadings = emptyMap()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
-        if (shouldDirectCommitJapaneseInput(reading)) return listOf(reading)
+        val specialCandidates = AzooKeySpecialCandidates.complete(reading)
+        if (shouldDirectCommitJapaneseInput(reading) && specialCandidates.isEmpty()) return listOf(reading)
         val values = linkedSetOf<String>()
+        val blockedEmoji = blockedAdditionalEmoji()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
         val predictionReadings = mutableMapOf<String, String>()
@@ -2680,7 +2782,20 @@ class AzooKeyInputMethodService : InputMethodService() {
                 userPredictions.add(ReadingPrediction(ruby, value, entry.optInt("importance", 3)))
             }
         }
-        for (prediction in rankUserPrefixPredictions(reading, userPredictions, predictionLimit)) {
+        val registeredPredictions = rankUserPrefixPredictions(
+            reading,
+            userPredictions + hotfixDictionaryEntries.mapNotNull { entry ->
+                val ruby = katakanaToHiragana(entry.ruby)
+                if (ruby.length <= reading.length || !ruby.startsWith(reading)) null
+                else ReadingPrediction(
+                    ruby,
+                    entry.word,
+                    ((entry.wordWeight + 9.0) / 2.0 + 3.0).toInt().coerceIn(1, 5),
+                )
+            },
+            predictionLimit,
+        )
+        for (prediction in registeredPredictions) {
             predictedValues.add(prediction.text)
             predictionReadings.getOrPut(prediction.text) { prediction.reading }
         }
@@ -2715,10 +2830,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         }.getOrElse {
             DictionaryCandidates(emptyList(), emptyList())
         }
-        values.addAll(officialCandidates.conversions.take(1))
+        val explicitWords = (personalEntries + hotfixDictionaryEntries).mapTo(mutableSetOf()) { it.word }
+        val allowedOfficialConversions = officialCandidates.conversions.filter {
+            it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
+        }
+        values.addAll(allowedOfficialConversions.take(1))
         values.addAll(combinedWords)
-        values.addAll(officialCandidates.conversions.drop(1))
-        if (officialCandidates.conversions.isEmpty()) {
+        values.addAll(specialCandidates)
+        values.addAll(allowedOfficialConversions.drop(1))
+        if (allowedOfficialConversions.isEmpty()) {
             systemDictionary[reading]?.let(values::addAll)
         }
         val completeConversions = values.toSet()
@@ -2732,7 +2852,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                 predictedValues.add(prediction.text)
                 predictionReadings.getOrPut(prediction.text) { prediction.reading }
             }
-            predictedValues.addAll(officialCandidates.predictions)
+            predictedValues.addAll(officialCandidates.predictions.filter {
+                it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
+            })
+            for (email in AzooKeySpecialCandidates.emails(if (layout == "qwerty") rawRoman else reading)) {
+                predictedValues.add(email)
+                predictionReadings.getOrPut(email) { email }
+            }
             for ((text, ruby) in officialCandidates.predictionReadings) {
                 predictionReadings.getOrPut(text) { ruby }
             }
@@ -2751,16 +2877,21 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (layout == "qwerty" && settings.optBoolean("typography_roman_candidate", true) && rawRoman.isNotEmpty()) {
             values.add(toMathematicalBold(rawRoman))
         }
-        if (settings.optBoolean("emoji_dictionary_enabled", true)) emojiDictionary[reading]?.let(values::addAll)
+        if (settings.optBoolean("emoji_dictionary_enabled", true)) {
+            emojiDictionary[reading]?.filter {
+                it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
+            }?.let(values::addAll)
+        }
         if (settings.optBoolean("kaomoji_dictionary_enabled", false)) kaomojiDictionary[reading]?.let(values::addAll)
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
         val learning = learningScores()
         val learned = exactLearnedJapaneseCandidates(reading, learning)
         val exactTexts = values.toSet() + learned
-        for (entry in learnedCandidates(learning)) {
-            if (entry.reading.length > reading.length && entry.reading.startsWith(reading) && entry.text !in exactTexts) {
-                predictionReadings.getOrPut(entry.text) { entry.reading }
-            }
+        val learnedPrefixes = learnedJapanesePrefixPredictions(
+            reading, learning, exactTexts, predictionLimit,
+        )
+        for (entry in learnedPrefixes) {
+            predictionReadings.getOrPut(entry.text) { entry.reading }
         }
         candidatePredictionReadings = predictionReadings.filterKeys { it !in exactTexts }
         val ranked = rankJapaneseCandidates(
@@ -2775,6 +2906,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             ranked = ranked,
             liveCandidate = bestLiveJapaneseConversion(reading, completeConversions, ranked),
             learnedCandidates = learned,
+            prominentPredictions = (
+                registeredPredictions.take(2).map(ReadingPrediction::text) +
+                    learnedPrefixes.take(2).map { it.text } +
+                    registeredPredictions.drop(2).map(ReadingPrediction::text) +
+                    learnedPrefixes.drop(2).map { it.text }
+            ).distinct().take(4),
         )
     }
 
@@ -2797,7 +2934,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
         }
 
-        return englishPredictionCandidates(input, preferred, PREDICTION_LIMIT, learningScores())
+        val ranked = englishPredictionCandidates(input, preferred, PREDICTION_LIMIT, learningScores())
+        return (ranked.take(1) + AzooKeySpecialCandidates.emails(input) +
+            AzooKeySpecialCandidates.complete(input) + ranked.drop(1))
+            .distinct().take(PREDICTION_LIMIT)
     }
 
     private fun commitCandidate(index: Int) {
@@ -2822,6 +2962,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         learnSelectedCandidate(displayReading(), candidate, explicitSelection = true)
         composing = ""
         rawRoman = ""
+        stableClauseCompletion.reset()
         selectedCandidate = 0
         candidateSelectedExplicitly = false
         renderCandidates()
@@ -2964,8 +3105,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }
     }
 
+    private fun shouldStopLearningForSearch(): Boolean =
+        settings.optBoolean("stop_learning_when_search", false) &&
+            currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) == EditorInfo.IME_ACTION_SEARCH
+
     private fun learnCandidate(reading: String, candidate: String, explicitSelection: Boolean = false) {
-        if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) != 0) return
+        if (sensitiveInput || shouldStopLearningForSearch() ||
+            settings.optInt("memory_learining_styple_setting", 0) != 0) return
         val scores = learningScores().toMutableMap()
         recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
         state.put("learning", JSONObject(scores))
@@ -2991,6 +3137,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly)
         composing = ""
         rawRoman = ""
+        stableClauseCompletion.reset()
         selectedCandidate = 0
         candidateSelectedExplicitly = false
         renderCandidates()
@@ -3027,6 +3174,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         composing = ""
         rawRoman = ""
+        stableClauseCompletion.reset()
         selectedCandidate = 0
         candidateSelectedExplicitly = false
         candidates.clear()
@@ -3204,14 +3352,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (dictionaryMode == DictionaryMode.EDIT) { editDictionaryText(" "); return }
         if (composing.isEmpty() && rawRoman.isEmpty()) {
             directCommit(" ")
+        } else if (layout == "flick" && settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
+            selectNextCandidate()
         } else if (mode == "english") {
             commitComposition()
             directCommit(" ")
-        } else if (settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
-            selectedCandidate = (selectedCandidate + 1) % candidates.size
-            candidateSelectedExplicitly = true
-            currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
-            renderCandidates(false)
         } else {
             commitComposition()
         }
@@ -3250,6 +3395,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         renderKeyboard()
     }
 
+    private fun pressAa() {
+        if (capsLock) {
+            capsLock = false
+            shift = false
+            renderKeyboard()
+        } else {
+            transformLastCharacter()
+        }
+    }
+
     private fun setMode(newMode: String) {
         if (dictionaryMode != DictionaryMode.EDIT && (mode != "english" || newMode != "english")) commitComposition()
         mode = newMode
@@ -3283,6 +3438,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             "english" -> setMode("english")
             "kogana" -> transformLastCharacter()
             "shiftEnglish" -> toggleShift()
+            "upperLowerEnglish" -> pressAa()
             "nextKeyboard" -> nextKeyboard()
         }
     }
@@ -3823,7 +3979,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun transformLastCharacter() {
         if (composing.isNotEmpty()) {
             val last = composing.last().toString()
-            val transformed = kanaCharacterFormReplacement(last) ?: return
+            val transformed = if (mode == "english" && last.single().isLetter() && last.single().code < 128) {
+                if (last == last.uppercase(Locale.ROOT)) last.lowercase(Locale.ROOT) else last.uppercase(Locale.ROOT)
+            } else kanaCharacterFormReplacement(last) ?: return
             composing = composing.dropLast(1) + transformed
             updateComposition()
             return
@@ -3831,7 +3989,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         val connection = currentInputConnection ?: return
         val before = connection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
         val last = before.takeLast(1)
-        val transformed = kanaCharacterFormReplacement(last) ?: return
+        val transformed = if (mode == "english" && last.length == 1 && last[0].isLetter() && last[0].code < 128) {
+            if (last == last.uppercase(Locale.ROOT)) last.lowercase(Locale.ROOT) else last.uppercase(Locale.ROOT)
+        } else kanaCharacterFormReplacement(last) ?: return
         connection.deleteSurroundingText(last.length, 0)
         connection.commitText(transformed, 1)
     }
@@ -4241,6 +4401,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             "おめでとう" to listOf("🎉", "🎊"),
             "ねこ" to listOf("🐈", "🐱"),
             "いぬ" to listOf("🐕", "🐶"),
+            "ごきぶり" to listOf("🪳"),
+            "か" to listOf("🦟"),
+            "くも" to listOf("🕷️", "🕸️"),
+            "みみず" to listOf("🪱"),
         )
         private val kaomojiDictionary = mapOf(
             "えがお" to listOf("( ´ ▽ ` )", "(^_^)", "(๑˃̵ᴗ˂̵)"),

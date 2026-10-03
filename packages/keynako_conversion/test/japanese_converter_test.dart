@@ -36,6 +36,25 @@ void main() {
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
 
+  test('hides selected additional emoji without hiding a personal word', () {
+    const options = ConversionOptions(
+      emojiDenylist: {'🕷', '🕸'},
+      userDictionary: [ConversionDictionaryEntry(reading: 'くも', value: '🕷️')],
+    );
+    final values = converter.candidates(input: 'くも', options: options);
+    expect(values.where((value) => value.text == '🕷️').length, 1);
+    expect(values.first.source, 'user');
+    expect(values.map((value) => value.text), isNot(contains('🕸️')));
+    final withoutPersonalWord = converter.candidates(
+      input: 'くも',
+      options: const ConversionOptions(emojiDenylist: {'🕷', '🕸'}),
+    );
+    expect(
+      withoutPersonalWord.map((value) => value.text),
+      isNot(contains('🕷️')),
+    );
+  });
+
   test('applies a personal word to the start of a longer reading', () {
     final values = converter.candidates(
       input: 'てすとかな',
@@ -149,11 +168,33 @@ void main() {
     );
 
     expect(candidates.first.text, 'にほ');
-    expect(candidates[1].text, 'ニホ');
-    expect(candidates[2].text, '日本語入力');
+    expect(candidates[1].text, '日本語入力');
+    expect(candidates[2].text, 'ニホ');
     expect(candidates.map((candidate) => candidate.text), contains('日本'));
-    expect(candidates[2].source, 'user-prediction');
-    expect(candidates[2].reading, 'にほんご');
+    expect(candidates[1].source, 'user-prediction');
+    expect(candidates[1].reading, 'にほんご');
+  });
+
+  test('shows a registered long word for both short reading prefixes', () {
+    const options = ConversionOptions(
+      userDictionary: [
+        ConversionDictionaryEntry(reading: 'かめんらいだー', value: '仮面ライダー'),
+        ConversionDictionaryEntry(reading: 'かめ', value: '亀壱'),
+        ConversionDictionaryEntry(reading: 'かめ', value: '亀弐'),
+        ConversionDictionaryEntry(reading: 'かめ', value: '亀参'),
+      ],
+    );
+    for (final reading in ['かめ', 'かめん']) {
+      final candidates = converter.candidates(input: reading, options: options);
+      expect(candidates.first.text, isNot('仮面ライダー'));
+      expect(candidates[1].text, '仮面ライダー', reason: reading);
+      expect(
+        candidates
+            .firstWhere((candidate) => candidate.text == '仮面ライダー')
+            .reading,
+        'かめんらいだー',
+      );
+    }
   });
 
   test('prediction candidates retain their complete readings', () {
@@ -170,6 +211,19 @@ void main() {
     expect(values.firstWhere((value) => value.text == '日本').reading, 'にほん');
   });
 
+  test('learned words surface beside conversions from short prefixes', () {
+    for (final reading in ['かめ', 'かめん']) {
+      final candidates = converter.candidates(
+        input: reading,
+        options: const ConversionOptions(learning: {'かめんらいだー\t仮面ライダー': 8}),
+      );
+      expect(candidates.first.text, isNot('仮面ライダー'));
+      expect(candidates[1].text, '仮面ライダー', reason: reading);
+      expect(candidates[1].reading, 'かめんらいだー');
+      expect(candidates[1].source, 'learned-prediction');
+    }
+  });
+
   test('can disable Japanese prefix predictions', () {
     final candidates = converter.candidates(input: 'にほ', predictionLimit: 0);
 
@@ -179,28 +233,31 @@ void main() {
     );
   });
 
-  test('keeps complete matches ahead of longer, high importance words', () {
-    for (final live in [true, false]) {
-      final texts = converter
-          .candidates(
-            input: 'あい',
-            options: ConversionOptions(
-              liveConversion: live,
-              userDictionary: const [
-                ConversionDictionaryEntry(
-                  reading: 'あいさつ',
-                  value: '挨拶',
-                  importance: 5,
-                ),
-              ],
-            ),
-          )
-          .map((value) => value.text)
-          .toList();
-      expect(texts.indexOf('藍'), lessThan(texts.indexOf('挨拶')));
-      expect(texts.indexOf('相'), lessThan(texts.indexOf('挨拶')));
-    }
-  });
+  test(
+    'keeps the leading complete match while showing a registered completion',
+    () {
+      for (final live in [true, false]) {
+        final texts = converter
+            .candidates(
+              input: 'あい',
+              options: ConversionOptions(
+                liveConversion: live,
+                userDictionary: const [
+                  ConversionDictionaryEntry(
+                    reading: 'あいさつ',
+                    value: '挨拶',
+                    importance: 5,
+                  ),
+                ],
+              ),
+            )
+            .map((value) => value.text)
+            .toList();
+        expect(texts.first, isNot('挨拶'));
+        expect(texts.indexOf('挨拶'), 1);
+      }
+    },
+  );
 
   test('ranks equally weighted predictions by remaining reading length', () {
     final texts = converter
@@ -231,7 +288,7 @@ void main() {
       options: options,
     );
     expect(partial.first.text, 'きー');
-    expect(partial[2].text, 'Keynako');
+    expect(partial[1].text, 'Keynako');
     expect(
       converter
           .candidates(input: 'きー', predictionLimit: 0, options: options)

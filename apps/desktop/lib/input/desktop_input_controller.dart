@@ -306,17 +306,22 @@ class DesktopInputController extends ChangeNotifier {
   }
 
   Future<bool> shareCandidate(int index) async {
-    if (_candidateSharing || index < 0 || index >= _candidates.length) {
+    if (index < 0 || index >= _candidates.length) return false;
+    final candidate = _candidates[index];
+    return shareCandidateText(candidate.text, candidate.reading);
+  }
+
+  Future<bool> shareCandidateText(String word, String reading) async {
+    if (_candidateSharing || word.trim().isEmpty || reading.trim().isEmpty) {
       return false;
     }
-    final candidate = _candidates[index];
     _candidateSharing = true;
     _candidateShareStatus = '共有ストレージへ送信中';
     notifyListeners();
     try {
       final sent = await _sharedDictionarySubmitter.submit(
-        word: candidate.text,
-        ruby: candidate.reading,
+        word: word,
+        ruby: reading,
         importance: 3,
         categories: const [],
         note: 'Desktop candidate right-click',
@@ -333,22 +338,32 @@ class DesktopInputController extends ChangeNotifier {
   }
 
   Future<bool> saveCandidateToPersonalDictionary(int index) async {
+    if (index < 0 || index >= _candidates.length) return false;
+    final candidate = _candidates[index];
+    return saveCandidateTextToPersonalDictionary(
+      candidate.text,
+      candidate.reading,
+    );
+  }
+
+  Future<bool> saveCandidateTextToPersonalDictionary(
+    String word,
+    String reading,
+  ) async {
     final repository = _personalDictionaryRepository;
     if (_candidateSharing ||
         repository == null ||
-        index < 0 ||
-        index >= _candidates.length) {
+        word.trim().isEmpty ||
+        reading.trim().isEmpty) {
       return false;
     }
-    final candidate = _candidates[index];
     _candidateSharing = true;
     _candidateShareStatus = '個人辞書に登録中';
     notifyListeners();
     try {
       final entries = await repository.load();
       if (entries.any(
-        (entry) =>
-            entry.reading == candidate.reading && entry.value == candidate.text,
+        (entry) => entry.reading == reading && entry.value == word,
       )) {
         _personalDictionary = List.unmodifiable(entries);
         _personalDictionaryLoadFailed = false;
@@ -358,11 +373,7 @@ class DesktopInputController extends ChangeNotifier {
       }
       await savePersonalDictionary([
         ...entries,
-        ConversionDictionaryEntry(
-          reading: candidate.reading,
-          value: candidate.text,
-          importance: 3,
-        ),
+        ConversionDictionaryEntry(reading: reading, value: word, importance: 3),
       ]);
       _candidateShareStatus = '個人辞書に登録しました';
       return true;

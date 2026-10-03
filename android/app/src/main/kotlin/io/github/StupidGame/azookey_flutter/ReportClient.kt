@@ -52,11 +52,27 @@ object ReportClient {
                     try {
                         connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
                         val status = connection.responseCode
-                        val stream = if (status >= 400) connection.errorStream else connection.inputStream
-                        val bytes = stream?.use { it.readNBytes(MAXIMUM_RESPONSE_BYTES + 1) } ?: byteArrayOf()
-                        status in 200..299 &&
-                            bytes.size <= MAXIMUM_RESPONSE_BYTES &&
-                            responseAcceptsSubmission(String(bytes, StandardCharsets.UTF_8))
+                        val redirected = sharedSubmissionResponseUrl(
+                            url,
+                            status,
+                            connection.getHeaderField("Location"),
+                        )
+                        if (redirected != null) {
+                            val responseConnection = (redirected.openConnection() as HttpURLConnection).apply {
+                                requestMethod = "GET"
+                                connectTimeout = 15_000
+                                readTimeout = 30_000
+                                instanceFollowRedirects = false
+                                setRequestProperty("Accept", "application/json")
+                            }
+                            try {
+                                acceptsSharedSubmissionResponse(responseConnection)
+                            } finally {
+                                responseConnection.disconnect()
+                            }
+                        } else {
+                            acceptsSharedSubmissionResponse(connection, status)
+                        }
                     } finally {
                         connection.disconnect()
                     }
@@ -120,6 +136,26 @@ object ReportClient {
         "source" to "Keynako IME",
         "app_version" to appVersion,
     )
+
+    internal fun sharedSubmissionResponseUrl(url: URL, status: Int, location: String?): URL? {
+        if (url.host != "script.google.com" || status !in listOf(302, 303) || location.isNullOrBlank()) {
+            return null
+        }
+        val redirect = URL(url, location)
+        return redirect.takeIf {
+            it.protocol == "https" && it.host == "script.googleusercontent.com"
+        }
+    }
+
+    private fun acceptsSharedSubmissionResponse(
+        connection: HttpURLConnection,
+        status: Int = connection.responseCode,
+    ): Boolean {
+        if (status !in 200..299) return false
+        val bytes = connection.inputStream.use { it.readNBytes(MAXIMUM_RESPONSE_BYTES + 1) }
+        return bytes.size <= MAXIMUM_RESPONSE_BYTES &&
+            responseAcceptsSubmission(String(bytes, StandardCharsets.UTF_8))
+    }
 
     private fun responseAcceptsSubmission(body: String): Boolean {
         if (body.isBlank()) return true

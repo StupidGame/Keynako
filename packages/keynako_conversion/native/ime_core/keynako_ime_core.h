@@ -36,8 +36,12 @@ public:
     InputMode mode() const { return mode_; }
     void set_live_conversion(bool enabled);
     bool live_conversion() const { return live_conversion_; }
+    void set_automatic_completion_strength(int strength);
+    int automatic_completion_strength() const { return automatic_completion_strength_; }
     void append_ascii(char value);
     void append_literal_ascii(char value);
+    // Returns a stable converted prefix and keeps its unread suffix composing.
+    std::string take_completed_clause();
     void backspace();
     void backspace_word();
     void clear();
@@ -59,6 +63,7 @@ public:
     }
     std::string display_text() const;
     std::string selected_text() const;
+    std::string candidate_reading(std::size_t index) const;
 
     void select_next();
     void select_previous();
@@ -71,9 +76,12 @@ private:
     void rebuild_candidates();
     std::string learning_key() const;
     void prioritize_learning();
+    void observe_stable_clause();
+    void reset_stable_clause();
 
     InputMode mode_ = InputMode::japanese;
     bool live_conversion_ = true;
+    int automatic_completion_strength_ = 1;
     bool converting_ = false;
     bool live_conversion_suspended_ = false;
     std::string raw_input_;
@@ -87,6 +95,12 @@ private:
     // Session-local preferences are bounded and never include surrounding text.
     std::map<std::string, std::map<std::string, int>> learning_;
     std::deque<std::string> learning_order_;
+    std::string stable_raw_input_;
+    std::string stable_clause_reading_;
+    std::string stable_clause_text_;
+    std::string completed_clause_text_;
+    std::size_t completed_clause_raw_length_ = 0;
+    int stable_clause_count_ = 0;
 };
 
 }  // namespace keynako

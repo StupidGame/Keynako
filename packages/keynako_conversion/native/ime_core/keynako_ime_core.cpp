@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -82,6 +83,105 @@ std::size_t utf8_character_count(const std::string &value) {
 void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> &seen,
                    std::string text, const char *source) {
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
+}
+
+bool ascii_digits(const std::string &value) {
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char character) { return character >= '0' && character <= '9'; });
+}
+
+std::vector<std::string> email_address_candidates(const std::string &input) {
+    static const std::vector<std::string> domains = {
+        "@gmail.com", "@icloud.com", "@yahoo.co.jp", "@au.com",
+        "@docomo.ne.jp", "@excite.co.jp", "@ezweb.ne.jp", "@googlemail.com",
+        "@hotmail.co.jp", "@hotmail.com", "@i.softbank.jp", "@live.jp",
+        "@me.com", "@mineo.jp", "@nifty.com", "@outlook.com", "@outlook.jp",
+        "@softbank.ne.jp", "@yahoo.ne.jp", "@ybb.ne.jp", "@ymobile.ne.jp",
+    };
+    const auto at = input.rfind('@');
+    if (at == std::string::npos) return {};
+    const std::string local = input.substr(0, at);
+    if (!std::all_of(local.begin(), local.end(), [](unsigned char value) {
+            return std::isalnum(value) || value == '.' || value == '_' ||
+                value == '+' || value == '-';
+        })) return {};
+    std::string prefix = input.substr(at);
+    std::transform(prefix.begin(), prefix.end(), prefix.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    std::vector<std::string> result;
+    for (const auto &domain : domains) {
+        if (domain.rfind(prefix, 0) == 0) result.push_back(local + domain);
+    }
+    return result;
+}
+
+std::vector<std::string> special_complete_candidates(const std::string &reading) {
+    std::vector<std::string> result;
+    const bool negative = !reading.empty() && reading.front() == '-';
+    const std::string unsigned_text = negative ? reading.substr(1) : reading;
+    const auto dot = unsigned_text.find('.');
+    const std::string integer = unsigned_text.substr(0, dot);
+    const std::string fractional = dot == std::string::npos ? "" : unsigned_text.substr(dot + 1);
+    if (ascii_digits(integer) &&
+        (dot == std::string::npos ||
+         (ascii_digits(fractional) && fractional.find('.') == std::string::npos))) {
+        if (integer.size() > 3) {
+            std::string grouped;
+            for (std::size_t index = 0; index < integer.size(); ++index) {
+                if (index > 0 && (integer.size() - index) % 3 == 0) grouped.push_back(',');
+                grouped.push_back(integer[index]);
+            }
+            result.push_back((negative ? "-" : "") + grouped +
+                (dot == std::string::npos ? "" : "." + fractional));
+        }
+        if (!negative && dot == std::string::npos && integer.size() >= 3 && integer.size() <= 4) {
+            const int hours = std::stoi(integer.substr(0, integer.size() - 2));
+            const int minutes = std::stoi(integer.substr(integer.size() - 2));
+            if (hours <= 24 && minutes <= 59) {
+                result.push_back(integer.substr(0, integer.size() - 2) + ":" +
+                    integer.substr(integer.size() - 2));
+            }
+        }
+    }
+    const std::string year_suffix = "ねん";
+    if (reading.size() == 4 + year_suffix.size() &&
+        reading.compare(4, year_suffix.size(), year_suffix) == 0 &&
+        ascii_digits(reading.substr(0, 4))) {
+        const int year = std::stoi(reading.substr(0, 4));
+        const std::vector<std::tuple<int, int, std::string>> eras = {
+            {2019, 2018, "令和"}, {1989, 1988, "平成"},
+            {1926, 1925, "昭和"}, {1912, 1911, "大正"}, {1868, 1867, "明治"},
+        };
+        for (const auto &[start, offset, name] : eras) {
+            if (year >= start) {
+                result.push_back(name + (year == start ? "元" : std::to_string(year - offset)) + "年");
+                break;
+            }
+        }
+        if (year == 2019) result.push_back("平成31年");
+        if (year == 1989) result.push_back("昭和64年");
+        if (year == 1926) result.push_back("大正15年");
+        if (year == 1912) result.push_back("明治45年");
+        if (year == 1868) result.push_back("慶應4年");
+    }
+    if (reading.size() > year_suffix.size() &&
+        reading.compare(reading.size() - year_suffix.size(), year_suffix.size(), year_suffix) == 0) {
+        const std::vector<std::pair<std::string, int>> eras = {
+            {"めいじ", 1867}, {"たいしょう", 1911}, {"しょうわ", 1925},
+            {"へいせい", 1988}, {"れいわ", 2018},
+        };
+        for (const auto &[name, offset] : eras) {
+            if (reading.rfind(name, 0) != 0) continue;
+            const auto year = reading.substr(name.size(),
+                reading.size() - name.size() - year_suffix.size());
+            if (year == "がん") result.push_back(std::to_string(offset + 1) + "年");
+            else if (year.size() <= 2 && ascii_digits(year)) {
+                result.push_back(std::to_string(offset + std::stoi(year)) + "年");
+            }
+            break;
+        }
+    }
+    return result;
 }
 
 std::vector<std::string> dictionary_combinations(
@@ -281,6 +381,7 @@ std::size_t word_delete_start(const std::string &input, InputMode mode,
 
 void ImeSession::set_mode(InputMode mode) {
     if (mode_ == mode) return;
+    reset_stable_clause();
     const bool was_converting = converting_;
     mode_ = mode;
     pending_word_delete_start_ = std::string::npos;
@@ -288,7 +389,11 @@ void ImeSession::set_mode(InputMode mode) {
     rebuild_candidates();
     converting_ = was_converting && !candidates_.empty();
 }
-void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
+void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; reset_stable_clause(); }
+void ImeSession::set_automatic_completion_strength(int strength) {
+    automatic_completion_strength_ = std::clamp(strength, 0, 4);
+    reset_stable_clause();
+}
 void ImeSession::append_ascii(char value) {
     append_ascii_internal(value, is_literal_candidate_suffix(value), false);
 }
@@ -316,7 +421,11 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     }
     raw_input_.push_back(value);
     rebuild_candidates();
-    if (!preserve_selection) return;
+    if (!preserve_selection) {
+        observe_stable_clause();
+        return;
+    }
+    reset_stable_clause();
 
     const std::string expected = selected_prefix + display_ascii(value, mode_);
     const auto found = std::find_if(
@@ -336,7 +445,83 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     }
     converting_ = was_converting;
 }
+void ImeSession::reset_stable_clause() {
+    stable_raw_input_.clear();
+    stable_clause_reading_.clear();
+    stable_clause_text_.clear();
+    completed_clause_text_.clear();
+    completed_clause_raw_length_ = 0;
+    stable_clause_count_ = 0;
+}
+
+void ImeSession::observe_stable_clause() {
+    if (mode_ != InputMode::japanese || !live_conversion_ || automatic_completion_strength_ == 0 ||
+        live_conversion_suspended_ ||
+        converting_ || has_literal_suffix() || candidates_.empty() || selected_index_ != 0) {
+        reset_stable_clause();
+        return;
+    }
+    if (raw_input_ == stable_raw_input_) return;
+    const std::string &candidate = candidates_.front().text;
+    std::string clause_reading;
+    std::string clause_text;
+    const auto consider = [&](const std::string &ruby, const std::string &word) {
+        if (word.empty() || utf8_character_count(ruby) < 2 || ruby.size() >= reading_.size() ||
+            reading_.compare(0, ruby.size(), ruby) != 0 || word == ruby ||
+            word.size() >= candidate.size() || candidate.compare(0, word.size(), word) != 0) return;
+        if (ruby.size() > clause_reading.size()) {
+            clause_reading = ruby;
+            clause_text = word;
+        }
+    };
+    for (const auto &entry : user_dictionary_) consider(entry.reading, entry.value);
+    for (const auto &[ruby, values] : kDictionary) {
+        for (const auto &word : values) consider(ruby, word);
+    }
+    if (clause_reading.empty()) {
+        reset_stable_clause();
+        return;
+    }
+    std::size_t split = std::string::npos;
+    for (std::size_t index = 1; index < raw_input_.size(); ++index) {
+        if (roman_to_hiragana(raw_input_.substr(0, index)) == clause_reading &&
+            roman_to_hiragana(raw_input_.substr(index)) == reading_.substr(clause_reading.size())) {
+            split = index;
+            break;
+        }
+    }
+    if (split == std::string::npos) {
+        reset_stable_clause();
+        return;
+    }
+    stable_clause_count_ = raw_input_.compare(0, stable_raw_input_.size(), stable_raw_input_) == 0 &&
+        clause_reading == stable_clause_reading_ && clause_text == stable_clause_text_
+        ? stable_clause_count_ + 1 : 1;
+    stable_raw_input_ = raw_input_;
+    stable_clause_reading_ = clause_reading;
+    stable_clause_text_ = clause_text;
+    static constexpr int thresholds[] = {0, 16, 13, 10, 6};
+    if (stable_clause_count_ >= thresholds[automatic_completion_strength_]) {
+        completed_clause_text_ = clause_text;
+        completed_clause_raw_length_ = split;
+    }
+}
+
+std::string ImeSession::take_completed_clause() {
+    if (completed_clause_text_.empty() || completed_clause_raw_length_ == 0 ||
+        completed_clause_raw_length_ >= raw_input_.size()) return {};
+    std::string text = completed_clause_text_;
+    raw_input_.erase(0, completed_clause_raw_length_);
+    literal_suffix_start_ = std::string::npos;
+    pending_word_delete_start_ = std::string::npos;
+    converting_ = false;
+    reset_stable_clause();
+    rebuild_candidates();
+    return text;
+}
+
 void ImeSession::backspace() {
+    reset_stable_clause();
     if (raw_input_.empty()) {
         pending_word_delete_start_ = std::string::npos;
         return;
@@ -390,6 +575,7 @@ void ImeSession::backspace() {
 }
 
 void ImeSession::backspace_word() {
+    reset_stable_clause();
     if (raw_input_.empty()) {
         pending_word_delete_start_ = std::string::npos;
         return;
@@ -413,7 +599,7 @@ void ImeSession::backspace_word() {
     live_conversion_suspended_ = false;
     rebuild_candidates();
 }
-void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; }
+void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; reset_stable_clause(); }
 
 std::string ImeSession::learning_key() const {
     if (mode_ == InputMode::japanese) return reading_;
@@ -425,9 +611,15 @@ std::string ImeSession::learning_key() const {
 
 void ImeSession::learn_selected() {
     if (mode_ != InputMode::japanese || raw_input_.empty() || candidates_.empty()) return;
-    const auto key = learning_key();
-    const auto text = selected_text();
+    auto key = learning_key();
+    const auto &selected = candidates_[selected_index_];
+    const auto text = selected.text;
     if (text.empty()) return;
+    if (selected.source.find("prediction") != std::string::npos) {
+        const auto full_reading = candidate_reading(selected_index_);
+        if (full_reading == key) return;
+        key = full_reading;
+    }
     auto &scores = learning_[key];
     if (converting_ || selected_index_ != 0) {
         int highest = 0;
@@ -451,6 +643,9 @@ void ImeSession::prioritize_learning() {
     const auto found = learning_.find(learning_key());
     if (found == learning_.end()) return;
     const auto score = [&](const Candidate &candidate) {
+        // A selected completion must never become live conversion for an
+        // unfinished reading on the next keystroke.
+        if (candidate.source.find("prediction") != std::string::npos) return 0;
         const auto entry = found->second.find(candidate.text);
         return entry == found->second.end() ? 0 : entry->second;
     };
@@ -460,6 +655,7 @@ void ImeSession::prioritize_learning() {
 }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
+    reset_stable_clause();
     converting_ = true;
     live_conversion_suspended_ = false;
     selected_index_ = 0;
@@ -467,6 +663,7 @@ bool ImeSession::begin_conversion() {
 }
 bool ImeSession::cancel_conversion() {
     if (!converting_) return false;
+    reset_stable_clause();
     converting_ = false;
     live_conversion_suspended_ = true;
     selected_index_ = 0;
@@ -511,6 +708,22 @@ bool ImeSession::set_bundled_dictionary_path(const std::string &utf8_path) {
 }
 std::string ImeSession::display_text() const { return (converting_ || (live_conversion_ && !live_conversion_suspended_)) && !candidates_.empty() ? candidates_[selected_index_].text : reading_; }
 std::string ImeSession::selected_text() const { return candidates_.empty() ? reading_ : candidates_[selected_index_].text; }
+std::string ImeSession::candidate_reading(std::size_t index) const {
+    if (index >= candidates_.size()) return reading_;
+    const auto &candidate = candidates_[index];
+    if (candidate.source.find("prediction") == std::string::npos) return reading_;
+    for (const auto &entry : user_dictionary_) {
+        if (entry.value == candidate.text && entry.reading.size() > reading_.size() &&
+            entry.reading.rfind(reading_, 0) == 0) return entry.reading;
+    }
+    std::string learned_reading;
+    for (const auto &[ruby, scores] : learning_) {
+        if (ruby.size() <= reading_.size() || ruby.rfind(reading_, 0) != 0 ||
+            scores.find(candidate.text) == scores.end()) continue;
+        if (learned_reading.empty() || ruby.size() < learned_reading.size()) learned_reading = ruby;
+    }
+    return learned_reading.empty() ? reading_ : learned_reading;
+}
 void ImeSession::select_next() { if (!candidates_.empty()) selected_index_ = (selected_index_ + 1) % candidates_.size(); }
 void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ = (selected_index_ + candidates_.size() - 1) % candidates_.size(); }
 
@@ -573,6 +786,12 @@ void ImeSession::rebuild_candidates() {
         std::string upper = raw_input_;
         std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char value) { return static_cast<char>(std::toupper(value)); });
         append_unique(candidates_, seen, std::move(upper), "english-upper");
+        for (auto &value : email_address_candidates(raw_input_)) {
+            append_unique(candidates_, seen, std::move(value), "email-prediction");
+        }
+        for (auto &value : special_complete_candidates(raw_input_)) {
+            append_unique(candidates_, seen, std::move(value), "special");
+        }
         return;
     }
 
@@ -691,6 +910,12 @@ void ImeSession::rebuild_candidates() {
             append_converted(value, "dictionary");
         }
     }
+    for (auto &value : special_complete_candidates(conversion_reading)) {
+        append_converted(std::move(value), "special");
+    }
+    for (auto &value : email_address_candidates(conversion_input)) {
+        append_prediction(std::move(value), "email-prediction");
+    }
     static const auto fallback_predictions = [] {
         std::vector<std::pair<std::string, std::vector<std::string>>> entries(
             kDictionary.begin(), kDictionary.end());
@@ -713,11 +938,24 @@ void ImeSession::rebuild_candidates() {
     append_unique(candidates_, seen, reading_, "reading");
     append_converted(hiragana_to_katakana(conversion_reading), "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
-    const auto insertion_index = std::min(candidates_.size(),
-        std::max<std::size_t>(2, std::min<std::size_t>(3, conversion_count)));
-    auto insertion = candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index);
-    std::size_t inserted = 0;
+    auto insertion = candidates_.begin() +
+        static_cast<std::ptrdiff_t>(std::min<std::size_t>(1, candidates_.size()));
+    std::size_t promoted = 0;
     for (auto &prediction : prefix_predictions) {
+        if (promoted >= 4) break;
+        const bool prominent = prediction.source == "personal-prediction" ||
+            prediction.source == "shared-prediction" ||
+            prediction.source == "learned-prediction";
+        if (!prominent || !seen.insert(prediction.text).second) continue;
+        insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
+        ++promoted;
+    }
+    const auto insertion_index = std::min(candidates_.size(),
+        std::max<std::size_t>(2, std::min<std::size_t>(3, conversion_count)) + promoted);
+    insertion = candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index);
+    std::size_t inserted = promoted;
+    for (auto &prediction : prefix_predictions) {
+        if (prediction.text.empty()) continue;
         if (!seen.insert(prediction.text).second) continue;
         insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
         if (++inserted >= 32) break;

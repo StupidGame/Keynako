@@ -104,6 +104,20 @@ class CandidatePredictionsTest {
         )
 
         assertEquals(listOf("仮面ライダー"), values)
+        assertEquals(listOf("仮面ライダー"), prefixPredictionValues(
+            reading = "かめ",
+            entries = listOf("かめんらいだー" to listOf("仮面ライダー")),
+            limit = 8,
+        ))
+    }
+
+    @Test
+    fun registeredWordPredictsFromKameAndKamen() {
+        val entry = ReadingPrediction("かめんらいだー", "仮面ライダー")
+        for (reading in listOf("かめ", "かめん")) {
+            assertEquals(listOf("仮面ライダー"),
+                rankUserPrefixPredictions(reading, listOf(entry), 32).map { it.text })
+        }
     }
 
     @Test
@@ -153,6 +167,24 @@ class CandidatePredictionsTest {
         ))
         assertEquals(listOf("きー"), rankJapaneseCandidates("きー", listOf("きー"), emptyList(), learning, 0))
         assertEquals(listOf("ほか"), rankJapaneseCandidates("ほか", listOf("ほか"), emptyList(), learning))
+    }
+
+    @Test
+    fun learnedLongReadingAppearsFromBothShortPrefixes() {
+        val learning = mapOf("かめんらいだー\t仮面ライダー" to 8)
+        for (reading in listOf("かめ", "かめん")) {
+            val learned = learnedJapanesePrefixPredictions(reading, learning)
+            assertEquals(listOf("仮面ライダー"), learned.map { it.text })
+            assertEquals("かめんらいだー", learned.single().reading)
+            val ranked = rankJapaneseCandidates(
+                reading, listOf("仮面", reading, hiraganaToKatakana(reading)), emptyList(), learning,
+            )
+            val pinned = pinJapaneseKanaCandidates(
+                reading, ranked, liveCandidate = "仮面",
+                prominentPredictions = learned.map { it.text },
+            )
+            assertEquals(listOf("仮面", "仮面ライダー"), pinned.take(2))
+        }
     }
 
     @Test

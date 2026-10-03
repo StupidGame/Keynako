@@ -26,6 +26,11 @@ public struct AzooKeyHotfixDictionaryEntry: Sendable {
     public let mid: Int
 }
 
+public struct AzooKeyCompletedClause: Sendable {
+    public let text: String
+    public let reading: String
+}
+
 /// A small, stable boundary between the native keyboard and azooKey's pinned
 /// conversion engine. The package revision and ZenzaiCPU trait match the Swift
 /// application this Flutter port was derived from.
@@ -36,7 +41,12 @@ public final class AzooKeyConversionEngine {
     private var lastCandidates: [String: Candidate] = [:]
     public private(set) var predictionTexts = Set<String>()
     public private(set) var baselineTexts: [String] = []
+    public private(set) var completedClause: AzooKeyCompletedClause?
     private var hotfixDictionaryVersion: String?
+    private var lastCompletionInput = ""
+    private var lastCompletionText = ""
+    private var lastCompletionClauseReading = ""
+    private var stableCompletionCount = 0
 
     public init(sharedContainerURL: URL) {
         self.sharedContainerURL = sharedContainerURL
@@ -80,6 +90,9 @@ public final class AzooKeyConversionEngine {
         modelURL: URL?,
         inferenceLimit: Int,
         learningMode: Int,
+        automaticCompletionStrength: Int,
+        englishCandidateInRoman2KanaInput: Bool,
+        typographyCandidate: Bool,
         fullWidthRomanCandidate: Bool,
         halfWidthKanaCandidate: Bool,
         unicodeCandidate: Bool,
@@ -89,6 +102,7 @@ public final class AzooKeyConversionEngine {
             lastCandidates = [:]
             predictionTexts = []
             baselineTexts = []
+            resetCompletionHistory()
             return []
         }
 
@@ -129,6 +143,9 @@ public final class AzooKeyConversionEngine {
         if !unicodeCandidate {
             providers.removeAll { $0 is UnicodeSpecialCandidateProvider }
         }
+        if typographyCandidate {
+            providers.append(TypographySpecialCandidateProvider())
+        }
         func options(
             for mode: ConvertRequestOptions.ZenzaiMode,
             predictiveInput: Bool
@@ -138,7 +155,7 @@ public final class AzooKeyConversionEngine {
                 requireJapanesePrediction: .autoMix,
                 requireEnglishPrediction: .disabled,
                 keyboardLanguage: .ja_JP,
-                englishCandidateInRoman2KanaInput: true,
+                englishCandidateInRoman2KanaInput: englishCandidateInRoman2KanaInput,
                 fullWidthRomanCandidate: fullWidthRomanCandidate,
                 halfWidthKanaCandidate: halfWidthKanaCandidate,
                 learningType: learningType,
@@ -175,7 +192,63 @@ public final class AzooKeyConversionEngine {
             texts.append(candidate.text)
             if lastCandidates[candidate.text] == nil { lastCandidates[candidate.text] = candidate }
         }
+        updateCompletionHistory(
+            reading: reading,
+            input: rawRoman.flatMap { $0.isEmpty ? nil : $0 } ?? reading,
+            firstClauseResults: baseline.firstClauseResults,
+            mainText: baseline.mainResults.first?.text,
+            strength: automaticCompletionStrength
+        )
         return texts
+    }
+
+    private func updateCompletionHistory(
+        reading: String,
+        input: String,
+        firstClauseResults: [Candidate],
+        mainText: String?,
+        strength: Int
+    ) {
+        completedClause = nil
+        let thresholds = [Int.max, 16, 13, 10, 6]
+        let threshold = thresholds[max(0, min(strength, 4))]
+        guard threshold != .max,
+              let mainText,
+              let clause = firstClauseResults.first(where: { mainText.hasPrefix($0.text) }),
+              !clause.text.isEmpty,
+              mainText.count > clause.text.count else {
+            resetCompletionHistory()
+            return
+        }
+        let clauseReading = Self.toHiragana(clause.data.map(\.ruby).joined())
+        guard clauseReading.count >= 2,
+              reading.hasPrefix(clauseReading),
+              reading.count > clauseReading.count,
+              clause.text != clauseReading else {
+            resetCompletionHistory()
+            return
+        }
+        if input != lastCompletionInput {
+            stableCompletionCount = input.hasPrefix(lastCompletionInput)
+                && clause.text == lastCompletionText
+                && clauseReading == lastCompletionClauseReading
+                ? stableCompletionCount + 1 : 1
+            lastCompletionInput = input
+            lastCompletionText = clause.text
+            lastCompletionClauseReading = clauseReading
+        }
+        if stableCompletionCount >= threshold {
+            completedClause = .init(text: clause.text, reading: clauseReading)
+            lastCandidates[clause.text] = clause
+        }
+    }
+
+    private func resetCompletionHistory() {
+        completedClause = nil
+        lastCompletionInput = ""
+        lastCompletionText = ""
+        lastCompletionClauseReading = ""
+        stableCompletionCount = 0
     }
 
     public func commit(candidateText: String, learningMode: Int) {
@@ -187,6 +260,7 @@ public final class AzooKeyConversionEngine {
         lastCandidates = [:]
         predictionTexts = []
         baselineTexts = []
+        resetCompletionHistory()
     }
 
     public func stopComposition() {
@@ -194,6 +268,7 @@ public final class AzooKeyConversionEngine {
         lastCandidates = [:]
         predictionTexts = []
         baselineTexts = []
+        resetCompletionHistory()
     }
 
     public func resetLearning() {
@@ -201,12 +276,23 @@ public final class AzooKeyConversionEngine {
         lastCandidates = [:]
         predictionTexts = []
         baselineTexts = []
+        resetCompletionHistory()
     }
 
     private static func toKatakana(_ value: String) -> String {
         String(value.unicodeScalars.map { scalar in
             if (0x3041 ... 0x3096).contains(scalar.value),
                let converted = UnicodeScalar(scalar.value + 0x60) {
+                return Character(converted)
+            }
+            return Character(scalar)
+        })
+    }
+
+    private static func toHiragana(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar in
+            if (0x30A1 ... 0x30F6).contains(scalar.value),
+               let converted = UnicodeScalar(scalar.value - 0x60) {
                 return Character(converted)
             }
             return Character(scalar)

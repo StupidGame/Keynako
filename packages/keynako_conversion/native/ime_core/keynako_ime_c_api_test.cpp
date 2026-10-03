@@ -65,6 +65,18 @@ int main() {
         return false;
     };
     assert(has_custom_candidate());
+    keynako_ime_clear(session);
+    for (const char value : "kaki") {
+        if (value != '\0') keynako_ime_append_ascii(session, value);
+    }
+    bool found_full_reading = false;
+    for (std::size_t index = 0; index < keynako_ime_candidate_count(session); ++index) {
+        if (std::strcmp(keynako_ime_candidate_at(session, index), "独自語") == 0) {
+            found_full_reading = std::strcmp(
+                keynako_ime_candidate_reading(session, index), "かきくけこ") == 0;
+        }
+    }
+    assert(found_full_reading);
     {
         std::ofstream output(cache, std::ios::trunc);
         output << "# keynako-shared-dictionary-v1\tpartial\n";
@@ -77,6 +89,10 @@ int main() {
     }
     assert(keynako_ime_load_user_dictionary(session, cache.u8string().c_str()) == 1);
     assert(!has_custom_candidate());
+    keynako_ime_clear(session);
+    for (const char value : "kakikukeko") {
+        if (value != '\0') keynako_ime_append_ascii(session, value);
+    }
     const auto personal = cache.string() + ".personal";
     {
         std::ofstream output(cache, std::ios::trunc);

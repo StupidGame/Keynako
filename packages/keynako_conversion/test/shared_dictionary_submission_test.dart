@@ -64,4 +64,73 @@ void main() {
     );
     expect(posted, isFalse);
   });
+
+  test('reads an Apps Script response after its one-time redirect', () async {
+    var posts = 0;
+    Uri? responseUri;
+    final client = KeynakoDictionarySubmissionClient(
+      endpoint: 'https://script.google.com/macros/s/deployment/exec',
+      post: (uri, body) async {
+        posts += 1;
+        return const KeynakoDictionarySubmissionResponse(
+          statusCode: 302,
+          body: '',
+          redirectLocation:
+              'https://script.googleusercontent.com/macros/echo?token=1',
+        );
+      },
+      get: (uri) async {
+        responseUri = uri;
+        return const KeynakoDictionarySubmissionResponse(
+          statusCode: 200,
+          body: '{"ok":true}',
+        );
+      },
+    );
+
+    expect(
+      await client.submit(
+        word: '仮面ライダー',
+        ruby: 'かめんらいだー',
+        importance: 3,
+        categories: const [],
+      ),
+      isTrue,
+    );
+    expect(posts, 1);
+    expect(
+      responseUri,
+      Uri.parse('https://script.googleusercontent.com/macros/echo?token=1'),
+    );
+  });
+
+  test('rejects an Apps Script redirect to another host', () async {
+    var fetched = false;
+    final client = KeynakoDictionarySubmissionClient(
+      endpoint: 'https://script.google.com/macros/s/deployment/exec',
+      post: (uri, body) async => const KeynakoDictionarySubmissionResponse(
+        statusCode: 302,
+        body: '',
+        redirectLocation: 'https://example.com/collect',
+      ),
+      get: (uri) async {
+        fetched = true;
+        return const KeynakoDictionarySubmissionResponse(
+          statusCode: 200,
+          body: '{"ok":true}',
+        );
+      },
+    );
+
+    expect(
+      await client.submit(
+        word: '仮面ライダー',
+        ruby: 'かめんらいだー',
+        importance: 3,
+        categories: const [],
+      ),
+      isFalse,
+    );
+    expect(fetched, isFalse);
+  });
 }

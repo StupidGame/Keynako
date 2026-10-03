@@ -1,3 +1,4 @@
+import 'azookey_special_candidates.dart';
 import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
@@ -240,6 +241,10 @@ class JapaneseConverter {
     'ありがとう': ['🙏', '😊'],
     'ねこ': ['🐈', '🐱'],
     'いぬ': ['🐕', '🐶'],
+    'ごきぶり': ['🪳'],
+    'か': ['🦟'],
+    'くも': ['🕷️', '🕸️'],
+    'みみず': ['🪱'],
   };
 
   static const Map<String, List<String>> _kaomoji = {
@@ -467,6 +472,28 @@ class JapaneseConverter {
         ),
       );
     }
+    for (final value in AzooKeySpecialCandidates.complete(reading)) {
+      values.add(
+        ConversionCandidate(
+          text: value,
+          reading: reading,
+          source: 'special',
+          score: 165,
+        ),
+      );
+    }
+    if (predictionLimit > 0) {
+      for (final value in AzooKeySpecialCandidates.emailAddresses(input)) {
+        prefixPredictions.add(
+          ConversionCandidate(
+            text: value,
+            reading: value,
+            source: 'special-prediction',
+            score: 170,
+          ),
+        );
+      }
+    }
     if (predictionLimit > 0) {
       for (final entry in _dictionary.entries) {
         if (entry.key.length <= reading.length ||
@@ -531,6 +558,11 @@ class JapaneseConverter {
     }
     if (options.emojiCandidate) {
       for (final value in _emoji[reading] ?? const <String>[]) {
+        if (options.emojiDenylist.contains(
+          value.replaceAll('\uFE0F', '').replaceAll('\uFE0E', ''),
+        )) {
+          continue;
+        }
         values.add(
           ConversionCandidate(
             text: value,
@@ -622,8 +654,8 @@ class JapaneseConverter {
         .where((candidate) => !baseTexts.contains(candidate.text))
         .take(predictionLimit < 0 ? 0 : predictionLimit)
         .toList(growable: false);
-    // Keep complete conversions ahead of completions, including when live
-    // conversion is off. Kana shortcuts retain their established positions.
+    // Keep the leading complete conversion in charge of live input, while a
+    // registered longer reading remains visible before the crowded fallback.
     final conversions = baseCandidates
         .where(
           (candidate) =>
@@ -633,15 +665,31 @@ class JapaneseConverter {
                 'user-combination',
                 'system',
                 'learned',
+                'special',
               }.contains(candidate.source),
         )
         .toList();
     final conversionTexts = conversions
         .map((candidate) => candidate.text)
         .toSet();
+    final prominentPredictions = visiblePredictions
+        .where(
+          (candidate) =>
+              candidate.source == 'user-prediction' ||
+              candidate.source == 'learned-prediction',
+        )
+        .take(4)
+        .toList(growable: false);
+    final promotedTexts = prominentPredictions
+        .map((candidate) => candidate.text)
+        .toSet();
     return [
-      ...conversions,
-      ...visiblePredictions,
+      ...conversions.take(1),
+      ...prominentPredictions,
+      ...conversions.skip(1),
+      ...visiblePredictions.where(
+        (candidate) => !promotedTexts.contains(candidate.text),
+      ),
       ...baseCandidates.where(
         (candidate) => !conversionTexts.contains(candidate.text),
       ),

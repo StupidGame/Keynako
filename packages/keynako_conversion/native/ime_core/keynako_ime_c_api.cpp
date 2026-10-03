@@ -31,8 +31,17 @@ void keynako_ime_set_mode(keynako_ime_session session, int english) {
 void keynako_ime_set_live_conversion(keynako_ime_session session, int enabled) {
     if (auto *value = cast(session)) value->set_live_conversion(enabled != 0);
 }
+void keynako_ime_set_automatic_completion_strength(keynako_ime_session session, int strength) {
+    if (auto *value = cast(session)) value->set_automatic_completion_strength(strength);
+}
+int keynako_ime_automatic_completion_strength(keynako_ime_session session) {
+    return session ? cast(session)->automatic_completion_strength() : 0;
+}
 void keynako_ime_append_ascii(keynako_ime_session session, int value) {
     if (auto *target = cast(session); target && value >= 0 && value <= 0x7f) target->append_ascii(static_cast<char>(value));
+}
+const char *keynako_ime_take_completed_clause(keynako_ime_session session) {
+    return session ? copy_result(cast(session)->take_completed_clause()) : "";
 }
 void keynako_ime_backspace(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace(); }
 void keynako_ime_backspace_word(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace_word(); }
@@ -76,6 +85,9 @@ size_t keynako_ime_candidate_count(keynako_ime_session session) { return session
 const char *keynako_ime_candidate_at(keynako_ime_session session, size_t index) {
     if (!session || index >= cast(session)->candidates().size()) return "";
     return cast(session)->candidates()[index].text.c_str();
+}
+const char *keynako_ime_candidate_reading(keynako_ime_session session, size_t index) {
+    return session ? copy_result(cast(session)->candidate_reading(index)) : "";
 }
 size_t keynako_ime_selected_index(keynako_ime_session session) { return session ? cast(session)->selected_index() : 0; }
 void keynako_ime_select_next(keynako_ime_session session) { if (auto *value = cast(session)) value->select_next(); }
