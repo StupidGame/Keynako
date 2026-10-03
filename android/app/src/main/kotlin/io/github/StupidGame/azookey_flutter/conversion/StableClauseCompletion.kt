@@ -4,12 +4,12 @@ data class CompletedClause(val reading: String, val text: String)
 
 /** Waits for a converted first word to remain stable as the reading grows. */
 class StableClauseCompletion {
-    private var previousReading = ""
+    private var previousInput = ""
     private var previousClause: CompletedClause? = null
     private var stableCount = 0
 
     fun reset() {
-        previousReading = ""
+        previousInput = ""
         previousClause = null
         stableCount = 0
     }
@@ -19,6 +19,7 @@ class StableClauseCompletion {
         candidate: String,
         entries: List<CompletedClause>,
         strength: Int,
+        rawInput: String = reading,
     ): CompletedClause? {
         val threshold = when (strength) {
             1 -> 16
@@ -40,9 +41,9 @@ class StableClauseCompletion {
             reset()
             return null
         }
-        if (reading == previousReading) return null
-        stableCount = if (reading.startsWith(previousReading) && clause == previousClause) stableCount + 1 else 1
-        previousReading = reading
+        if (rawInput == previousInput) return null
+        stableCount = if (rawInput.startsWith(previousInput) && clause == previousClause) stableCount + 1 else 1
+        previousInput = rawInput
         previousClause = clause
         if (stableCount < threshold) return null
         reset()

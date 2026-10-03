@@ -43,7 +43,7 @@ public final class AzooKeyConversionEngine {
     public private(set) var baselineTexts: [String] = []
     public private(set) var completedClause: AzooKeyCompletedClause?
     private var hotfixDictionaryVersion: String?
-    private var lastCompletionReading = ""
+    private var lastCompletionInput = ""
     private var lastCompletionText = ""
     private var lastCompletionClauseReading = ""
     private var stableCompletionCount = 0
@@ -194,6 +194,7 @@ public final class AzooKeyConversionEngine {
         }
         updateCompletionHistory(
             reading: reading,
+            input: rawRoman.flatMap { $0.isEmpty ? nil : $0 } ?? reading,
             firstClauseResults: baseline.firstClauseResults,
             mainText: baseline.mainResults.first?.text,
             strength: automaticCompletionStrength
@@ -203,6 +204,7 @@ public final class AzooKeyConversionEngine {
 
     private func updateCompletionHistory(
         reading: String,
+        input: String,
         firstClauseResults: [Candidate],
         mainText: String?,
         strength: Int
@@ -226,12 +228,12 @@ public final class AzooKeyConversionEngine {
             resetCompletionHistory()
             return
         }
-        if reading != lastCompletionReading {
-            stableCompletionCount = reading.hasPrefix(lastCompletionReading)
+        if input != lastCompletionInput {
+            stableCompletionCount = input.hasPrefix(lastCompletionInput)
                 && clause.text == lastCompletionText
                 && clauseReading == lastCompletionClauseReading
                 ? stableCompletionCount + 1 : 1
-            lastCompletionReading = reading
+            lastCompletionInput = input
             lastCompletionText = clause.text
             lastCompletionClauseReading = clauseReading
         }
@@ -243,7 +245,7 @@ public final class AzooKeyConversionEngine {
 
     private func resetCompletionHistory() {
         completedClause = nil
-        lastCompletionReading = ""
+        lastCompletionInput = ""
         lastCompletionText = ""
         lastCompletionClauseReading = ""
         stableCompletionCount = 0

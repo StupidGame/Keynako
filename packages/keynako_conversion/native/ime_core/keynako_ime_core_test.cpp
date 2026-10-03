@@ -292,6 +292,23 @@ int main() {
         "わたしはきょうとうきょうのえきでともだちとあいました", 1);
     assert(!long_sentence.empty() &&
            long_sentence.front() == "私は今日東京の駅で友達と会いました");
+    ImeSession stable_clause;
+    assert(stable_clause.set_bundled_dictionary_path(dictionary_path));
+    std::string committed_prefix;
+    for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
+        stable_clause.append_ascii(value);
+        committed_prefix += stable_clause.take_completed_clause();
+    }
+    assert(committed_prefix == "私");
+    assert(stable_clause.reading().rfind("は", 0) == 0);
+    assert(stable_clause.selected_text().rfind("は", 0) == 0);
+    ImeSession disabled_clause;
+    assert(disabled_clause.set_bundled_dictionary_path(dictionary_path));
+    disabled_clause.set_live_conversion(false);
+    for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
+        disabled_clause.append_ascii(value);
+        assert(disabled_clause.take_completed_clause().empty());
+    }
     ImeSession personal_phrase;
     assert(personal_phrase.set_bundled_dictionary_path(dictionary_path));
     personal_phrase.set_user_dictionary({personal_entry});

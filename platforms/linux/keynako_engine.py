@@ -30,6 +30,8 @@ class NativeSession:
         self.library.keynako_ime_destroy.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_set_mode.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.library.keynako_ime_append_ascii.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        self.library.keynako_ime_take_completed_clause.argtypes = [ctypes.c_void_p]
+        self.library.keynako_ime_take_completed_clause.restype = ctypes.c_char_p
         self.library.keynako_ime_backspace.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_backspace_word.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_clear.argtypes = [ctypes.c_void_p]
@@ -85,6 +87,9 @@ class NativeSession:
 
     def append(self, value: str) -> None:
         self.library.keynako_ime_append_ascii(self.handle, ord(value))
+
+    def take_completed_clause(self) -> str:
+        return self.library.keynako_ime_take_completed_clause(self.handle).decode()
 
     def backspace(self) -> None:
         self.library.keynako_ime_backspace(self.handle)
@@ -506,6 +511,10 @@ class KeynakoEngine(IBus.Engine):
             self._conversion_revision += 1
             self.raw += value
             self.session.append(value)
+            completed = self.session.take_completed_clause()
+            if completed:
+                self.commit_text(IBus.Text.new_from_string(completed))
+                self.raw = self.session.raw_input()
             self._render()
             return True
         return False

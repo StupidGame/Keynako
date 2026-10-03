@@ -173,6 +173,12 @@ static NSString *PairedDelimiter(unichar value) {
     if (_session.mode() == keynako::InputMode::english) return NO;
     [self reloadSharedDictionary:NO];
     _session.append_ascii(static_cast<char>(scalar));
+    const std::string completed = _session.take_completed_clause();
+    if (!completed.empty()) {
+        [sender insertText:FromUtf8(completed)
+            replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+        _hasCompositionReplacementRange = NO;
+    }
     [self updateMarkedText:sender];
     return YES;
 }

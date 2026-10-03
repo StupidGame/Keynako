@@ -2669,6 +2669,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             candidate,
             entries,
             settings.optInt("automatic_completion_strength", 1),
+            rawInput = if (layout == "qwerty") rawRoman else reading,
         ) ?: return false
         val remaining = reading.removePrefix(clause.reading)
         val remainingRoman = if (layout == "qwerty") {

@@ -381,6 +381,7 @@ std::size_t word_delete_start(const std::string &input, InputMode mode,
 
 void ImeSession::set_mode(InputMode mode) {
     if (mode_ == mode) return;
+    reset_stable_clause();
     const bool was_converting = converting_;
     mode_ = mode;
     pending_word_delete_start_ = std::string::npos;
@@ -388,7 +389,7 @@ void ImeSession::set_mode(InputMode mode) {
     rebuild_candidates();
     converting_ = was_converting && !candidates_.empty();
 }
-void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; }
+void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; reset_stable_clause(); }
 void ImeSession::append_ascii(char value) {
     append_ascii_internal(value, is_literal_candidate_suffix(value), false);
 }
@@ -416,7 +417,11 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     }
     raw_input_.push_back(value);
     rebuild_candidates();
-    if (!preserve_selection) return;
+    if (!preserve_selection) {
+        observe_stable_clause();
+        return;
+    }
+    reset_stable_clause();
 
     const std::string expected = selected_prefix + display_ascii(value, mode_);
     const auto found = std::find_if(
@@ -436,7 +441,82 @@ void ImeSession::append_ascii_internal(char value, bool preserve_selection,
     }
     converting_ = was_converting;
 }
+void ImeSession::reset_stable_clause() {
+    stable_raw_input_.clear();
+    stable_clause_reading_.clear();
+    stable_clause_text_.clear();
+    completed_clause_text_.clear();
+    completed_clause_raw_length_ = 0;
+    stable_clause_count_ = 0;
+}
+
+void ImeSession::observe_stable_clause() {
+    if (mode_ != InputMode::japanese || !live_conversion_ || live_conversion_suspended_ ||
+        converting_ || has_literal_suffix() || candidates_.empty() || selected_index_ != 0) {
+        reset_stable_clause();
+        return;
+    }
+    if (raw_input_ == stable_raw_input_) return;
+    const std::string &candidate = candidates_.front().text;
+    std::string clause_reading;
+    std::string clause_text;
+    const auto consider = [&](const std::string &ruby, const std::string &word) {
+        if (word.empty() || utf8_character_count(ruby) < 2 || ruby.size() >= reading_.size() ||
+            reading_.compare(0, ruby.size(), ruby) != 0 || word == ruby ||
+            word.size() >= candidate.size() || candidate.compare(0, word.size(), word) != 0) return;
+        if (ruby.size() > clause_reading.size()) {
+            clause_reading = ruby;
+            clause_text = word;
+        }
+    };
+    for (const auto &entry : user_dictionary_) consider(entry.reading, entry.value);
+    for (const auto &[ruby, values] : kDictionary) {
+        for (const auto &word : values) consider(ruby, word);
+    }
+    if (clause_reading.empty()) {
+        reset_stable_clause();
+        return;
+    }
+    std::size_t split = std::string::npos;
+    for (std::size_t index = 1; index < raw_input_.size(); ++index) {
+        if (roman_to_hiragana(raw_input_.substr(0, index)) == clause_reading &&
+            roman_to_hiragana(raw_input_.substr(index)) == reading_.substr(clause_reading.size())) {
+            split = index;
+            break;
+        }
+    }
+    if (split == std::string::npos) {
+        reset_stable_clause();
+        return;
+    }
+    stable_clause_count_ = raw_input_.compare(0, stable_raw_input_.size(), stable_raw_input_) == 0 &&
+        clause_reading == stable_clause_reading_ && clause_text == stable_clause_text_
+        ? stable_clause_count_ + 1 : 1;
+    stable_raw_input_ = raw_input_;
+    stable_clause_reading_ = clause_reading;
+    stable_clause_text_ = clause_text;
+    // azooKey's weak automatic completion waits for sixteen stable updates.
+    if (stable_clause_count_ >= 16) {
+        completed_clause_text_ = clause_text;
+        completed_clause_raw_length_ = split;
+    }
+}
+
+std::string ImeSession::take_completed_clause() {
+    if (completed_clause_text_.empty() || completed_clause_raw_length_ == 0 ||
+        completed_clause_raw_length_ >= raw_input_.size()) return {};
+    std::string text = completed_clause_text_;
+    raw_input_.erase(0, completed_clause_raw_length_);
+    literal_suffix_start_ = std::string::npos;
+    pending_word_delete_start_ = std::string::npos;
+    converting_ = false;
+    reset_stable_clause();
+    rebuild_candidates();
+    return text;
+}
+
 void ImeSession::backspace() {
+    reset_stable_clause();
     if (raw_input_.empty()) {
         pending_word_delete_start_ = std::string::npos;
         return;
@@ -490,6 +570,7 @@ void ImeSession::backspace() {
 }
 
 void ImeSession::backspace_word() {
+    reset_stable_clause();
     if (raw_input_.empty()) {
         pending_word_delete_start_ = std::string::npos;
         return;
@@ -513,7 +594,7 @@ void ImeSession::backspace_word() {
     live_conversion_suspended_ = false;
     rebuild_candidates();
 }
-void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; }
+void ImeSession::clear() { raw_input_.clear(); reading_.clear(); candidates_.clear(); selected_index_ = 0; converting_ = false; live_conversion_suspended_ = false; literal_suffix_start_ = std::string::npos; pending_word_delete_start_ = std::string::npos; reset_stable_clause(); }
 
 std::string ImeSession::learning_key() const {
     if (mode_ == InputMode::japanese) return reading_;
@@ -560,6 +641,7 @@ void ImeSession::prioritize_learning() {
 }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
+    reset_stable_clause();
     converting_ = true;
     live_conversion_suspended_ = false;
     selected_index_ = 0;
@@ -567,6 +649,7 @@ bool ImeSession::begin_conversion() {
 }
 bool ImeSession::cancel_conversion() {
     if (!converting_) return false;
+    reset_stable_clause();
     converting_ = false;
     live_conversion_suspended_ = true;
     selected_index_ = 0;

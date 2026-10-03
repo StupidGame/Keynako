@@ -29,4 +29,22 @@ class StableClauseCompletionTest {
             assertNull(completion.observe(reading, "私は猫ですか", entries, 4))
         }
     }
+
+    @Test fun romanInputCanRewriteItsUnfinishedSuffix() {
+        val completion = StableClauseCompletion()
+        val entries = listOf(CompletedClause("わたし", "私"))
+        val input = listOf(
+            "わたしはk" to "watashihak",
+            "わたしはky" to "watashihaky",
+            "わたしはきょ" to "watashihakyo",
+            "わたしはきょう" to "watashihakyou",
+            "わたしはきょうt" to "watashihakyout",
+            "わたしはきょうと" to "watashihakyouto",
+        )
+        for ((reading, raw) in input.dropLast(1)) {
+            assertNull(completion.observe(reading, "私は今日", entries, 4, raw))
+        }
+        val (reading, raw) = input.last()
+        assertEquals(CompletedClause("わたし", "私"), completion.observe(reading, "私は今日", entries, 4, raw))
+    }
 }

@@ -201,6 +201,7 @@ private:
 
 enum class EditAction {
     update,
+    commit_prefix,
     commit,
     commit_and_set_japanese,
     commit_and_set_english,
@@ -523,6 +524,11 @@ public:
                     session_.append_literal_ascii(value);
                 } else {
                     session_.append_ascii(value);
+                    const std::string completed = session_.take_completed_clause();
+                    if (!completed.empty()) {
+                        pending_completed_clause_ = utf8_to_wide(completed);
+                        action = EditAction::commit_prefix;
+                    }
                 }
             }
         } else if (key == VK_BACK) {
@@ -616,16 +622,40 @@ public:
         return S_OK;
     }
     STDMETHODIMP OnCompositionTerminated(TfEditCookie, ITfComposition *composition) override {
-        if (composition_ == composition) {
-            composition_->Release();
-            composition_ = nullptr;
-        }
+        if (composition_ != composition) return S_OK;
+        composition_->Release();
+        composition_ = nullptr;
         session_.clear();
         hide_candidates();
         return S_OK;
     }
 
     HRESULT apply_edit(TfEditCookie edit_cookie, ITfContext *context, EditAction action) {
+        if (action == EditAction::commit_prefix) {
+            const std::wstring prefix = std::move(pending_completed_clause_);
+            pending_completed_clause_.clear();
+            if (prefix.empty() || !composition_) return E_FAIL;
+            ITfRange *range = nullptr;
+            HRESULT result = composition_->GetRange(&range);
+            if (FAILED(result) || !range) return FAILED(result) ? result : E_FAIL;
+            result = range->SetText(edit_cookie, 0, prefix.data(),
+                                    static_cast<LONG>(prefix.size()));
+            if (SUCCEEDED(result)) {
+                range->Collapse(edit_cookie, TF_ANCHOR_END);
+                TF_SELECTION selection{range, TF_AE_NONE, FALSE};
+                result = context->SetSelection(edit_cookie, 1, &selection);
+            }
+            if (SUCCEEDED(result)) {
+                ITfComposition *ending = composition_;
+                composition_ = nullptr;
+                ending->EndComposition(edit_cookie);
+                ending->Release();
+            }
+            range->Release();
+            if (FAILED(result)) return result;
+            hide_candidates();
+            return apply_edit(edit_cookie, context, EditAction::update);
+        }
         if (action == EditAction::insert_pair) {
             std::wstring text = session_.raw_input().empty()
                 ? std::wstring{}
@@ -821,6 +851,7 @@ private:
     std::chrono::steady_clock::time_point last_backspace_press_{};
     std::wstring shared_submission_status_;
     std::wstring pending_pair_text_;
+    std::wstring pending_completed_clause_;
     void convert_or_cycle(ITfContext *context) {
         if (session_.raw_input().empty()) return;
         reload_shared_dictionary();
