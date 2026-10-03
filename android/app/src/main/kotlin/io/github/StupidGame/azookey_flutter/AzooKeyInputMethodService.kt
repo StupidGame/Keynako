@@ -2507,7 +2507,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun showEmoji() {
+        candidateExpanded = false
+        candidatePanel.visibility = View.GONE
+        candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
+        candidateScroll.scrollTo(0, 0)
+        addCandidateButton("閉じる") { renderCandidates() }
         val emoji = listOf("😀", "😃", "😊", "😂", "🥰", "😍", "😭", "😡", "👍", "🙏", "❤️", "🎉", "✨", "⭐️")
         for (value in emoji) addCandidateButton(value) { directCommit(value) }
     }

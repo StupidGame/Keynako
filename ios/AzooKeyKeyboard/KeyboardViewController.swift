@@ -3127,7 +3127,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func showEmoji() {
+        setCandidateExpanded(false)
+        candidateExpandButton.isHidden = true
         candidateStack.removeAllArrangedSubviews()
+        candidateScroll.setContentOffset(.zero, animated: false)
+        candidateStack.addArrangedSubview(makeCandidateButton("閉じる") { [weak self] in self?.renderCandidates() })
         for value in ["😀", "😃", "😊", "😂", "🥰", "😍", "😭", "😡", "👍", "🙏", "❤️", "🎉", "✨", "⭐️"] {
             candidateStack.addArrangedSubview(makeCandidateButton(value) { [weak self] in self?.directCommit(value) })
         }
