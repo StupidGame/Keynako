@@ -2580,6 +2580,7 @@ final class KeyboardViewController: UIInputViewController {
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
         var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
+        var registeredPrefixPredictions: [String] = []
         var predictionReadings: [String: String] = [:]
         for entry in learned where entry.reading != reading {
             if predictionReadings[entry.text] == nil { predictionReadings[entry.text] = entry.reading }
@@ -2614,9 +2615,26 @@ final class KeyboardViewController: UIInputViewController {
                     exactUserTexts.append(value)
                 } else {
                     prefixPredictions.append(value)
+                    registeredPrefixPredictions.append(value)
                     if predictionReadings[value] == nil { predictionReadings[value] = ruby }
                 }
             }
+        }
+        let sharedPrefixEntries = conversionDictionaryEntries.filter {
+            let ruby = katakanaToHiragana($0.ruby)
+            return ruby.count > reading.count && ruby.hasPrefix(reading) && !$0.word.isEmpty
+        }.sorted {
+            let left = katakanaToHiragana($0.ruby)
+            let right = katakanaToHiragana($1.ruby)
+            if left.count != right.count { return left.count < right.count }
+            return $0.wordWeight > $1.wordWeight
+        }
+        for entry in sharedPrefixEntries.prefix(32) {
+            let ruby = katakanaToHiragana(entry.ruby)
+            guard ruby.count > reading.count, ruby.hasPrefix(reading), !entry.word.isEmpty else { continue }
+            registeredPrefixPredictions.append(entry.word)
+            prefixPredictions.append(entry.word)
+            if predictionReadings[entry.word] == nil { predictionReadings[entry.word] = ruby }
         }
         let zenzai = zenzaiConfiguration()
         let blockedEmoji = blockedAdditionalEmoji()
@@ -2721,6 +2739,20 @@ final class KeyboardViewController: UIInputViewController {
                 && $0 != hiragana && $0 != fullKatakana
         }
         var prioritized: [String] = []
+        if !registeredPrefixPredictions.isEmpty {
+            prioritized.append(
+                learnedTexts.first
+                    ?? exactUserTexts.first
+                    ?? engineCandidate
+                    ?? combinedTexts.first
+                    ?? Self.systemDictionary[reading]?.first
+                    ?? hiragana
+            )
+            var visibleRegistered = Set<String>()
+            prioritized.append(contentsOf: registeredPrefixPredictions.filter {
+                visibleRegistered.insert($0).inserted
+            }.prefix(4))
+        }
         prioritized.append(contentsOf: learnedTexts)
         prioritized.append(contentsOf: exactUserTexts)
         if let engineCandidate { prioritized.append(engineCandidate) }

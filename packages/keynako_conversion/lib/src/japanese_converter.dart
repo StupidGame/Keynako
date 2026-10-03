@@ -560,8 +560,9 @@ class JapaneseConverter {
       for (final value in _emoji[reading] ?? const <String>[]) {
         if (options.emojiDenylist.contains(
           value.replaceAll('\uFE0F', '').replaceAll('\uFE0E', ''),
-        ))
+        )) {
           continue;
+        }
         values.add(
           ConversionCandidate(
             text: value,
@@ -653,8 +654,8 @@ class JapaneseConverter {
         .where((candidate) => !baseTexts.contains(candidate.text))
         .take(predictionLimit < 0 ? 0 : predictionLimit)
         .toList(growable: false);
-    // Keep complete conversions ahead of completions, including when live
-    // conversion is off. Kana shortcuts retain their established positions.
+    // Keep the leading complete conversion in charge of live input, while a
+    // registered longer reading remains visible before the crowded fallback.
     final conversions = baseCandidates
         .where(
           (candidate) =>
@@ -671,9 +672,20 @@ class JapaneseConverter {
     final conversionTexts = conversions
         .map((candidate) => candidate.text)
         .toSet();
+    final registeredPredictions = visiblePredictions
+        .where((candidate) => candidate.source == 'user-prediction')
+        .take(4)
+        .toList(growable: false);
+    final promotedTexts = registeredPredictions
+        .map((candidate) => candidate.text)
+        .toSet();
     return [
-      ...conversions,
-      ...visiblePredictions,
+      ...conversions.take(1),
+      ...registeredPredictions,
+      ...conversions.skip(1),
+      ...visiblePredictions.where(
+        (candidate) => !promotedTexts.contains(candidate.text),
+      ),
       ...baseCandidates.where(
         (candidate) => !conversionTexts.contains(candidate.text),
       ),

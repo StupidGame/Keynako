@@ -120,6 +120,7 @@ internal fun pinJapaneseKanaCandidates(
     ranked: Iterable<String>,
     liveCandidate: String? = null,
     learnedCandidates: Iterable<String> = emptyList(),
+    registeredPredictions: Iterable<String> = emptyList(),
 ): List<String> {
     val hiragana = katakanaToHiragana(reading)
     val katakana = hiraganaToKatakana(hiragana)
@@ -128,6 +129,8 @@ internal fun pinJapaneseKanaCandidates(
         if (!liveCandidate.isNullOrEmpty() && liveCandidate != hiragana && liveCandidate != katakana) {
             add(liveCandidate)
         }
+        if (isEmpty() && hiragana.isNotEmpty()) add(hiragana)
+        addAll(registeredPredictions.filter { it.isNotEmpty() })
         if (hiragana.isNotEmpty()) add(hiragana)
         if (katakana.isNotEmpty()) add(katakana)
         addAll(ranked.filter { it.isNotEmpty() })

@@ -41,6 +41,19 @@ class JapaneseTextTransformsTest {
     }
 
     @Test
+    fun showsRegisteredCompletionBesideTheLeadingConversion() {
+        assertEquals(
+            listOf("仮面", "仮面ライダー", "かめん", "カメン", "画面"),
+            pinJapaneseKanaCandidates(
+                reading = "かめん",
+                ranked = listOf("仮面", "画面", "仮面ライダー"),
+                liveCandidate = "仮面",
+                registeredPredictions = listOf("仮面ライダー"),
+            ),
+        )
+    }
+
+    @Test
     fun placesLearnedChoicesBeforeZenzaiAndKana() {
         val learned = exactLearnedJapaneseCandidates(
             "きょう",

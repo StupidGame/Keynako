@@ -177,6 +177,48 @@ void main() {
     );
   });
 
+  test('shows personal and shared long words from short reading prefixes', () {
+    final data = AppData.defaults();
+    data.userDictionary.add(
+      const UserDictionaryEntry(id: 31, ruby: 'かめんらいだー', word: '仮面ライダー'),
+    );
+    data.azooKeyHotfixDictionary = AzooKeyHotfixDictionary.fromJson({
+      'metadata': {
+        'status': 'active',
+        'name': 'test',
+        'description': 'test',
+        'version': '1',
+        'last_update': '2026-09-22',
+      },
+      'data': [
+        {
+          'word': '仮面の共有語',
+          'ruby': 'カメンノキョウユウゴ',
+          'word_weight': -5,
+          'lcid': 1285,
+          'rcid': 1285,
+          'mid': 501,
+          'date': '2026-09-22',
+          'author': 'test',
+          'importance': 5,
+        },
+      ],
+    });
+
+    for (final reading in ['かめ', 'かめん']) {
+      final candidates = converter.candidates(input: reading, data: data);
+      final texts = candidates.map((candidate) => candidate.text).toList();
+      expect(texts.first, isNot('仮面ライダー'));
+      expect(texts.take(5), containsAll(['仮面ライダー', '仮面の共有語']));
+      expect(
+        candidates
+            .firstWhere((candidate) => candidate.text == '仮面ライダー')
+            .reading,
+        'かめんらいだー',
+      );
+    }
+  });
+
   test('provides half-width kana and full-width roman candidates', () {
     final data = AppData.defaults();
     final kana = converter.candidates(input: 'がくせい', data: data);

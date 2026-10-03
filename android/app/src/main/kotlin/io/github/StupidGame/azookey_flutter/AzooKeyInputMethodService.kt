@@ -2776,7 +2776,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                 userPredictions.add(ReadingPrediction(ruby, value, entry.optInt("importance", 3)))
             }
         }
-        for (prediction in rankUserPrefixPredictions(reading, userPredictions, predictionLimit)) {
+        val registeredPredictions = rankUserPrefixPredictions(
+            reading,
+            userPredictions + hotfixDictionaryEntries.mapNotNull { entry ->
+                val ruby = katakanaToHiragana(entry.ruby)
+                if (ruby.length <= reading.length || !ruby.startsWith(reading)) null
+                else ReadingPrediction(ruby, entry.word)
+            },
+            predictionLimit,
+        )
+        for (prediction in registeredPredictions) {
             predictedValues.add(prediction.text)
             predictionReadings.getOrPut(prediction.text) { prediction.reading }
         }
@@ -2886,6 +2895,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             ranked = ranked,
             liveCandidate = bestLiveJapaneseConversion(reading, completeConversions, ranked),
             learnedCandidates = learned,
+            registeredPredictions = registeredPredictions.take(4).map(ReadingPrediction::text),
         )
     }
 

@@ -73,8 +73,30 @@ int main() {
     for (const char value : std::string("niho")) prefix_prediction.append_ascii(value);
     assert(prefix_prediction.display_text() == "にほ");
     assert(prefix_prediction.candidates().size() >= 4);
-    assert(prefix_prediction.candidates()[2].text == "日本");
-    assert(prefix_prediction.candidates()[2].source == "shared-prediction");
+    assert(prefix_prediction.candidates()[1].text == "日本");
+    assert(prefix_prediction.candidates()[1].source == "shared-prediction");
+    ImeSession rider_prediction;
+    rider_prediction.set_user_dictionary({{"かめんらいだー", "仮面ライダー", 3}});
+    for (const auto &raw : {"kame", "kamen"}) {
+        rider_prediction.clear();
+        for (const char value : std::string(raw)) rider_prediction.append_ascii(value);
+        const auto &values = rider_prediction.candidates();
+        const auto found = std::find_if(values.begin(), values.end(), [](const auto &candidate) {
+            return candidate.text == "仮面ライダー" &&
+                candidate.source.find("prediction") != std::string::npos;
+        });
+        assert(found != values.end());
+        assert(found - values.begin() < 3);
+        assert(rider_prediction.display_text() != "仮面ライダー");
+        assert(rider_prediction.begin_conversion());
+        assert(rider_prediction.select_candidate(static_cast<std::size_t>(found - values.begin())));
+        rider_prediction.learn_selected();
+        rider_prediction.cancel_conversion();
+        rider_prediction.clear();
+        for (const char value : std::string(raw)) rider_prediction.append_ascii(value);
+        assert(rider_prediction.candidates().front().text != "仮面ライダー");
+        assert(rider_prediction.display_text() != "仮面ライダー");
+    }
     keynako::DictionaryEntry personal_entry{"てすと", "個人語", 5};
     personal_entry.source = "personal";
     ImeSession personal_dictionary;
@@ -125,15 +147,15 @@ int main() {
     });
     for (const char value : std::string("tesu")) ranked_prediction.append_ascii(value);
     assert(ranked_prediction.display_text() == "てす");
-    assert(ranked_prediction.candidates()[2].text == "重要な補完");
-    assert(ranked_prediction.candidates()[3].text == "短い補完");
+    assert(ranked_prediction.candidates()[1].text == "重要な補完");
+    assert(ranked_prediction.candidates()[2].text == "短い補完");
     ImeSession closer_prediction;
     closer_prediction.set_user_dictionary({
         {"テストケースナガイヨソク", "遠い高重要度", 5},
         {"テスト", "近い補完", 4},
     });
     for (const char value : std::string("tesu")) closer_prediction.append_ascii(value);
-    assert(closer_prediction.candidates()[2].text == "近い補完");
+    assert(closer_prediction.candidates()[1].text == "近い補完");
     ranked_prediction.clear();
     ranked_prediction.append_ascii('/');
     assert(std::none_of(ranked_prediction.candidates().begin(), ranked_prediction.candidates().end(),

@@ -104,6 +104,20 @@ class CandidatePredictionsTest {
         )
 
         assertEquals(listOf("仮面ライダー"), values)
+        assertEquals(listOf("仮面ライダー"), prefixPredictionValues(
+            reading = "かめ",
+            entries = listOf("かめんらいだー" to listOf("仮面ライダー")),
+            limit = 8,
+        ))
+    }
+
+    @Test
+    fun registeredWordPredictsFromKameAndKamen() {
+        val entry = ReadingPrediction("かめんらいだー", "仮面ライダー")
+        for (reading in listOf("かめ", "かめん")) {
+            assertEquals(listOf("仮面ライダー"),
+                rankUserPrefixPredictions(reading, listOf(entry), 32).map { it.text })
+        }
     }
 
     @Test

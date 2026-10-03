@@ -611,9 +611,19 @@ std::string ImeSession::learning_key() const {
 
 void ImeSession::learn_selected() {
     if (mode_ != InputMode::japanese || raw_input_.empty() || candidates_.empty()) return;
-    const auto key = learning_key();
-    const auto text = selected_text();
+    auto key = learning_key();
+    const auto &selected = candidates_[selected_index_];
+    const auto text = selected.text;
     if (text.empty()) return;
+    if (selected.source.find("prediction") != std::string::npos) {
+        const auto entry = std::find_if(user_dictionary_.begin(), user_dictionary_.end(),
+            [&](const auto &value) {
+                return value.value == text && value.reading.size() > key.size() &&
+                    value.reading.rfind(key, 0) == 0;
+            });
+        if (entry == user_dictionary_.end()) return;
+        key = entry->reading;
+    }
     auto &scores = learning_[key];
     if (converting_ || selected_index_ != 0) {
         int highest = 0;
@@ -637,6 +647,9 @@ void ImeSession::prioritize_learning() {
     const auto found = learning_.find(learning_key());
     if (found == learning_.end()) return;
     const auto score = [&](const Candidate &candidate) {
+        // A selected completion must never become live conversion for an
+        // unfinished reading on the next keystroke.
+        if (candidate.source.find("prediction") != std::string::npos) return 0;
         const auto entry = found->second.find(candidate.text);
         return entry == found->second.end() ? 0 : entry->second;
     };
@@ -913,11 +926,28 @@ void ImeSession::rebuild_candidates() {
     append_unique(candidates_, seen, reading_, "reading");
     append_converted(hiragana_to_katakana(conversion_reading), "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
-    const auto insertion_index = std::min(candidates_.size(),
-        std::max<std::size_t>(2, std::min<std::size_t>(3, conversion_count)));
-    auto insertion = candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index);
-    std::size_t inserted = 0;
+    auto insertion = candidates_.begin() +
+        static_cast<std::ptrdiff_t>(std::min<std::size_t>(1, candidates_.size()));
+    std::size_t promoted = 0;
     for (auto &prediction : prefix_predictions) {
+        const bool registered = prediction.source == "personal-prediction" ||
+            prediction.source == "shared-prediction" ||
+            std::any_of(user_dictionary_.begin(), user_dictionary_.end(), [&](const auto &entry) {
+                return entry.value == prediction.text &&
+                    entry.reading.size() > conversion_reading.size() &&
+                    entry.reading.rfind(conversion_reading, 0) == 0;
+            });
+        if (!registered) continue;
+        if (promoted >= 4 || !seen.insert(prediction.text).second) continue;
+        insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
+        ++promoted;
+    }
+    const auto insertion_index = std::min(candidates_.size(),
+        std::max<std::size_t>(2, std::min<std::size_t>(3, conversion_count)) + promoted);
+    insertion = candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index);
+    std::size_t inserted = promoted;
+    for (auto &prediction : prefix_predictions) {
+        if (prediction.text.empty()) continue;
         if (!seen.insert(prediction.text).second) continue;
         insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
         if (++inserted >= 32) break;
