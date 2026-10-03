@@ -13,6 +13,9 @@
 
 static IMKServer *gServer;
 static IMKCandidates *gCandidates;
+@class KeynakoInputController;
+static __weak KeynakoInputController *gActiveCandidateController;
+static id gCandidateMenuMonitor;
 static constexpr auto kDoubleBackspaceInterval = std::chrono::milliseconds(350);
 
 static NSString *FromUtf8(const std::string &value) {
@@ -56,6 +59,9 @@ static NSString *PairedDelimiter(unichar value) {
 - (void)selectEnglishMode:(id)sender;
 - (void)toggleLiveConversion:(id)sender;
 - (void)selectAutomaticCompletionStrength:(id)sender;
+- (BOOL)showCandidateDictionaryMenuForEvent:(NSEvent *)event;
+- (BOOL)launchCompanionWithArguments:(NSArray<NSString *> *)arguments;
+- (void)submitCandidateDictionary:(id)sender;
 @end
 
 @implementation KeynakoInputController {
@@ -70,6 +76,8 @@ static NSString *PairedDelimiter(unichar value) {
     std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
     std::chrono::steady_clock::time_point _lastBackspacePress;
     BOOL _hasCompositionReplacementRange;
+    NSString *_candidateDictionaryWord;
+    NSString *_candidateDictionaryReading;
 }
 
 - (BOOL)handleEvent:(NSEvent *)event client:(id)sender {
@@ -280,6 +288,10 @@ static NSString *PairedDelimiter(unichar value) {
 
 - (void)openPersonalDictionary:(id)sender {
     (void)sender;
+    [self launchCompanionWithArguments:@[@"--dictionary"]];
+}
+
+- (BOOL)launchCompanionWithArguments:(NSArray<NSString *> *)arguments {
     NSArray<NSString *> *executables = @[
         [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Keynako.app/Contents/MacOS/Keynako"],
         @"/Applications/Keynako.app/Contents/MacOS/Keynako",
@@ -288,11 +300,58 @@ static NSString *PairedDelimiter(unichar value) {
         if (![[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) continue;
         NSTask *task = [[NSTask alloc] init];
         task.executableURL = [NSURL fileURLWithPath:candidate];
-        task.arguments = @[@"--dictionary"];
+        task.arguments = arguments;
+        NSFileHandle *nullHandle = [NSFileHandle fileHandleWithNullDevice];
+        task.standardInput = nullHandle;
+        task.standardOutput = nullHandle;
+        task.standardError = nullHandle;
         NSError *error = nil;
-        [task launchAndReturnError:&error];
-        return;
+        return [task launchAndReturnError:&error];
     }
+    return NO;
+}
+
+- (BOOL)showCandidateDictionaryMenuForEvent:(NSEvent *)event {
+    if (!_session.is_converting() || _session.candidates().empty() ||
+        ![gCandidates isVisible] || !event.window.contentView) return NO;
+    if (!NSPointInRect([NSEvent mouseLocation], [gCandidates candidateFrame])) return NO;
+    NSString *selected = [gCandidates selectedCandidateString].string;
+    std::size_t index = _session.selected_index();
+    if (selected.length > 0) {
+        for (std::size_t current = 0; current < _session.candidates().size(); ++current) {
+            if ([FromUtf8(_session.candidates()[current].text) isEqualToString:selected]) {
+                index = current;
+                break;
+            }
+        }
+    }
+    if (index >= _session.candidates().size()) return NO;
+    _candidateDictionaryWord = FromUtf8(_session.candidates()[index].text);
+    _candidateDictionaryReading = FromUtf8(_session.candidate_reading(index));
+    if (_candidateDictionaryWord.length == 0 || _candidateDictionaryReading.length == 0) return NO;
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:_candidateDictionaryWord];
+    NSMenuItem *shared = [[NSMenuItem alloc] initWithTitle:@"共通辞書に送る"
+        action:@selector(submitCandidateDictionary:) keyEquivalent:@""];
+    shared.target = self;
+    shared.tag = 1;
+    [menu addItem:shared];
+    NSMenuItem *personal = [[NSMenuItem alloc] initWithTitle:@"個人辞書に登録"
+        action:@selector(submitCandidateDictionary:) keyEquivalent:@""];
+    personal.target = self;
+    personal.tag = 2;
+    [menu addItem:personal];
+    [menu popUpMenuPositioningItem:nil atLocation:event.locationInWindow
+        inView:event.window.contentView];
+    return YES;
+}
+
+- (void)submitCandidateDictionary:(id)sender {
+    NSString *command = [sender tag] == 1
+        ? @"--candidate-dictionary-shared" : @"--candidate-dictionary-personal";
+    if (_candidateDictionaryWord.length == 0 || _candidateDictionaryReading.length == 0) return;
+    [self launchCompanionWithArguments:@[
+        command, _candidateDictionaryWord, _candidateDictionaryReading,
+    ]];
 }
 
 - (NSArray *)candidates:(id)sender {
@@ -338,6 +397,7 @@ static NSString *PairedDelimiter(unichar value) {
              replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
         _hasCompositionReplacementRange = NO;
         [gCandidates hide];
+        if (gActiveCandidateController == self) gActiveCandidateController = nil;
         return;
     }
     NSString *text = FromUtf8(_session.display_text());
@@ -353,8 +413,10 @@ static NSString *PairedDelimiter(unichar value) {
     if (_session.is_converting()) {
         [gCandidates updateCandidates];
         [gCandidates show:kIMKLocateCandidatesBelowHint];
+        gActiveCandidateController = self;
     } else {
         [gCandidates hide];
+        if (gActiveCandidateController == self) gActiveCandidateController = nil;
     }
 }
 
@@ -365,6 +427,7 @@ static NSString *PairedDelimiter(unichar value) {
     _session.clear();
     _hasCompositionReplacementRange = NO;
     [gCandidates hide];
+    if (gActiveCandidateController == self) gActiveCandidateController = nil;
 }
 
 - (void)cancelComposition:(id)sender {
@@ -373,6 +436,7 @@ static NSString *PairedDelimiter(unichar value) {
     _session.clear();
     _hasCompositionReplacementRange = NO;
     [gCandidates hide];
+    if (gActiveCandidateController == self) gActiveCandidateController = nil;
 }
 
 - (BOOL)addZenzai {
@@ -504,6 +568,11 @@ int main(int argc, const char *argv[]) {
                                                   panelType:kIMKSingleColumnScrollingCandidatePanel];
         [gCandidates setDismissesAutomatically:NO];
         [NSApplication sharedApplication];
+        gCandidateMenuMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
+            NSEventMaskRightMouseDown handler:^NSEvent *(NSEvent *event) {
+                return [gActiveCandidateController showCandidateDictionaryMenuForEvent:event]
+                    ? nil : event;
+            }];
         [NSApp run];
     }
     return 0;

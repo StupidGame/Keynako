@@ -22,6 +22,7 @@ PC版は、Flutter製の設定・動作確認アプリと、OSへ入力ソース
 - サブモジュールのAzooKey標準辞書と、別リポジトリの`Dictionary/data_v1.json`共有辞書を併用
 - 共有辞書をインストール時から利用し、アプリ版と同じ5分間隔で取得して三OSのシステムIMEへ反映
 - IMEメニューの「個人辞書を編集」から単語を登録・編集・削除。保存した個人辞書を三OSのIMEと動作確認アプリへ反映
+- 候補を右クリックして共通辞書への送信か個人辞書への保存を選択。前方一致の補完候補では、入力途中の短い読みではなく登録語の完全な読みを使う
 - Windowsでは第一候補以外の辞書候補を確定したあと、確認操作によって読みと選択語を共有変換辞書へ改善として送信
 - Zenzai v3.2 xsmall／smallと常駐`llama.cpp`プロセスによる端末内推論
 
@@ -57,6 +58,8 @@ cmake --build build/windows-ime --config Release
 
 メニューバーの入力メニューにはFlutterアプリと同じアイコンを表示し、`ひらがな (あ)`／`英数 (A)`、ライブ変換、自動確定の速さを切り替えられます。かなキーと英数キーにも対応します。
 
+変換中に選択中の候補を右クリックすると、共通辞書と個人辞書の登録先を選べます。登録処理は同梱の設定アプリへ渡し、候補の確定は行いません。
+
 開発用ビルド:
 
 ```sh
@@ -65,9 +68,10 @@ bash platforms/macos/build-input-method.sh build/macos-ime
 
 ## Linux
 
-IBusとPyGObjectが必要です。Debian／Ubuntu系では`python3-gi`、`gir1.2-ibus-1.0`、`ibus`を導入し、展開した成果物の`install-ime.sh`を実行します。利用者領域へengineとcomponent定義を配置してIBusを再起動します。削除は`uninstall-ime.sh`です。
+IBusとPyGObjectが必要です。Debian／Ubuntu系では`python3-gi`、`gir1.2-ibus-1.0`、`gir1.2-gtk-3.0`、`ibus`を導入し、展開した成果物の`install-ime.sh`を実行します。利用者領域へengineとcomponent定義を配置してIBusを再起動します。削除は`uninstall-ime.sh`です。
 
 IBusパネルには現在の入力モードを`あ`／`A`で表示し、クリックで日本語と英語を切り替えられます。「自動確定」の項目を押すたびに速さが切り替わります。
+候補の右クリックではGTKのメニューから共通辞書か個人辞書を選べます。GTKのメニューを開けない環境では、同梱アプリの選択画面を開きます。
 
 ## Flutter設定・動作確認アプリ
 

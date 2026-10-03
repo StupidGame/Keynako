@@ -712,6 +712,22 @@ bool ImeSession::set_bundled_dictionary_path(const std::string &utf8_path) {
 }
 std::string ImeSession::display_text() const { return (converting_ || (live_conversion_ && !live_conversion_suspended_)) && !candidates_.empty() ? candidates_[selected_index_].text : reading_; }
 std::string ImeSession::selected_text() const { return candidates_.empty() ? reading_ : candidates_[selected_index_].text; }
+std::string ImeSession::candidate_reading(std::size_t index) const {
+    if (index >= candidates_.size()) return reading_;
+    const auto &candidate = candidates_[index];
+    if (candidate.source.find("prediction") == std::string::npos) return reading_;
+    for (const auto &entry : user_dictionary_) {
+        if (entry.value == candidate.text && entry.reading.size() > reading_.size() &&
+            entry.reading.rfind(reading_, 0) == 0) return entry.reading;
+    }
+    std::string learned_reading;
+    for (const auto &[ruby, scores] : learning_) {
+        if (ruby.size() <= reading_.size() || ruby.rfind(reading_, 0) != 0 ||
+            scores.find(candidate.text) == scores.end()) continue;
+        if (learned_reading.empty() || ruby.size() < learned_reading.size()) learned_reading = ruby;
+    }
+    return learned_reading.empty() ? reading_ : learned_reading;
+}
 void ImeSession::select_next() { if (!candidates_.empty()) selected_index_ = (selected_index_ + 1) % candidates_.size(); }
 void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ = (selected_index_ + candidates_.size() - 1) % candidates_.size(); }
 

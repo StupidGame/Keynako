@@ -87,6 +87,8 @@ int main() {
         });
         assert(found != values.end());
         assert(found - values.begin() < 3);
+        assert(rider_prediction.candidate_reading(static_cast<std::size_t>(found - values.begin())) ==
+            "かめんらいだー");
         assert(rider_prediction.display_text() != "仮面ライダー");
         assert(rider_prediction.begin_conversion());
         assert(rider_prediction.select_candidate(static_cast<std::size_t>(found - values.begin())));

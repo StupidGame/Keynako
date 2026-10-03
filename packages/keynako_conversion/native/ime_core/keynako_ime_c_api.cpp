@@ -86,6 +86,9 @@ const char *keynako_ime_candidate_at(keynako_ime_session session, size_t index) 
     if (!session || index >= cast(session)->candidates().size()) return "";
     return cast(session)->candidates()[index].text.c_str();
 }
+const char *keynako_ime_candidate_reading(keynako_ime_session session, size_t index) {
+    return session ? copy_result(cast(session)->candidate_reading(index)) : "";
+}
 size_t keynako_ime_selected_index(keynako_ime_session session) { return session ? cast(session)->selected_index() : 0; }
 void keynako_ime_select_next(keynako_ime_session session) { if (auto *value = cast(session)) value->select_next(); }
 void keynako_ime_select_previous(keynako_ime_session session) { if (auto *value = cast(session)) value->select_previous(); }

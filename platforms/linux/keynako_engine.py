@@ -67,6 +67,8 @@ class NativeSession:
         self.library.keynako_ime_candidate_count.restype = ctypes.c_size_t
         self.library.keynako_ime_candidate_at.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
         self.library.keynako_ime_candidate_at.restype = ctypes.c_char_p
+        self.library.keynako_ime_candidate_reading.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        self.library.keynako_ime_candidate_reading.restype = ctypes.c_char_p
         self.library.keynako_ime_selected_index.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_selected_index.restype = ctypes.c_size_t
         self.library.keynako_ime_select_next.argtypes = [ctypes.c_void_p]
@@ -146,6 +148,9 @@ class NativeSession:
     def candidates(self) -> list[str]:
         count = self.library.keynako_ime_candidate_count(self.handle)
         return [self.library.keynako_ime_candidate_at(self.handle, index).decode() for index in range(count)]
+
+    def candidate_reading(self, index: int) -> str:
+        return self.library.keynako_ime_candidate_reading(self.handle, index).decode()
 
     def selected_index(self) -> int:
         return self.library.keynako_ime_selected_index(self.handle)
@@ -540,9 +545,82 @@ class KeynakoEngine(IBus.Engine):
             return True
         return False
 
+    def _open_candidate_dictionary_choice(self, index: int) -> bool:
+        executable = Path(__file__).resolve().parent / "keynako_desktop"
+        if not executable.is_file():
+            return False
+        word = self.session.candidates()[index]
+        reading = self.session.candidate_reading(index)
+        if not word or not reading:
+            return False
+        try:
+            subprocess.Popen(
+                [str(executable), "--candidate-word", word, "--candidate-reading", reading],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except OSError:
+            return False
+        return True
+
+    def _show_candidate_dictionary_menu(self, index: int) -> None:
+        try:
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk
+
+            initialized = Gtk.init_check()
+            if isinstance(initialized, tuple):
+                initialized = initialized[0]
+            if not initialized:
+                self._open_candidate_dictionary_choice(index)
+                return
+            executable = Path(__file__).resolve().parent / "keynako_desktop"
+            if not executable.is_file():
+                return
+            word = self.session.candidates()[index]
+            reading = self.session.candidate_reading(index)
+            menu = Gtk.Menu()
+            for label, command in (
+                ("共通辞書に送る", "--candidate-dictionary-shared"),
+                ("個人辞書に登録", "--candidate-dictionary-personal"),
+            ):
+                item = Gtk.MenuItem.new_with_label(label)
+                item.connect("activate", self._submit_candidate_dictionary_choice,
+                             str(executable), command, word, reading)
+                menu.append(item)
+            menu.connect("deactivate", lambda *_: setattr(self, "_candidate_menu", None))
+            self._candidate_menu = menu
+            menu.show_all()
+            menu.popup_at_pointer(None)
+        except (ImportError, ValueError, RuntimeError):
+            self._open_candidate_dictionary_choice(index)
+
+    def _submit_candidate_dictionary_choice(
+        self, _item: object, executable: str, command: str, word: str, reading: str,
+    ) -> None:
+        try:
+            subprocess.Popen(
+                [executable, command, word, reading],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except OSError:
+            pass
+
     def do_candidate_clicked(self, index: int, button: int, state: int) -> None:
-        del button, state
+        del state
         if 0 <= index < len(self.session.candidates()):
+            if button == 3:
+                self._show_candidate_dictionary_menu(index)
+                return
+            if button != 1:
+                return
             self._selection_revision += 1
             self.session.select(index)
             self._commit()

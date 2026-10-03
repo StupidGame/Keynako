@@ -39,6 +39,7 @@ KEYNAKO_IME_EXPORT const char *keynako_ime_display_text(keynako_ime_session sess
 KEYNAKO_IME_EXPORT const char *keynako_ime_selected_text(keynako_ime_session session);
 KEYNAKO_IME_EXPORT size_t keynako_ime_candidate_count(keynako_ime_session session);
 KEYNAKO_IME_EXPORT const char *keynako_ime_candidate_at(keynako_ime_session session, size_t index);
+KEYNAKO_IME_EXPORT const char *keynako_ime_candidate_reading(keynako_ime_session session, size_t index);
 KEYNAKO_IME_EXPORT size_t keynako_ime_selected_index(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_select_next(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_select_previous(keynako_ime_session session);

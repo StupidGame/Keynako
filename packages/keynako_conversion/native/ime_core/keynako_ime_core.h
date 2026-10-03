@@ -63,6 +63,7 @@ public:
     }
     std::string display_text() const;
     std::string selected_text() const;
+    std::string candidate_reading(std::size_t index) const;
 
     void select_next();
     void select_previous();
