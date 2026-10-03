@@ -2580,7 +2580,7 @@ final class KeyboardViewController: UIInputViewController {
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
         var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
-        var registeredPrefixPredictions: [String] = []
+        var registeredPrefixPredictions: [(text: String, ruby: String, importance: Int)] = []
         var predictionReadings: [String: String] = [:]
         for entry in learned where entry.reading != reading {
             if predictionReadings[entry.text] == nil { predictionReadings[entry.text] = entry.reading }
@@ -2615,7 +2615,11 @@ final class KeyboardViewController: UIInputViewController {
                     exactUserTexts.append(value)
                 } else {
                     prefixPredictions.append(value)
-                    registeredPrefixPredictions.append(value)
+                    registeredPrefixPredictions.append((
+                        text: value,
+                        ruby: ruby,
+                        importance: entry["importance"] as? Int ?? 3
+                    ))
                     if predictionReadings[value] == nil { predictionReadings[value] = ruby }
                 }
             }
@@ -2632,7 +2636,14 @@ final class KeyboardViewController: UIInputViewController {
         for entry in sharedPrefixEntries.prefix(32) {
             let ruby = katakanaToHiragana(entry.ruby)
             guard ruby.count > reading.count, ruby.hasPrefix(reading), !entry.word.isEmpty else { continue }
-            registeredPrefixPredictions.append(entry.word)
+            let weightImportance = (entry.wordWeight + 9) / 2 + 3
+            let importance = weightImportance.isFinite
+                ? Int(min(5, max(1, weightImportance))) : 3
+            registeredPrefixPredictions.append((
+                text: entry.word,
+                ruby: ruby,
+                importance: importance
+            ))
             prefixPredictions.append(entry.word)
             if predictionReadings[entry.word] == nil { predictionReadings[entry.word] = ruby }
         }
@@ -2748,10 +2759,18 @@ final class KeyboardViewController: UIInputViewController {
                     ?? Self.systemDictionary[reading]?.first
                     ?? hiragana
             )
+            let rankedRegistered = registeredPrefixPredictions.sorted {
+                let leftRemaining = max(0, $0.ruby.count - reading.count)
+                let rightRemaining = max(0, $1.ruby.count - reading.count)
+                let leftScore = min(5, max(1, $0.importance)) * 20 - min(1000, leftRemaining) * 4
+                let rightScore = min(5, max(1, $1.importance)) * 20 - min(1000, rightRemaining) * 4
+                if leftScore != rightScore { return leftScore > rightScore }
+                return leftRemaining < rightRemaining
+            }
             var visibleRegistered = Set<String>()
-            prioritized.append(contentsOf: registeredPrefixPredictions.filter {
-                visibleRegistered.insert($0).inserted
-            }.prefix(4))
+            prioritized.append(contentsOf: rankedRegistered.filter {
+                visibleRegistered.insert($0.text).inserted
+            }.prefix(4).map { $0.text })
         }
         prioritized.append(contentsOf: learnedTexts)
         prioritized.append(contentsOf: exactUserTexts)

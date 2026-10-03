@@ -2781,7 +2781,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             userPredictions + hotfixDictionaryEntries.mapNotNull { entry ->
                 val ruby = katakanaToHiragana(entry.ruby)
                 if (ruby.length <= reading.length || !ruby.startsWith(reading)) null
-                else ReadingPrediction(ruby, entry.word)
+                else ReadingPrediction(
+                    ruby,
+                    entry.word,
+                    ((entry.wordWeight + 9.0) / 2.0 + 3.0).toInt().coerceIn(1, 5),
+                )
             },
             predictionLimit,
         )
