@@ -672,16 +672,20 @@ class JapaneseConverter {
     final conversionTexts = conversions
         .map((candidate) => candidate.text)
         .toSet();
-    final registeredPredictions = visiblePredictions
-        .where((candidate) => candidate.source == 'user-prediction')
+    final prominentPredictions = visiblePredictions
+        .where(
+          (candidate) =>
+              candidate.source == 'user-prediction' ||
+              candidate.source == 'learned-prediction',
+        )
         .take(4)
         .toList(growable: false);
-    final promotedTexts = registeredPredictions
+    final promotedTexts = prominentPredictions
         .map((candidate) => candidate.text)
         .toSet();
     return [
       ...conversions.take(1),
-      ...registeredPredictions,
+      ...prominentPredictions,
       ...conversions.skip(1),
       ...visiblePredictions.where(
         (candidate) => !promotedTexts.contains(candidate.text),

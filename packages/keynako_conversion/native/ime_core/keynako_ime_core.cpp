@@ -616,13 +616,9 @@ void ImeSession::learn_selected() {
     const auto text = selected.text;
     if (text.empty()) return;
     if (selected.source.find("prediction") != std::string::npos) {
-        const auto entry = std::find_if(user_dictionary_.begin(), user_dictionary_.end(),
-            [&](const auto &value) {
-                return value.value == text && value.reading.size() > key.size() &&
-                    value.reading.rfind(key, 0) == 0;
-            });
-        if (entry == user_dictionary_.end()) return;
-        key = entry->reading;
+        const auto full_reading = candidate_reading(selected_index_);
+        if (full_reading == key) return;
+        key = full_reading;
     }
     auto &scores = learning_[key];
     if (converting_ || selected_index_ != 0) {
@@ -947,16 +943,10 @@ void ImeSession::rebuild_candidates() {
     std::size_t promoted = 0;
     for (auto &prediction : prefix_predictions) {
         if (promoted >= 4) break;
-        bool registered = prediction.source == "personal-prediction" ||
-            prediction.source == "shared-prediction";
-        if (!registered && prediction.source == "learned-prediction") {
-            registered = std::any_of(user_dictionary_.begin(), user_dictionary_.end(), [&](const auto &entry) {
-                return entry.value == prediction.text &&
-                    entry.reading.size() > conversion_reading.size() &&
-                    entry.reading.rfind(conversion_reading, 0) == 0;
-            });
-        }
-        if (!registered || !seen.insert(prediction.text).second) continue;
+        const bool prominent = prediction.source == "personal-prediction" ||
+            prediction.source == "shared-prediction" ||
+            prediction.source == "learned-prediction";
+        if (!prominent || !seen.insert(prediction.text).second) continue;
         insertion = candidates_.insert(insertion, std::move(prediction)) + 1;
         ++promoted;
     }

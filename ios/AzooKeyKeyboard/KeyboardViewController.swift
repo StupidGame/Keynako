@@ -2579,10 +2579,11 @@ final class KeyboardViewController: UIInputViewController {
         let learned = learnedCandidateEntries(learningScores(), english: false)
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
-        var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
+        let learnedPrefixes = learned.filter { $0.reading != reading }
+        var prefixPredictions = learnedPrefixes.map(\.text)
         var registeredPrefixPredictions: [(text: String, ruby: String, importance: Int)] = []
         var predictionReadings: [String: String] = [:]
-        for entry in learned where entry.reading != reading {
+        for entry in learnedPrefixes {
             if predictionReadings[entry.text] == nil { predictionReadings[entry.text] = entry.reading }
         }
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
@@ -2750,7 +2751,7 @@ final class KeyboardViewController: UIInputViewController {
                 && $0 != hiragana && $0 != fullKatakana
         }
         var prioritized: [String] = []
-        if !registeredPrefixPredictions.isEmpty {
+        if !registeredPrefixPredictions.isEmpty || !learnedPrefixes.isEmpty {
             prioritized.append(
                 learnedTexts.first
                     ?? exactUserTexts.first
@@ -2767,10 +2768,15 @@ final class KeyboardViewController: UIInputViewController {
                 if leftScore != rightScore { return leftScore > rightScore }
                 return leftRemaining < rightRemaining
             }
-            var visibleRegistered = Set<String>()
-            prioritized.append(contentsOf: rankedRegistered.filter {
-                visibleRegistered.insert($0.text).inserted
-            }.prefix(4).map { $0.text })
+            let registeredTexts = rankedRegistered.map(\.text).filter { !completeTexts.contains($0) }
+            let learnedPrefixTexts = learnedPrefixes.map(\.text).filter {
+                !completeTexts.contains($0) && !learnedTexts.contains($0)
+            }
+            var visiblePrefixes = Set<String>()
+            prioritized.append(contentsOf: (
+                Array(registeredTexts.prefix(2)) + Array(learnedPrefixTexts.prefix(2)) +
+                Array(registeredTexts.dropFirst(2)) + Array(learnedPrefixTexts.dropFirst(2))
+            ).filter { visiblePrefixes.insert($0).inserted }.prefix(4))
         }
         prioritized.append(contentsOf: learnedTexts)
         prioritized.append(contentsOf: exactUserTexts)

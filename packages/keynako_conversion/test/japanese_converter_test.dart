@@ -211,6 +211,19 @@ void main() {
     expect(values.firstWhere((value) => value.text == '日本').reading, 'にほん');
   });
 
+  test('learned words surface beside conversions from short prefixes', () {
+    for (final reading in ['かめ', 'かめん']) {
+      final candidates = converter.candidates(
+        input: reading,
+        options: const ConversionOptions(learning: {'かめんらいだー\t仮面ライダー': 8}),
+      );
+      expect(candidates.first.text, isNot('仮面ライダー'));
+      expect(candidates[1].text, '仮面ライダー', reason: reading);
+      expect(candidates[1].reading, 'かめんらいだー');
+      expect(candidates[1].source, 'learned-prediction');
+    }
+  });
+
   test('can disable Japanese prefix predictions', () {
     final candidates = converter.candidates(input: 'にほ', predictionLimit: 0);
 
@@ -275,7 +288,7 @@ void main() {
       options: options,
     );
     expect(partial.first.text, 'きー');
-    expect(partial[2].text, 'Keynako');
+    expect(partial[1].text, 'Keynako');
     expect(
       converter
           .candidates(input: 'きー', predictionLimit: 0, options: options)

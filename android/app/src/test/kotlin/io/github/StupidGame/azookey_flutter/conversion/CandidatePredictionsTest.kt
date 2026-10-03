@@ -170,6 +170,24 @@ class CandidatePredictionsTest {
     }
 
     @Test
+    fun learnedLongReadingAppearsFromBothShortPrefixes() {
+        val learning = mapOf("かめんらいだー\t仮面ライダー" to 8)
+        for (reading in listOf("かめ", "かめん")) {
+            val learned = learnedJapanesePrefixPredictions(reading, learning)
+            assertEquals(listOf("仮面ライダー"), learned.map { it.text })
+            assertEquals("かめんらいだー", learned.single().reading)
+            val ranked = rankJapaneseCandidates(
+                reading, listOf("仮面", reading, hiraganaToKatakana(reading)), emptyList(), learning,
+            )
+            val pinned = pinJapaneseKanaCandidates(
+                reading, ranked, liveCandidate = "仮面",
+                prominentPredictions = learned.map { it.text },
+            )
+            assertEquals(listOf("仮面", "仮面ライダー"), pinned.take(2))
+        }
+    }
+
+    @Test
     fun learningAndDeduplicationAreAppliedBeforePredictionLimit() {
         assertEquals(listOf("てす", "テストケース"), rankJapaneseCandidates(
             "てす", listOf("てす"), listOf("てす", "テスト", "テスト"),

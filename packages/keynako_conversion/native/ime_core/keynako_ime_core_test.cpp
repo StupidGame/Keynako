@@ -99,6 +99,24 @@ int main() {
         assert(rider_prediction.candidates().front().text != "仮面ライダー");
         assert(rider_prediction.display_text() != "仮面ライダー");
     }
+    ImeSession learned_rider;
+    for (const char value : std::string("kamenraida-")) learned_rider.append_ascii(value);
+    learned_rider.insert_zenzai_candidate("仮面ライダー");
+    assert(learned_rider.selected_text() == "仮面ライダー");
+    learned_rider.learn_selected();
+    for (const auto &raw : {"kame", "kamen"}) {
+        learned_rider.clear();
+        for (const char value : std::string(raw)) learned_rider.append_ascii(value);
+        assert(learned_rider.candidates().front().text != "仮面ライダー");
+        assert(learned_rider.candidates().size() > 1);
+        assert(learned_rider.candidates()[1].text == "仮面ライダー");
+        assert(learned_rider.candidates()[1].source == "learned-prediction");
+        assert(learned_rider.candidate_reading(1) == "かめんらいだー");
+        assert(learned_rider.display_text() != "仮面ライダー");
+        assert(learned_rider.begin_conversion());
+        assert(learned_rider.select_candidate(1));
+        learned_rider.learn_selected();
+    }
     keynako::DictionaryEntry personal_entry{"てすと", "個人語", 5};
     personal_entry.source = "personal";
     ImeSession personal_dictionary;

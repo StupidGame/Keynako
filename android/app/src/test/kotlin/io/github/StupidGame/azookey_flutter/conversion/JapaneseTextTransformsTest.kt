@@ -48,7 +48,7 @@ class JapaneseTextTransformsTest {
                 reading = "かめん",
                 ranked = listOf("仮面", "画面", "仮面ライダー"),
                 liveCandidate = "仮面",
-                registeredPredictions = listOf("仮面ライダー"),
+                prominentPredictions = listOf("仮面ライダー"),
             ),
         )
     }

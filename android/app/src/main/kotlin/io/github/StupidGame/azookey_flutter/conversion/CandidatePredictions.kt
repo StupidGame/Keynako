@@ -114,6 +114,26 @@ internal data class ReadingPrediction(
     val importance: Int = 3,
 )
 
+/** Learned longer readings stay complete when a user has typed only their prefix. */
+internal fun learnedJapanesePrefixPredictions(
+    reading: String,
+    learning: Map<String, Int>,
+    exclude: Set<String> = emptySet(),
+    limit: Int = 4,
+): List<LearnedCandidate> {
+    if (reading.isEmpty() || limit <= 0) return emptyList()
+    val normalized = katakanaToHiragana(reading)
+    return learnedCandidates(learning).asSequence()
+        .filter {
+            it.reading.length > normalized.length && it.reading.startsWith(normalized) &&
+                it.text.isNotBlank() && it.text !in exclude
+        }
+        .sortedWith(compareByDescending<LearnedCandidate> { it.score }.thenBy { it.reading.length })
+        .distinctBy { it.text }
+        .take(limit)
+        .toList()
+}
+
 internal fun prefixPredictionEntries(
     reading: String,
     entries: Iterable<Pair<String, List<String>>>,

@@ -65,6 +65,7 @@ import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
+import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
@@ -2886,10 +2887,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         val learning = learningScores()
         val learned = exactLearnedJapaneseCandidates(reading, learning)
         val exactTexts = values.toSet() + learned
-        for (entry in learnedCandidates(learning)) {
-            if (entry.reading.length > reading.length && entry.reading.startsWith(reading) && entry.text !in exactTexts) {
-                predictionReadings.getOrPut(entry.text) { entry.reading }
-            }
+        val learnedPrefixes = learnedJapanesePrefixPredictions(
+            reading, learning, exactTexts, predictionLimit,
+        )
+        for (entry in learnedPrefixes) {
+            predictionReadings.getOrPut(entry.text) { entry.reading }
         }
         candidatePredictionReadings = predictionReadings.filterKeys { it !in exactTexts }
         val ranked = rankJapaneseCandidates(
@@ -2904,7 +2906,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             ranked = ranked,
             liveCandidate = bestLiveJapaneseConversion(reading, completeConversions, ranked),
             learnedCandidates = learned,
-            registeredPredictions = registeredPredictions.take(4).map(ReadingPrediction::text),
+            prominentPredictions = (
+                registeredPredictions.take(2).map(ReadingPrediction::text) +
+                    learnedPrefixes.take(2).map { it.text } +
+                    registeredPredictions.drop(2).map(ReadingPrediction::text) +
+                    learnedPrefixes.drop(2).map { it.text }
+            ).distinct().take(4),
         )
     }
 
