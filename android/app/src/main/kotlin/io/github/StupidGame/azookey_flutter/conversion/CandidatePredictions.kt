@@ -134,6 +134,34 @@ internal fun learnedJapanesePrefixPredictions(
         .toList()
 }
 
+/** Keep completions visible after the model reranks candidates, without using one for live text. */
+internal fun rerankedJapaneseCandidates(
+    reading: String,
+    ranked: List<String>,
+    baseCandidates: List<String>,
+    predictionReadings: Map<String, String>,
+    learning: Map<String, Int>,
+): List<String> {
+    val learned = exactLearnedJapaneseCandidates(reading, learning)
+    val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
+    val predictionTexts = predictionReadings.keys + learnedPrefixes.map { it.text }
+    val personalized = prioritizeLearnedJapaneseCandidates(reading, ranked, learning)
+    val liveCandidate = personalized.firstOrNull {
+        it !in learned && it !in predictionTexts &&
+            it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
+    }
+    val prominentPredictions = (
+        baseCandidates.filter { it in predictionTexts } + learnedPrefixes.map { it.text }
+    ).distinct().take(4)
+    return pinJapaneseKanaCandidates(
+        reading = reading,
+        ranked = personalized,
+        liveCandidate = liveCandidate,
+        learnedCandidates = learned,
+        prominentPredictions = prominentPredictions,
+    )
+}
+
 internal fun prefixPredictionEntries(
     reading: String,
     entries: Iterable<Pair<String, List<String>>>,

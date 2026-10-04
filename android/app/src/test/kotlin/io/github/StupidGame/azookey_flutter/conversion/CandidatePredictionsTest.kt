@@ -188,6 +188,36 @@ class CandidatePredictionsTest {
     }
 
     @Test
+    fun modelRerankingKeepsLearnedCompletionVisibleWithoutCompletingLiveText() {
+        val learning = mutableMapOf<String, Int>()
+        recordCandidateLearning(
+            learning, "かめんらいだー", "仮面ライダー", explicitSelection = true,
+        )
+        for (reading in listOf("かめ", "かめん")) {
+            val conversion = if (reading == "かめ") "亀" else "仮面"
+            val ranked = rerankedJapaneseCandidates(
+                reading = reading,
+                // The model can put the completion first even when the user has not finished typing.
+                ranked = listOf("仮面ライダー", conversion, reading),
+                baseCandidates = listOf(conversion, "仮面ライダー", reading),
+                predictionReadings = mapOf("仮面ライダー" to "かめんらいだー"),
+                learning = learning,
+            )
+            assertEquals(listOf(conversion, "仮面ライダー"), ranked.take(2))
+        }
+        assertEquals(
+            listOf("かめ", "仮面ライダー"),
+            rerankedJapaneseCandidates(
+                reading = "かめ",
+                ranked = listOf("仮面ライダー", "かめ"),
+                baseCandidates = listOf("かめ", "仮面ライダー"),
+                predictionReadings = mapOf("仮面ライダー" to "かめんらいだー"),
+                learning = learning,
+            ).take(2),
+        )
+    }
+
+    @Test
     fun learningAndDeduplicationAreAppliedBeforePredictionLimit() {
         assertEquals(listOf("てす", "テストケース"), rankJapaneseCandidates(
             "てす", listOf("てす"), listOf("てす", "テスト", "テスト"),

@@ -70,8 +70,8 @@ import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.rankJapaneseCandidates
-import io.github.StupidGame.azookey_flutter.conversion.prioritizeLearnedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
+import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
@@ -2721,15 +2721,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         ) { ranked ->
             if (displayReading() != reading || ranked.isEmpty()) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
-            val learning = learningScores()
-            val learned = exactLearnedJapaneseCandidates(reading, learning)
-            val personalized = prioritizeLearnedJapaneseCandidates(reading, ranked, learning)
-            val liveCandidate = personalized.firstOrNull { it !in learned && it != reading && it != hiraganaToKatakana(reading) }
-            candidates = pinJapaneseKanaCandidates(
+            candidates = rerankedJapaneseCandidates(
                 reading = reading,
-                ranked = personalized,
-                liveCandidate = liveCandidate,
-                learnedCandidates = learned,
+                ranked = ranked,
+                baseCandidates = baseCandidates,
+                predictionReadings = candidatePredictionReadings,
+                learning = learningScores(),
             ).toMutableList()
             if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
             selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0) ?: 0
