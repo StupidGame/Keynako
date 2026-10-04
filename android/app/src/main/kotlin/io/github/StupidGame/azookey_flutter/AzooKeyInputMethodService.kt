@@ -2711,6 +2711,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             ?.getTextAfterCursor(20, 0)
             ?.toString()
             .orEmpty()
+        val predictionReadings = candidatePredictionReadings
         zenzaiRuntime.rank(
             modelSize = size,
             reading = modelInput,
@@ -2725,7 +2726,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 reading = reading,
                 ranked = ranked,
                 baseCandidates = baseCandidates,
-                predictionReadings = candidatePredictionReadings,
+                predictionReadings = predictionReadings,
                 learning = learningScores(),
             ).toMutableList()
             if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
