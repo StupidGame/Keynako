@@ -2696,10 +2696,15 @@ final class KeyboardViewController: UIInputViewController {
                 if predictionReadings[value] == nil { predictionReadings[value] = ruby }
             }
         }
-        // A local completion must not displace an existing engine candidate or
-        // become a live conversion when no complete conversion is available.
+        // The model may return the same text as a registered or learned
+        // completion. Keep its longer reading when ranking live candidates.
+        let knownPrefixTexts = Set(registeredPrefixPredictions.map(\.text) + learnedPrefixes.map(\.text))
+            .subtracting(exactUserTexts)
+        // A local completion must not become a live conversion while its
+        // reading is unfinished.
         var completeTexts = Set<String>()
         result = result.filter { !$0.isEmpty && completeTexts.insert($0).inserted }
+        completeTexts.subtract(knownPrefixTexts)
         if result.isEmpty {
             result = [reading, hiraganaToKatakana(reading)]
             completeTexts = Set(result)
@@ -2743,11 +2748,13 @@ final class KeyboardViewController: UIInputViewController {
         let learnedTexts = exactLearning.map(\.text)
         let stableEngineCandidate = conversionEngine?.baselineTexts.first {
             !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && !knownPrefixTexts.contains($0)
                 && !blockedEmoji.contains(Self.normalizedEmoji($0))
                 && $0 != hiragana && $0 != fullKatakana
         }
         let engineCandidate = stableEngineCandidate ?? engineCandidates.first {
             !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
+                && !knownPrefixTexts.contains($0)
                 && $0 != hiragana && $0 != fullKatakana
         }
         var prioritized: [String] = []

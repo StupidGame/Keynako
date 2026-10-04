@@ -729,6 +729,13 @@ void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ =
 
 void ImeSession::insert_zenzai_candidate(std::string value) {
     if (value.empty()) return;
+    const auto existing = std::find_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
+        return candidate.text == value;
+    });
+    if (existing != candidates_.end() && existing->source.find("prediction") != std::string::npos) {
+        // A model result cannot make an unfinished dictionary or learned reading live.
+        return;
+    }
     const bool preserve_selection = converting_ || selected_index_ != 0;
     const auto selected = selected_text();
     candidates_.erase(std::remove_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {

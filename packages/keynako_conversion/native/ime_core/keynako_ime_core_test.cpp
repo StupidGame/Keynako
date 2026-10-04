@@ -113,6 +113,9 @@ int main() {
         assert(learned_rider.candidates()[1].source == "learned-prediction");
         assert(learned_rider.candidate_reading(1) == "かめんらいだー");
         assert(learned_rider.display_text() != "仮面ライダー");
+        learned_rider.insert_zenzai_candidate("仮面ライダー");
+        assert(learned_rider.candidates()[1].source == "learned-prediction");
+        assert(learned_rider.display_text() != "仮面ライダー");
         assert(learned_rider.begin_conversion());
         assert(learned_rider.select_candidate(1));
         learned_rider.learn_selected();
