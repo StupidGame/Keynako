@@ -39,6 +39,41 @@ void main() {
   });
 
   test(
+    'model reranking keeps dictionary, learning, then other candidates',
+    () async {
+      final repository = _FakeSharedDictionaryRepository()
+        ..snapshot = const SharedDictionarySnapshot(
+          revision: 'priority',
+          version: '1.1',
+          lastUpdate: 'today',
+          entries: [ConversionDictionaryEntry(reading: 'にほんご', value: '登録語')],
+        );
+      final controller = DesktopInputController(
+        sharedDictionaryRepository: repository,
+        zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),
+      );
+      controller.updateRawInput('nihongo');
+      controller.selectCandidate(
+        controller.candidates.indexWhere(
+          (candidate) => candidate.text == '日本語',
+        ),
+      );
+      controller.commitSelected();
+      await controller.importSharedDictionary();
+      await controller.setZenzaiModel(ZenzaiModel.xsmall);
+      controller.updateRawInput('nihongo');
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+
+      expect(controller.candidates.take(3).map((candidate) => candidate.text), [
+        '登録語',
+        '日本語',
+        '日本語入力',
+      ]);
+      controller.dispose();
+    },
+  );
+
+  test(
     'a pending Zenzai result preserves the manual selection and commit',
     () async {
       final engine = _DelayedZenzaiEngine();

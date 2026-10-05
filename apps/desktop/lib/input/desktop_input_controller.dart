@@ -126,10 +126,22 @@ class DesktopInputController extends ChangeNotifier {
     if (_mode == InputMode.japanese &&
         (_liveConversionEnabled || _converting) &&
         _candidates.isNotEmpty) {
-      return _candidates[_selectedIndex].text;
+      return (_converting
+              ? _candidates[_selectedIndex]
+              : _firstCompleteCandidate())
+          .text;
     }
     return composingText;
   }
+
+  ConversionCandidate _firstCompleteCandidate() => _candidates.firstWhere(
+    (candidate) => !candidate.source.contains('prediction'),
+    orElse: () => ConversionCandidate(
+      text: composingText,
+      reading: composingText,
+      source: 'hiragana',
+    ),
+  );
 
   void setLiveConversionEnabled(bool enabled) {
     if (_liveConversionEnabled == enabled) return;
@@ -407,7 +419,11 @@ class DesktopInputController extends ChangeNotifier {
 
   void commitSelected({int? replaceStart, int? replaceEnd}) {
     if (_rawInput.isEmpty) return;
-    final selected = _candidates.isEmpty ? null : _candidates[_selectedIndex];
+    final selected = _candidates.isEmpty
+        ? null
+        : (_converting
+              ? _candidates[_selectedIndex]
+              : _firstCompleteCandidate());
     final candidate = selected?.text ?? composingText;
     if (candidate.isEmpty) return;
     CandidateLearning.record(
@@ -517,22 +533,36 @@ class DesktopInputController extends ChangeNotifier {
       final selectedText = _converting && _candidates.isNotEmpty
           ? _candidates[_selectedIndex].text
           : null;
-      _candidates = [
-        ConversionCandidate(
-          text: generated,
-          reading: reading,
-          source: 'zenzai',
-          score: 1000,
-        ),
-        ..._candidates.where((candidate) => candidate.text != generated),
-      ];
+      if (!_candidates.any((candidate) => candidate.text == generated)) {
+        _candidates = [
+          ConversionCandidate(
+            text: generated,
+            reading: reading,
+            source: 'zenzai',
+            score: 1000,
+          ),
+          ..._candidates,
+        ];
+      }
       final learned = CandidateLearning.exactScores(_learning, reading);
       final ranked = _candidates.indexed.toList()
         ..sort((left, right) {
+          final leftPriority = _candidatePriority(left.$2);
+          final rightPriority = _candidatePriority(right.$2);
+          if (leftPriority != rightPriority) {
+            return leftPriority.compareTo(rightPriority);
+          }
+          final leftPrediction = left.$2.source.contains('prediction');
+          final rightPrediction = right.$2.source.contains('prediction');
+          if (leftPrediction != rightPrediction) {
+            return leftPrediction ? 1 : -1;
+          }
           final score = (learned[right.$2.text] ?? 0).compareTo(
             learned[left.$2.text] ?? 0,
           );
-          return score != 0 ? score : left.$1.compareTo(right.$1);
+          return leftPriority == 1 && score != 0
+              ? score
+              : left.$1.compareTo(right.$1);
         });
       _candidates = ranked.map((entry) => entry.$2).toList();
       _selectedIndex = selectedText == null
@@ -549,6 +579,12 @@ class DesktopInputController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  static int _candidatePriority(ConversionCandidate candidate) {
+    if (candidate.source.startsWith('user')) return 0;
+    if (candidate.source.startsWith('learned')) return 1;
+    return 2;
   }
 
   @override
