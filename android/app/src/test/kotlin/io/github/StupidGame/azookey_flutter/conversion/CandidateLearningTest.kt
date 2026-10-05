@@ -44,14 +44,14 @@ class CandidateLearningTest {
         assertTrue("Hel\tHello" !in learning)
         assertTrue("english:hel\thello" !in learning)
         val values = englishPredictionCandidates("Hel", learning = learning)
-        assertEquals(listOf("Hel", "HELLO"), values.take(2))
+        assertEquals(listOf("HELLO", "Hel"), values.take(2))
         assertTrue("Helloworld" !in values)
     }
 
     @Test
     fun englishLearningWorksForLongerPrefixesWithoutAutoCompletion() {
         val learning = mapOf("english:he\thelium" to 8)
-        assertEquals(listOf("heli", "helium"), englishPredictionCandidates("heli", learning = learning))
+        assertEquals(listOf("helium", "heli"), englishPredictionCandidates("heli", learning = learning))
         assertEquals(listOf("heli"), englishPredictionCandidates("heli"))
     }
 

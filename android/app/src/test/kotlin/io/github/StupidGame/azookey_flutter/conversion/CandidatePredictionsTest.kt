@@ -223,10 +223,13 @@ class CandidatePredictionsTest {
                 predictionReadings = mapOf("仮面ライダー" to "かめんらいだー"),
                 learning = learning,
             )
-            assertEquals(listOf(conversion, "仮面ライダー"), ranked.take(2))
+            assertEquals(listOf("仮面ライダー", conversion), ranked.take(2))
+            assertEquals(1, firstCompleteJapaneseCandidateIndex(
+                ranked, mapOf("仮面ライダー" to "かめんらいだー"),
+            ))
         }
         assertEquals(
-            listOf("かめ", "仮面ライダー"),
+            listOf("仮面ライダー", "かめ"),
             rerankedJapaneseCandidates(
                 reading = "かめ",
                 ranked = listOf("仮面ライダー", "かめ"),
