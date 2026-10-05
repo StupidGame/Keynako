@@ -54,6 +54,22 @@ int main() {
     assert(std::any_of(recalled.candidates().begin(), recalled.candidates().end(),
         [](const auto &candidate) { return candidate.text == "Keynako"; }));
 
+    ImeSession fixed_priority;
+    for (const char value : std::string("tesuto")) fixed_priority.append_ascii(value);
+    fixed_priority.insert_zenzai_candidate("学習語");
+    fixed_priority.learn_selected();
+    fixed_priority.clear();
+    fixed_priority.set_user_dictionary({{"てすと", "登録語", 3}});
+    for (const char value : std::string("tesuto")) fixed_priority.append_ascii(value);
+    assert(fixed_priority.candidates()[0].text == "登録語");
+    assert(fixed_priority.candidates()[1].text == "学習語");
+    fixed_priority.clear();
+    for (const char value : std::string("tesu")) fixed_priority.append_ascii(value);
+    assert(fixed_priority.candidates()[0].text == "登録語");
+    assert(fixed_priority.candidates()[0].source == "shared-prediction");
+    assert(fixed_priority.candidates()[1].text == "学習語");
+    assert(fixed_priority.display_text() == "てす");
+
     ImeSession session;
     session.set_user_dictionary({
         {"へんかん", "共有変換", 5},
@@ -73,8 +89,8 @@ int main() {
     for (const char value : std::string("niho")) prefix_prediction.append_ascii(value);
     assert(prefix_prediction.display_text() == "にほ");
     assert(prefix_prediction.candidates().size() >= 4);
-    assert(prefix_prediction.candidates()[1].text == "日本");
-    assert(prefix_prediction.candidates()[1].source == "shared-prediction");
+    assert(prefix_prediction.candidates().front().text == "日本");
+    assert(prefix_prediction.candidates().front().source == "shared-prediction");
     ImeSession rider_prediction;
     rider_prediction.set_user_dictionary({{"かめんらいだー", "仮面ライダー", 3}});
     for (const auto &raw : {"kame", "kamen"}) {
@@ -96,7 +112,7 @@ int main() {
         rider_prediction.cancel_conversion();
         rider_prediction.clear();
         for (const char value : std::string(raw)) rider_prediction.append_ascii(value);
-        assert(rider_prediction.candidates().front().text != "仮面ライダー");
+        assert(rider_prediction.candidates().front().text == "仮面ライダー");
         assert(rider_prediction.display_text() != "仮面ライダー");
     }
     ImeSession learned_rider;
@@ -107,17 +123,16 @@ int main() {
     for (const auto &raw : {"kame", "kamen"}) {
         learned_rider.clear();
         for (const char value : std::string(raw)) learned_rider.append_ascii(value);
-        assert(learned_rider.candidates().front().text != "仮面ライダー");
+        assert(learned_rider.candidates().front().text == "仮面ライダー");
         assert(learned_rider.candidates().size() > 1);
-        assert(learned_rider.candidates()[1].text == "仮面ライダー");
-        assert(learned_rider.candidates()[1].source == "learned-prediction");
-        assert(learned_rider.candidate_reading(1) == "かめんらいだー");
+        assert(learned_rider.candidates().front().source == "learned-prediction");
+        assert(learned_rider.candidate_reading(0) == "かめんらいだー");
         assert(learned_rider.display_text() != "仮面ライダー");
         learned_rider.insert_zenzai_candidate("仮面ライダー");
-        assert(learned_rider.candidates()[1].source == "learned-prediction");
+        assert(learned_rider.candidates().front().source == "learned-prediction");
         assert(learned_rider.display_text() != "仮面ライダー");
         assert(learned_rider.begin_conversion());
-        assert(learned_rider.select_candidate(1));
+        assert(learned_rider.select_candidate(0));
         learned_rider.learn_selected();
     }
     keynako::DictionaryEntry personal_entry{"てすと", "個人語", 5};
@@ -146,6 +161,19 @@ int main() {
     for (const char value : std::string("watashihaneko")) mixed_dictionary.append_ascii(value);
     assert(std::any_of(mixed_dictionary.candidates().begin(), mixed_dictionary.candidates().end(),
         [](const auto &candidate) { return candidate.text == "私は猫"; }));
+    ImeSession learned_combination;
+    for (const auto &[ruby, word] : std::vector<std::pair<std::string, std::string>>{
+             {"watashi", "私"}, {"neko", "猫"}}) {
+        for (const char value : ruby) learned_combination.append_ascii(value);
+        learned_combination.insert_zenzai_candidate(word);
+        assert(learned_combination.selected_text() == word);
+        learned_combination.learn_selected();
+        learned_combination.clear();
+    }
+    for (const char value : std::string("watashihaneko")) learned_combination.append_ascii(value);
+    assert(std::any_of(learned_combination.candidates().begin(), learned_combination.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "私は猫" &&
+            candidate.source == "learned-combination"; }));
     ImeSession special_number;
     for (const char value : std::string("1234")) special_number.append_ascii(value);
     assert(std::any_of(special_number.candidates().begin(), special_number.candidates().end(),
@@ -170,15 +198,15 @@ int main() {
     });
     for (const char value : std::string("tesu")) ranked_prediction.append_ascii(value);
     assert(ranked_prediction.display_text() == "てす");
-    assert(ranked_prediction.candidates()[1].text == "重要な補完");
-    assert(ranked_prediction.candidates()[2].text == "短い補完");
+    assert(ranked_prediction.candidates()[0].text == "重要な補完");
+    assert(ranked_prediction.candidates()[1].text == "短い補完");
     ImeSession closer_prediction;
     closer_prediction.set_user_dictionary({
         {"テストケースナガイヨソク", "遠い高重要度", 5},
         {"テスト", "近い補完", 4},
     });
     for (const char value : std::string("tesu")) closer_prediction.append_ascii(value);
-    assert(closer_prediction.candidates()[1].text == "近い補完");
+    assert(closer_prediction.candidates()[0].text == "近い補完");
     ranked_prediction.clear();
     ranked_prediction.append_ascii('/');
     assert(std::none_of(ranked_prediction.candidates().begin(), ranked_prediction.candidates().end(),
@@ -247,6 +275,10 @@ int main() {
     assert(question_mark.display_text() == "何");
     question_mark.insert_zenzai_candidate("何なの");
     assert(question_mark.begin_conversion());
+    const auto generated = std::find_if(question_mark.candidates().begin(), question_mark.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "何なの"; });
+    assert(generated != question_mark.candidates().end());
+    assert(question_mark.select_candidate(static_cast<std::size_t>(generated - question_mark.candidates().begin())));
     question_mark.append_ascii('?');
     assert(question_mark.raw_input() == "nani?");
     assert(question_mark.reading() == "なに？");
@@ -300,6 +332,10 @@ int main() {
     assert(mixed_text.display_text() == "日本語");
     mixed_text.insert_zenzai_candidate("日本語入力");
     assert(mixed_text.begin_conversion());
+    const auto mixed_generated = std::find_if(mixed_text.candidates().begin(), mixed_text.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "日本語入力"; });
+    assert(mixed_generated != mixed_text.candidates().end());
+    assert(mixed_text.select_candidate(static_cast<std::size_t>(mixed_generated - mixed_text.candidates().begin())));
     for (const char value : std::string("OpenAI")) {
         mixed_text.append_literal_ascii(value);
     }

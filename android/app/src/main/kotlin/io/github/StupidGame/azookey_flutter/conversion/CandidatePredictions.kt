@@ -17,7 +17,7 @@ private val defaultEnglishPredictionWords = listOf(
     "why", "will", "with", "work", "would", "yes", "you", "your",
 )
 
-/** Keeps the typed word first and adds case-matched English prefix completions. */
+/** Registered completions precede learned ones; English composition stays literal. */
 internal fun englishPredictionCandidates(
     input: String,
     preferredCandidates: Iterable<String> = emptyList(),
@@ -26,25 +26,19 @@ internal fun englishPredictionCandidates(
 ): List<String> {
     if (input.isBlank() || limit <= 0) return emptyList()
     val prefix = input.lowercase(Locale.ROOT)
-    val values = linkedSetOf(input)
-
-    fun addCandidate(candidate: String) {
-        if (candidate.isBlank()) return
-        values.add(matchEnglishCandidateCase(candidate, input))
-    }
-
-    preferredCandidates.forEach(::addCandidate)
+    val registered = preferredCandidates.filter(String::isNotBlank)
+        .map { matchEnglishCandidateCase(it, input) }
     val scores = mutableMapOf<String, Int>()
     for (entry in learnedCandidates(learning, english = true)) {
         if (!entry.reading.startsWith(prefix) && !entry.text.lowercase(Locale.ROOT).startsWith(prefix)) continue
         val word = matchEnglishCandidateCase(entry.text, input)
-        values.add(word)
         scores[word] = maxOf(scores[word] ?: 0, entry.score)
     }
-    defaultEnglishPredictionWords.asSequence()
+    val defaults = defaultEnglishPredictionWords.asSequence()
         .filter { it.length > prefix.length && it.startsWith(prefix) }
-        .forEach(::addCandidate)
-    return (listOf(input) + values.filter { it != input }.sortedByDescending { scores[it] ?: 0 }).take(limit)
+        .map { matchEnglishCandidateCase(it, input) }
+    return (registered + scores.keys.sortedByDescending { scores[it] } + listOf(input) + defaults.toList())
+        .distinct().take(limit)
 }
 
 /**
@@ -141,6 +135,8 @@ internal fun rerankedJapaneseCandidates(
     baseCandidates: List<String>,
     predictionReadings: Map<String, String>,
     learning: Map<String, Int>,
+    dictionaryCandidates: List<String> = emptyList(),
+    learningCandidates: List<String> = emptyList(),
 ): List<String> {
     val learned = exactLearnedJapaneseCandidates(reading, learning)
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
@@ -153,14 +149,34 @@ internal fun rerankedJapaneseCandidates(
     val prominentPredictions = (
         baseCandidates.filter { it in predictionTexts } + learnedPrefixes.map { it.text }
     ).distinct().take(4)
-    return pinJapaneseKanaCandidates(
+    val pinned = pinJapaneseKanaCandidates(
         reading = reading,
         ranked = personalized,
         liveCandidate = liveCandidate,
         learnedCandidates = learned,
         prominentPredictions = prominentPredictions,
     )
+    return prioritizeJapaneseCandidateGroups(
+        pinned, dictionaryCandidates,
+        learningCandidates + learned + learnedPrefixes.map { it.text },
+    )
 }
+
+/** Registered words always precede learned words, regardless of their learning score. */
+internal fun prioritizeJapaneseCandidateGroups(
+    candidates: Iterable<String>,
+    dictionaryCandidates: Iterable<String>,
+    learnedCandidates: Iterable<String>,
+): List<String> = linkedSetOf<String>().apply {
+    addAll(dictionaryCandidates.filter(String::isNotBlank))
+    addAll(learnedCandidates.filter(String::isNotBlank))
+    addAll(candidates.filter(String::isNotBlank))
+}.toList()
+
+internal fun firstCompleteJapaneseCandidateIndex(
+    candidates: List<String>,
+    predictionReadings: Map<String, String>,
+): Int = candidates.indexOfFirst { it !in predictionReadings }.coerceAtLeast(0)
 
 internal fun prefixPredictionEntries(
     reading: String,

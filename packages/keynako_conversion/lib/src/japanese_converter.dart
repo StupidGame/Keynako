@@ -459,10 +459,12 @@ class JapaneseConverter {
         ConversionCandidate(text: value, reading: reading, score: 250),
       );
     }
-    for (final path in _dictionaryCombinations(
+    final registeredCombinations = _dictionaryCombinations(
       reading,
       options.userDictionary,
-    )) {
+      limit: 32,
+    );
+    for (final path in registeredCombinations.take(8)) {
       values.add(
         ConversionCandidate(
           text: path.text,
@@ -471,6 +473,40 @@ class JapaneseConverter {
           score: 300 + (path.score ~/ 4).clamp(0, 50),
         ),
       );
+    }
+    if (options.learningEnabled) {
+      final learnedEntries = CandidateLearning.entries(options.learning)
+          .where((entry) => reading.contains(entry.reading))
+          .map(
+            (entry) => ConversionDictionaryEntry(
+              reading: entry.reading,
+              value: entry.text,
+              importance: (3 + entry.score ~/ 16).clamp(1, 5),
+            ),
+          )
+          .toList();
+      final dictionaryTexts = registeredCombinations
+          .map((path) => path.text)
+          .toSet();
+      final learnedPaths = [
+        ..._dictionaryCombinations(reading, learnedEntries),
+        ..._dictionaryCombinations(reading, [
+          ...options.userDictionary,
+          ...learnedEntries,
+        ], limit: 32).where((path) => !dictionaryTexts.contains(path.text)),
+      ];
+      final seen = <String>{};
+      for (final path
+          in learnedPaths.where((path) => seen.add(path.text)).take(8)) {
+        values.add(
+          ConversionCandidate(
+            text: path.text,
+            reading: reading,
+            source: 'learned-combination',
+            score: 280 + (path.score ~/ 4).clamp(0, 50),
+          ),
+        );
+      }
     }
     for (final value in AzooKeySpecialCandidates.complete(reading)) {
       values.add(
@@ -603,7 +639,10 @@ class JapaneseConverter {
       final learned = (exactLearning[candidate.text] ?? 0).clamp(0, 1000);
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = unique[candidate.text];
-      if (previous == null || scored.score > previous.score) {
+      if (previous == null ||
+          _candidatePriority(scored) < _candidatePriority(previous) ||
+          (_candidatePriority(scored) == _candidatePriority(previous) &&
+              scored.score > previous.score)) {
         unique[candidate.text] = scored;
       }
     }
@@ -614,14 +653,20 @@ class JapaneseConverter {
       final learned = (predictionLearning[candidate.text] ?? 0).clamp(0, 1000);
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = uniquePredictions[candidate.text];
-      if (previous == null || scored.score > previous.score) {
+      if (previous == null ||
+          _candidatePriority(scored) < _candidatePriority(previous) ||
+          (_candidatePriority(scored) == _candidatePriority(previous) &&
+              scored.score > previous.score)) {
         uniquePredictions[candidate.text] = scored;
       }
     }
-    final predictions = _rank(uniquePredictions.values);
+    final predictions = _priorityOrder(_rank(uniquePredictions.values));
+    final prioritizedResults = _priorityOrder(result);
     final liveCandidate =
-        options.liveConversion && sourceReading == reading && result.isNotEmpty
-        ? result.first
+        options.liveConversion &&
+            sourceReading == reading &&
+            prioritizedResults.isNotEmpty
+        ? prioritizedResults.first
         : null;
     final pinned = <ConversionCandidate>[
       if (liveCandidate != null &&
@@ -663,6 +708,7 @@ class JapaneseConverter {
               const {
                 'user',
                 'user-combination',
+                'learned-combination',
                 'system',
                 'learned',
                 'special',
@@ -683,7 +729,7 @@ class JapaneseConverter {
     final promotedTexts = prominentPredictions
         .map((candidate) => candidate.text)
         .toSet();
-    return [
+    final ordered = [
       ...conversions.take(1),
       ...prominentPredictions,
       ...conversions.skip(1),
@@ -694,7 +740,29 @@ class JapaneseConverter {
         (candidate) => !conversionTexts.contains(candidate.text),
       ),
     ];
+    return _priorityOrder(ordered);
   }
+
+  List<ConversionCandidate> _priorityOrder(
+    Iterable<ConversionCandidate> values,
+  ) {
+    final indexed = values.indexed.toList()
+      ..sort((left, right) {
+        final priority = _candidatePriority(left.$2)
+            .compareTo(_candidatePriority(right.$2));
+        return priority != 0 ? priority : left.$1.compareTo(right.$1);
+      });
+    return indexed.map((entry) => entry.$2).toList();
+  }
+
+  int _candidatePriority(ConversionCandidate candidate) =>
+      switch (candidate.source) {
+        'user' || 'user-prefix' || 'user-combination' => 0,
+        'user-prediction' => 1,
+        'learned' || 'learned-combination' => 2,
+        'learned-prediction' => 3,
+        _ => 4,
+      };
 
   List<ConversionCandidate> _rank(Iterable<ConversionCandidate> candidates) {
     final indexed = candidates.indexed.toList()
@@ -707,8 +775,9 @@ class JapaneseConverter {
 
   List<_DictionaryPath> _dictionaryCombinations(
     String reading,
-    List<ConversionDictionaryEntry> entries,
-  ) {
+    List<ConversionDictionaryEntry> entries, {
+    int limit = 8,
+  }) {
     if (reading.length < 2) return const [];
     final matches = List.generate(reading.length, (_) => <_DictionaryMatch>[]);
     var hasRegisteredMatch = false;
@@ -789,7 +858,7 @@ class JapaneseConverter {
     final unique = <String, _DictionaryPath>{};
     for (final path in ranked) {
       if (path.text != reading) unique.putIfAbsent(path.text, () => path);
-      if (unique.length >= 8) break;
+      if (unique.length >= limit) break;
     }
     return unique.values.toList();
   }

@@ -185,7 +185,8 @@ std::vector<std::string> special_complete_candidates(const std::string &reading)
 }
 
 std::vector<std::string> dictionary_combinations(
-    const std::string &reading, const std::vector<DictionaryEntry> &entries) {
+    const std::string &reading, const std::vector<DictionaryEntry> &entries,
+    std::size_t limit = 8) {
     struct Match { std::size_t end; std::string value; int score; bool registered; };
     struct Path { std::string text; int score; int words; int registered_words; };
     if (reading.empty() || entries.empty()) return {};
@@ -253,7 +254,7 @@ std::vector<std::string> dictionary_combinations(
         if (path.words < 2 || path.registered_words < 1 || path.text == reading ||
             !seen.insert(path.text).second) continue;
         result.push_back(path.text);
-        if (result.size() >= 8) break;
+        if (result.size() >= limit) break;
     }
     return result;
 }
@@ -404,7 +405,8 @@ void ImeSession::append_literal_ascii(char value) {
 
 void ImeSession::append_ascii_internal(char value, bool preserve_selection,
                                        bool extend_literal_suffix) {
-    preserve_selection = preserve_selection && !candidates_.empty();
+    preserve_selection = preserve_selection && !candidates_.empty() &&
+        (converting_ || candidates_[selected_index_].source.find("prediction") == std::string::npos);
     const bool was_converting = converting_;
     const std::size_t previous_selected_index = selected_index_;
     const std::string selected_prefix = preserve_selection
@@ -457,7 +459,8 @@ void ImeSession::reset_stable_clause() {
 void ImeSession::observe_stable_clause() {
     if (mode_ != InputMode::japanese || !live_conversion_ || automatic_completion_strength_ == 0 ||
         live_conversion_suspended_ ||
-        converting_ || has_literal_suffix() || candidates_.empty() || selected_index_ != 0) {
+        converting_ || has_literal_suffix() || candidates_.empty() || selected_index_ != 0 ||
+        candidates_.front().source.find("prediction") != std::string::npos) {
         reset_stable_clause();
         return;
     }
@@ -641,16 +644,28 @@ void ImeSession::learn_selected() {
 
 void ImeSession::prioritize_learning() {
     const auto found = learning_.find(learning_key());
-    if (found == learning_.end()) return;
     const auto score = [&](const Candidate &candidate) {
         // A selected completion must never become live conversion for an
         // unfinished reading on the next keystroke.
         if (candidate.source.find("prediction") != std::string::npos) return 0;
+        if (found == learning_.end()) return 0;
         const auto entry = found->second.find(candidate.text);
         return entry == found->second.end() ? 0 : entry->second;
     };
+    const auto priority = [](const Candidate &candidate) {
+        if (candidate.source == "personal" || candidate.source == "shared" ||
+            candidate.source == "dictionary-combination" ||
+            candidate.source == "personal-prediction" || candidate.source == "shared-prediction") return 0;
+        if (candidate.source == "learned" || candidate.source == "learned-prediction" ||
+            candidate.source == "learned-combination") return 1;
+        return 2;
+    };
     std::stable_sort(candidates_.begin(), candidates_.end(), [&](const auto &left, const auto &right) {
-        return score(left) > score(right);
+        if (priority(left) != priority(right)) return priority(left) < priority(right);
+        const bool left_prediction = left.source.find("prediction") != std::string::npos;
+        const bool right_prediction = right.source.find("prediction") != std::string::npos;
+        if (left_prediction != right_prediction) return !left_prediction;
+        return priority(left) == 1 && score(left) > score(right);
     });
 }
 bool ImeSession::begin_conversion() {
@@ -706,7 +721,12 @@ bool ImeSession::set_bundled_dictionary_path(const std::string &utf8_path) {
     if (!raw_input_.empty()) rebuild_candidates();
     return true;
 }
-std::string ImeSession::display_text() const { return (converting_ || (live_conversion_ && !live_conversion_suspended_)) && !candidates_.empty() ? candidates_[selected_index_].text : reading_; }
+std::string ImeSession::display_text() const {
+    if (candidates_.empty() || (!converting_ && (!live_conversion_ || live_conversion_suspended_))) return reading_;
+    const auto &candidate = candidates_[selected_index_];
+    return !converting_ && candidate.source.find("prediction") != std::string::npos
+        ? reading_ : candidate.text;
+}
 std::string ImeSession::selected_text() const { return candidates_.empty() ? reading_ : candidates_[selected_index_].text; }
 std::string ImeSession::candidate_reading(std::size_t index) const {
     if (index >= candidates_.size()) return reading_;
@@ -839,11 +859,21 @@ void ImeSession::rebuild_candidates() {
         std::size_t remaining;
     };
     std::vector<LearnedPrediction> learned_predictions;
+    std::vector<std::string> learned_exact;
+    std::vector<DictionaryEntry> learned_combination_entries;
     for (const auto &[ruby, scores] : learning_) {
         if (ruby.rfind("english:", 0) == 0 || conversion_reading.empty()) continue;
+        if (conversion_reading.find(ruby) != std::string::npos) {
+            for (const auto &[word, score] : scores) {
+                if (score > 0 && !word.empty()) {
+                    learned_combination_entries.push_back({ruby, word,
+                        std::clamp(3 + score / 16, 1, 5)});
+                }
+            }
+        }
         if (ruby == reading_) {
             for (const auto &[word, score] : scores) {
-                if (score > 0) append_unique(candidates_, seen, word, "learned");
+                if (score > 0) learned_exact.push_back(word);
             }
         } else if (ruby.size() > reading_.size() && ruby.rfind(reading_, 0) == 0) {
             for (const auto &[word, score] : scores) {
@@ -854,9 +884,6 @@ void ImeSession::rebuild_candidates() {
     std::stable_sort(learned_predictions.begin(), learned_predictions.end(), [](const auto &left, const auto &right) {
         return left.score == right.score ? left.remaining < right.remaining : left.score > right.score;
     });
-    for (const auto &entry : learned_predictions) {
-        append_unique(prefix_predictions, prediction_seen, entry.text, "learned-prediction");
-    }
 
     struct SharedPrediction {
         std::string text;
@@ -887,8 +914,38 @@ void ImeSession::rebuild_candidates() {
     for (const auto &entry : shared_predictions) {
         append_prediction(entry.text, entry.source.c_str());
     }
-    for (auto &value : dictionary_combinations(conversion_reading, user_dictionary_)) {
+    const auto registered_combinations = dictionary_combinations(
+        conversion_reading, user_dictionary_, 32);
+    for (std::size_t i = 0; i < std::min<std::size_t>(8, registered_combinations.size()); ++i) {
+        auto value = registered_combinations[i];
         append_converted(std::move(value), "dictionary-combination");
+    }
+    std::vector<DictionaryEntry> all_combination_entries = user_dictionary_;
+    all_combination_entries.insert(all_combination_entries.end(),
+        learned_combination_entries.begin(), learned_combination_entries.end());
+    std::unordered_set<std::string> registered_texts(
+        registered_combinations.begin(), registered_combinations.end());
+    std::unordered_set<std::string> learned_combination_seen;
+    std::size_t learned_combination_count = 0;
+    const auto add_learned_combinations = [&](const std::vector<std::string> &values) {
+        for (const auto &value : values) {
+            if (registered_texts.find(value) != registered_texts.end() ||
+                !learned_combination_seen.insert(value).second) continue;
+            append_converted(value, "learned-combination");
+            if (++learned_combination_count >= 8) break;
+        }
+    };
+    add_learned_combinations(dictionary_combinations(
+        conversion_reading, learned_combination_entries));
+    if (learned_combination_count < 8) {
+        add_learned_combinations(dictionary_combinations(
+            conversion_reading, all_combination_entries, 32));
+    }
+    for (const auto &word : learned_exact) {
+        append_unique(candidates_, seen, word, "learned");
+    }
+    for (const auto &entry : learned_predictions) {
+        append_unique(prefix_predictions, prediction_seen, entry.text, "learned-prediction");
     }
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;

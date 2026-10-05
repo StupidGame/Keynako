@@ -84,7 +84,8 @@ class EnglishConverter {
     ];
 
     for (final entry in options.userDictionary) {
-      if (entry.reading.toLowerCase() == normalized) {
+      if (entry.reading.toLowerCase().startsWith(normalized) ||
+          entry.value.toLowerCase().startsWith(normalized)) {
         values.add(
           ConversionCandidate(
             text: entry.value,
@@ -159,12 +160,17 @@ class EnglishConverter {
       final learned = learnedScores[candidate.text] ?? 0;
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = unique[candidate.text];
-      if (previous == null || scored.score > previous.score) {
+      if (previous == null ||
+          _priority(scored) < _priority(previous) ||
+          (_priority(scored) == _priority(previous) &&
+              scored.score > previous.score)) {
         unique[candidate.text] = scored;
       }
     }
     final ranked = unique.values.indexed.toList()
       ..sort((left, right) {
+        final group = _priority(left.$2).compareTo(_priority(right.$2));
+        if (group != 0) return group;
         final learned = (learnedScores[right.$2.text] ?? 0).compareTo(
           learnedScores[left.$2.text] ?? 0,
         );
@@ -173,11 +179,17 @@ class EnglishConverter {
         return score != 0 ? score : left.$1.compareTo(right.$1);
       });
     // English composition remains literal until a completion is selected.
-    return [
-      unique[input]!,
-      ...ranked.map((entry) => entry.$2).where((value) => value.text != input),
-    ].take(predictionLimit).toList(growable: false);
+    return ranked
+        .map((entry) => entry.$2)
+        .take(predictionLimit)
+        .toList(growable: false);
   }
+
+  int _priority(ConversionCandidate candidate) => switch (candidate.source) {
+    'user' => 0,
+    'english-learned' => 1,
+    _ => 2,
+  };
 
   String _matchCase(String input, String word) {
     if (input == input.toUpperCase()) return word.toUpperCase();

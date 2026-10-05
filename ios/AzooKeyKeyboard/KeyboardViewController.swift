@@ -1535,7 +1535,7 @@ final class KeyboardViewController: UIInputViewController {
         if mode == "english" {
             displayed = composing
         } else if boolSetting("live_conversion", fallback: true) {
-            displayed = candidates.first ?? composing
+            displayed = candidates.first(where: { candidatePredictionReadings[$0] == nil }) ?? composing
         } else {
             displayed = composing
         }
@@ -1548,7 +1548,8 @@ final class KeyboardViewController: UIInputViewController {
               let clause = conversionEngine?.completedClause,
               composing.hasPrefix(clause.reading),
               composing.count > clause.reading.count,
-              candidates.first?.hasPrefix(clause.text) == true else { return false }
+              let first = candidates.first(where: { candidatePredictionReadings[$0] == nil }),
+              first.hasPrefix(clause.text) else { return false }
         let remaining = String(composing.dropFirst(clause.reading.count))
         var remainingRoman = ""
         if layout == "qwerty" {
@@ -1604,7 +1605,10 @@ final class KeyboardViewController: UIInputViewController {
     private func commitComposition(useCandidate: Bool = true) {
         guard !composing.isEmpty || !rawRoman.isEmpty else { return }
         let explicitSelection = selectedCandidateText != nil
-        let selected = useCandidate ? (selectedCandidateText ?? candidates.first ?? buildCandidates().first ?? composing) : composing
+        let available = candidates.isEmpty ? buildCandidates() : candidates
+        let selected = useCandidate
+            ? (selectedCandidateText ?? available.first(where: { candidatePredictionReadings[$0] == nil }) ?? composing)
+            : composing
         let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
         if useCandidate {
@@ -2576,7 +2580,8 @@ final class KeyboardViewController: UIInputViewController {
         let reading = katakanaToHiragana(composing)
         var result: [String] = []
         var exactUserTexts: [String] = []
-        let learned = learnedCandidateEntries(learningScores(), english: false)
+        let allLearned = learnedCandidateEntries(learningScores(), english: false)
+        let learned = allLearned
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
         let learnedPrefixes = learned.filter { $0.reading != reading }
@@ -2669,8 +2674,28 @@ final class KeyboardViewController: UIInputViewController {
         ) ?? []).filter { !blockedEmoji.contains(Self.normalizedEmoji($0)) || exactUserTexts.contains($0) }
         let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
         result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
-        let combinedTexts = dictionaryCombinations(reading)
+        let registeredCombinationEntries = conversionDictionaryEntries.map {
+            (ruby: $0.ruby, word: $0.word, importance: 3)
+        }
+        let registeredCombinations = dictionaryCombinations(
+            reading, entries: registeredCombinationEntries, limit: 32
+        )
+        let combinedTexts = Array(registeredCombinations.prefix(8))
+        let learnedCombinationEntries = allLearned.filter { reading.contains($0.reading) }
+            .map { (ruby: $0.reading, word: $0.text, importance: min(5, 3 + $0.score / 16)) }
+        let registeredTexts = Set(registeredCombinations)
+        var learnedCombinationTexts = dictionaryCombinations(
+            reading, entries: learnedCombinationEntries
+        )
+        learnedCombinationTexts.append(contentsOf: dictionaryCombinations(
+            reading, entries: registeredCombinationEntries + learnedCombinationEntries, limit: 32
+        ).filter { !registeredTexts.contains($0) })
+        var seenLearnedCombination = Set<String>()
+        learnedCombinationTexts = Array(learnedCombinationTexts.filter {
+            seenLearnedCombination.insert($0).inserted
+        }.prefix(8))
         result.append(contentsOf: combinedTexts)
+        result.append(contentsOf: learnedCombinationTexts)
         prefixPredictions.append(contentsOf: engineCandidates.filter { enginePredictionTexts.contains($0) })
         if boolSetting("use_OS_user_dict", fallback: true) {
             for ruby in osLexicon.keys.sorted(by: {
@@ -2730,6 +2755,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         let exactLearning = learned.filter { $0.reading == reading }
         let exactTexts = completeTexts.union(exactLearning.map(\.text))
+            .union(learnedCombinationTexts)
         candidatePredictionReadings = predictionReadings.filter { !exactTexts.contains($0.key) }
         unknownPredictionTexts = enginePredictionTexts.subtracting(exactTexts)
             .subtracting(Set(candidatePredictionReadings.keys))
@@ -2757,6 +2783,14 @@ final class KeyboardViewController: UIInputViewController {
                 && !knownPrefixTexts.contains($0)
                 && $0 != hiragana && $0 != fullKatakana
         }
+        let rankedRegistered = registeredPrefixPredictions.sorted {
+            let leftRemaining = max(0, $0.ruby.count - reading.count)
+            let rightRemaining = max(0, $1.ruby.count - reading.count)
+            let leftScore = min(5, max(1, $0.importance)) * 20 - min(1000, leftRemaining) * 4
+            let rightScore = min(5, max(1, $1.importance)) * 20 - min(1000, rightRemaining) * 4
+            if leftScore != rightScore { return leftScore > rightScore }
+            return leftRemaining < rightRemaining
+        }
         var prioritized: [String] = []
         if !registeredPrefixPredictions.isEmpty || !learnedPrefixes.isEmpty {
             prioritized.append(
@@ -2767,14 +2801,6 @@ final class KeyboardViewController: UIInputViewController {
                     ?? Self.systemDictionary[reading]?.first
                     ?? hiragana
             )
-            let rankedRegistered = registeredPrefixPredictions.sorted {
-                let leftRemaining = max(0, $0.ruby.count - reading.count)
-                let rightRemaining = max(0, $1.ruby.count - reading.count)
-                let leftScore = min(5, max(1, $0.importance)) * 20 - min(1000, leftRemaining) * 4
-                let rightScore = min(5, max(1, $1.importance)) * 20 - min(1000, rightRemaining) * 4
-                if leftScore != rightScore { return leftScore > rightScore }
-                return leftRemaining < rightRemaining
-            }
             let registeredTexts = rankedRegistered.map(\.text).filter { !completeTexts.contains($0) }
             let learnedPrefixTexts = learnedPrefixes.map(\.text).filter {
                 !completeTexts.contains($0) && !learnedTexts.contains($0)
@@ -2792,8 +2818,15 @@ final class KeyboardViewController: UIInputViewController {
         prioritized.append(contentsOf: Self.systemDictionary[reading] ?? [])
         prioritized.append(contentsOf: [hiragana, fullKatakana])
         prioritized.append(contentsOf: result)
+        let dictionaryPriority = exactUserTexts + conversionDictionaryEntries.filter {
+            katakanaToHiragana($0.ruby) == reading
+        }.map(\.word) + combinedTexts + rankedRegistered.map(\.text)
+        let learnedPriority = exactLearning.map(\.text) + learnedCombinationTexts
+            + learnedPrefixes.map(\.text)
         var seen = Set<String>()
-        return prioritized.filter { !$0.isEmpty && seen.insert($0).inserted }
+        return (dictionaryPriority + learnedPriority + prioritized).filter {
+            !$0.isEmpty && seen.insert($0).inserted
+        }
     }
 
     private func blockedAdditionalEmoji() -> Set<String> {
@@ -2810,7 +2843,10 @@ final class KeyboardViewController: UIInputViewController {
             .replacingOccurrences(of: "\u{FE0E}", with: "")
     }
 
-    private func dictionaryCombinations(_ reading: String) -> [String] {
+    private func dictionaryCombinations(
+        _ reading: String, entries: [(ruby: String, word: String, importance: Int)],
+        limit: Int = 8
+    ) -> [String] {
         struct Match {
             let end: Int
             let value: String
@@ -2824,7 +2860,7 @@ final class KeyboardViewController: UIInputViewController {
             let registeredWords: Int
         }
         let characters = Array(reading)
-        if characters.count < 2 || conversionDictionaryEntries.isEmpty { return [] }
+        if characters.count < 2 || entries.isEmpty { return [] }
         var matches = Array(repeating: [Match](), count: characters.count)
         var hasRegisteredMatch = false
         func add(_ rawRuby: String, _ value: String, _ importance: Int, _ registered: Bool) {
@@ -2844,8 +2880,8 @@ final class KeyboardViewController: UIInputViewController {
                 if registered { hasRegisteredMatch = true }
             }
         }
-        for entry in conversionDictionaryEntries {
-            add(entry.ruby, entry.word, 3, true)
+        for entry in entries {
+            add(entry.ruby, entry.word, entry.importance, true)
         }
         if !hasRegisteredMatch { return [] }
         for (ruby, values) in Self.systemDictionary {
@@ -2886,7 +2922,7 @@ final class KeyboardViewController: UIInputViewController {
             .filter { $0.words >= 2 && $0.registeredWords >= 1 && $0.text != reading }
             .map(\.text)
             .filter { seen.insert($0).inserted }
-            .prefix(8))
+            .prefix(limit))
     }
 
     private func canContinueEmailComposition(_ value: String) -> Bool {
@@ -2930,16 +2966,16 @@ final class KeyboardViewController: UIInputViewController {
         let learned = learnedCandidateEntries(learningScores(), english: true)
             .filter { $0.reading.hasPrefix(prefix) || $0.text.lowercased().hasPrefix(prefix) }
             .sorted { $0.score > $1.score }
-        preferred.insert(contentsOf: learned.map(\.text), at: 0)
-
-        var result = [input]
-        var seen = Set(result)
+        var result: [String] = []
+        var seen = Set<String>()
         func append(_ candidate: String) {
             guard !candidate.isEmpty else { return }
             let matched = matchEnglishCandidateCase(candidate, input: input)
             if seen.insert(matched).inserted { result.append(matched) }
         }
         preferred.forEach(append)
+        learned.map(\.text).forEach(append)
+        append(input)
         for email in emailAddressCandidates(input) where seen.insert(email).inserted {
             result.append(email)
         }

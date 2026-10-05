@@ -61,6 +61,7 @@ import io.github.StupidGame.azookey_flutter.conversion.dictionaryCombinationCand
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandidates
+import io.github.StupidGame.azookey_flutter.conversion.firstCompleteJapaneseCandidateIndex
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
@@ -68,6 +69,7 @@ import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
+import io.github.StupidGame.azookey_flutter.conversion.prioritizeJapaneseCandidateGroups
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.rankJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
@@ -150,6 +152,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var resizeHandle: TextView? = null
     private var candidates = mutableListOf<String>()
     private var candidatePredictionReadings = emptyMap<String, String>()
+    private var candidateDictionaryPriority = emptyList<String>()
+    private var candidateLearningPriority = emptyList<String>()
     private var candidateExpanded = false
     private var dictionaryMode = DictionaryMode.CLOSED
     private var dictionaryEditingId: Int? = null
@@ -2031,9 +2035,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidates = buildCandidates().toMutableList()
         if (candidates.isEmpty()) candidates.add(displayReading())
         if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
-        selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0) ?: 0
+        selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
+            ?: defaultCandidateIndex()
         renderCandidateValues()
     }
+
+    private fun defaultCandidateIndex(): Int =
+        firstCompleteJapaneseCandidateIndex(candidates, candidatePredictionReadings)
 
     private fun renderCandidateValues() {
         if (dictionaryMode != DictionaryMode.CLOSED) return
@@ -2625,15 +2633,15 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun updateComposition() {
         val reading = displayReading()
         if (mode != "english" && layout == "qwerty") composing = reading
-        selectedCandidate = 0
         candidateSelectedExplicitly = false
         candidates = buildCandidates().toMutableList()
         if (candidates.isEmpty() && reading.isNotEmpty()) candidates.add(reading)
+        selectedCandidate = defaultCandidateIndex()
         val live = settings.optBoolean("live_conversion", true)
         val displayed = if (mode == "english") {
             reading
         } else if (live && candidates.isNotEmpty()) {
-            candidates.first()
+            candidates[selectedCandidate]
         } else {
             reading
         }
@@ -2648,7 +2656,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             stableClauseCompletion.reset()
             return false
         }
-        val candidate = candidates.firstOrNull().orEmpty()
+        val candidate = candidates.getOrNull(defaultCandidateIndex()).orEmpty()
         val entries = buildList {
             val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
             for (index in 0 until dictionary.length()) {
@@ -2712,6 +2720,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             ?.toString()
             .orEmpty()
         val predictionReadings = candidatePredictionReadings
+        val dictionaryPriority = candidateDictionaryPriority
+        val learningPriority = candidateLearningPriority
         zenzaiRuntime.rank(
             modelSize = size,
             reading = modelInput,
@@ -2728,9 +2738,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                 baseCandidates = baseCandidates,
                 predictionReadings = predictionReadings,
                 learning = learningScores(),
+                dictionaryCandidates = dictionaryPriority,
+                learningCandidates = learningPriority,
             ).toMutableList()
             if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
-            selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0) ?: 0
+            selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
+                ?: defaultCandidateIndex()
             if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
                 currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
             }
@@ -2748,6 +2761,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun buildCandidates(): List<String> {
         val input = displayReading()
         candidatePredictionReadings = emptyMap()
+        candidateDictionaryPriority = emptyList()
+        candidateLearningPriority = emptyList()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
@@ -2757,6 +2772,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val blockedEmoji = blockedAdditionalEmoji()
         val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
+        val registeredExact = mutableListOf<String>()
         val predictionReadings = mutableMapOf<String, String>()
         val userPredictions = mutableListOf<ReadingPrediction>()
         // Prefix predictions are independent from automatic commit strength.
@@ -2775,7 +2791,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             } else {
                 entry.optString("word")
             }
-            if (ruby == reading) values.add(value)
+            if (ruby == reading) {
+                values.add(value)
+                registeredExact.add(value)
+            }
             else if (predictionLimit > 0 && ruby.startsWith(reading)) {
                 userPredictions.add(ReadingPrediction(ruby, value, entry.optInt("importance", 3)))
             }
@@ -2811,11 +2830,18 @@ class AzooKeyInputMethodService : InputMethodService() {
                 mid = 501,
             )
         }
-        val combinedWords = dictionaryCombinationCandidates(
-            reading,
+        val registeredCombinationEntries =
             hotfixDictionaryEntries.map { DictionaryCombinationEntry(it.ruby, it.word) } +
-                personalEntries.map { DictionaryCombinationEntry(it.ruby, it.word) },
+                personalEntries.map { DictionaryCombinationEntry(it.ruby, it.word) }
+        val registeredCombinations = dictionaryCombinationCandidates(
+            reading, registeredCombinationEntries, 32,
         )
+        val combinedWords = registeredCombinations.take(8)
+        candidateDictionaryPriority = (
+            registeredExact + hotfixDictionaryEntries.filter {
+                katakanaToHiragana(it.ruby) == reading
+            }.map { it.word } + combinedWords + registeredPredictions.map(ReadingPrediction::text)
+        ).filter(String::isNotBlank).distinct()
         val officialCandidates = runCatching {
             azooKeyDictionary.candidates(
                 reading,
@@ -2884,6 +2910,19 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
         val learning = learningScores()
         val learned = exactLearnedJapaneseCandidates(reading, learning)
+        val learnedCombinationEntries = learnedCandidates(learning).filter {
+            reading.contains(it.reading)
+        }.map {
+            DictionaryCombinationEntry(it.reading, it.text, (3 + it.score / 16).coerceAtMost(5))
+        }
+        val learnedOnlyCombinations = dictionaryCombinationCandidates(
+            reading, learnedCombinationEntries,
+        )
+        val mixedCombinations = dictionaryCombinationCandidates(
+            reading, registeredCombinationEntries + learnedCombinationEntries, 32,
+        ).filter { it !in registeredCombinations }
+        val learnedCombinations = (learnedOnlyCombinations + mixedCombinations).distinct().take(8)
+        values.addAll(learnedCombinations)
         val exactTexts = values.toSet() + learned
         val learnedPrefixes = learnedJapanesePrefixPredictions(
             reading, learning, exactTexts, predictionLimit,
@@ -2891,6 +2930,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         for (entry in learnedPrefixes) {
             predictionReadings.getOrPut(entry.text) { entry.reading }
         }
+        candidateLearningPriority = learned + learnedCombinations + learnedPrefixes.map { it.text }
         candidatePredictionReadings = predictionReadings.filterKeys { it !in exactTexts }
         val ranked = rankJapaneseCandidates(
             reading = reading,
@@ -2899,7 +2939,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             learning = learning,
             predictionLimit = predictionLimit,
         )
-        return pinJapaneseKanaCandidates(
+        val pinned = pinJapaneseKanaCandidates(
             reading = reading,
             ranked = ranked,
             liveCandidate = bestLiveJapaneseConversion(reading, completeConversions, ranked),
@@ -2910,6 +2950,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                     registeredPredictions.drop(2).map(ReadingPrediction::text) +
                     learnedPrefixes.drop(2).map { it.text }
             ).distinct().take(4),
+        )
+        return prioritizeJapaneseCandidateGroups(
+            pinned, candidateDictionaryPriority,
+            candidateLearningPriority,
         )
     }
 

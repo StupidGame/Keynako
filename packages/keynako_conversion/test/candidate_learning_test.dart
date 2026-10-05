@@ -91,8 +91,8 @@ void main() {
           )
           .map((candidate) => candidate.text)
           .toList();
-      expect(texts.first, 'Hel');
-      expect(texts[1], 'HELLO');
+      expect(texts.first, 'HELLO');
+      expect(texts[1], 'Hel');
       expect(texts, isNot(contains('Helloworld')));
     },
   );
@@ -106,7 +106,7 @@ void main() {
           options: const ConversionOptions(learning: learning),
         )
         .map((candidate) => candidate.text);
-    expect(texts, ['heli', 'helium']);
+    expect(texts, ['helium', 'heli']);
     expect(
       english
           .candidates(

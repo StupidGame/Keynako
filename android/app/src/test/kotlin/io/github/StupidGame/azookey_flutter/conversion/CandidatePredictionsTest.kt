@@ -8,6 +8,15 @@ import org.junit.Test
 class CandidatePredictionsTest {
 
     @Test
+    fun learnedWordsComposeAcrossUnchangedKana() {
+        val learned = listOf(
+            DictionaryCombinationEntry("わたし", "私"),
+            DictionaryCombinationEntry("ねこ", "猫"),
+        )
+        assertTrue("私は猫" in dictionaryCombinationCandidates("わたしはねこ", learned))
+    }
+
+    @Test
     fun completeConversionsLeadLiveInputWithoutPromotingCompletions() {
         assertEquals(
             "今日の予定",
@@ -63,6 +72,17 @@ class CandidatePredictionsTest {
         assertEquals(
             listOf("hel", "hello", "help"),
             englishPredictionCandidates("hel"),
+        )
+    }
+
+    @Test
+    fun englishDictionaryOutranksLearnedWordsEvenWithHigherLearningScore() {
+        assertEquals(
+            listOf("DictionaryHello", "LearnedHello", "hel"),
+            englishPredictionCandidates(
+                "hel", listOf("DictionaryHello"), 3,
+                mapOf("english:hello\tLearnedHello" to 32),
+            ),
         )
     }
 
@@ -215,6 +235,27 @@ class CandidatePredictionsTest {
                 learning = learning,
             ).take(2),
         )
+    }
+
+    @Test
+    fun registeredWordsStayAheadOfStrongerLearningAndModelResults() {
+        val dictionary = listOf("登録語", "登録補完")
+        val learned = listOf("学習語", "学習補完")
+        val ordered = prioritizeJapaneseCandidateGroups(
+            listOf("学習語", "モデル候補", "登録語", "学習補完", "登録補完", "かめ"),
+            dictionary, learned,
+        )
+        assertEquals(listOf("登録語", "登録補完", "学習語", "学習補完", "モデル候補", "かめ"), ordered)
+        assertEquals(0, firstCompleteJapaneseCandidateIndex(ordered, mapOf("登録補完" to "かめん")))
+
+        val onlyPredictions = prioritizeJapaneseCandidateGroups(
+            listOf("かめ", "学習補完", "登録補完"),
+            listOf("登録補完"), listOf("学習補完"),
+        )
+        assertEquals(listOf("登録補完", "学習補完", "かめ"), onlyPredictions)
+        assertEquals(2, firstCompleteJapaneseCandidateIndex(
+            onlyPredictions, mapOf("登録補完" to "かめん", "学習補完" to "かめんらいだー"),
+        ))
     }
 
     @Test

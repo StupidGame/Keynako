@@ -99,6 +99,36 @@ void main() {
     expect(candidates.map((candidate) => candidate.text), contains('私は猫'));
   });
 
+  test('combines two learned words across a particle', () {
+    final candidates = converter.candidates(
+      input: 'わたしはねこ',
+      options: const ConversionOptions(learning: {'わたし\t私': 16, 'ねこ\t猫': 16}),
+    );
+    expect(
+      candidates.where((candidate) => candidate.text == '私は猫').first.source,
+      'learned-combination',
+    );
+  });
+
+  test('keeps dictionary combinations before mixed learned combinations', () {
+    final candidates = converter.candidates(
+      input: 'まきなとれいな',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'まきな', value: 'マキナ'),
+          ConversionDictionaryEntry(reading: 'れいな', value: 'レイナ'),
+        ],
+        learning: {'れいな\t玲奈': 16},
+      ),
+    );
+    expect(candidates.first.text, 'マキナとレイナ');
+    expect(candidates.map((candidate) => candidate.text), contains('マキナと玲奈'));
+    expect(
+      candidates.firstWhere((candidate) => candidate.text == 'マキナと玲奈').source,
+      'learned-combination',
+    );
+  });
+
   test('orders user dictionary entries by importance', () {
     final candidates = converter.candidates(
       input: 'きーなこ',
@@ -120,6 +150,27 @@ void main() {
 
     expect(candidates.first.text, '高い候補');
   });
+
+  test(
+    'always orders registered words before learning and other conversions',
+    () {
+      const options = ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'にほんご', value: '登録語'),
+          ConversionDictionaryEntry(reading: 'にほんごか', value: '登録補完'),
+        ],
+        learning: {'にほんご\t学習語': 32, 'にほんごか\t学習補完': 32},
+      );
+      final values = converter.candidates(input: 'にほんご', options: options);
+      expect(values.take(4).map((value) => value.text), [
+        '登録語',
+        '登録補完',
+        '学習語',
+        '学習補完',
+      ]);
+      expect(values.indexWhere((value) => value.text == '日本語'), greaterThan(3));
+    },
+  );
 
   test('pins live conversion, hiragana, and katakana in that order', () {
     final candidates = converter.candidates(
@@ -153,7 +204,7 @@ void main() {
     expect(candidates.map((candidate) => candidate.text), contains('今日'));
   });
 
-  test('places prefix matches near the front without live autocompletion', () {
+  test('puts registered prefix matches before other candidates', () {
     final candidates = converter.candidates(
       input: 'にほ',
       options: const ConversionOptions(
@@ -167,12 +218,12 @@ void main() {
       ),
     );
 
-    expect(candidates.first.text, 'にほ');
-    expect(candidates[1].text, '日本語入力');
+    expect(candidates.first.text, '日本語入力');
+    expect(candidates[1].text, 'にほ');
     expect(candidates[2].text, 'ニホ');
     expect(candidates.map((candidate) => candidate.text), contains('日本'));
-    expect(candidates[1].source, 'user-prediction');
-    expect(candidates[1].reading, 'にほんご');
+    expect(candidates.first.source, 'user-prediction');
+    expect(candidates.first.reading, 'にほんご');
   });
 
   test('shows a registered long word for both short reading prefixes', () {
@@ -186,8 +237,17 @@ void main() {
     );
     for (final reading in ['かめ', 'かめん']) {
       final candidates = converter.candidates(input: reading, options: options);
-      expect(candidates.first.text, isNot('仮面ライダー'));
-      expect(candidates[1].text, '仮面ライダー', reason: reading);
+      expect(candidates.first.source, anyOf('user', 'user-prefix'));
+      final riderIndex = candidates.indexWhere(
+        (candidate) => candidate.text == '仮面ライダー',
+      );
+      expect(riderIndex, greaterThan(0));
+      expect(
+        riderIndex,
+        lessThan(
+          candidates.indexWhere((candidate) => candidate.text == reading),
+        ),
+      );
       expect(
         candidates
             .firstWhere((candidate) => candidate.text == '仮面ライダー')
@@ -217,10 +277,9 @@ void main() {
         input: reading,
         options: const ConversionOptions(learning: {'かめんらいだー\t仮面ライダー': 8}),
       );
-      expect(candidates.first.text, isNot('仮面ライダー'));
-      expect(candidates[1].text, '仮面ライダー', reason: reading);
-      expect(candidates[1].reading, 'かめんらいだー');
-      expect(candidates[1].source, 'learned-prediction');
+      expect(candidates.first.text, '仮面ライダー', reason: reading);
+      expect(candidates.first.reading, 'かめんらいだー');
+      expect(candidates.first.source, 'learned-prediction');
     }
   });
 
@@ -253,8 +312,7 @@ void main() {
             )
             .map((value) => value.text)
             .toList();
-        expect(texts.first, isNot('挨拶'));
-        expect(texts.indexOf('挨拶'), 1);
+        expect(texts.first, '挨拶');
       }
     },
   );
@@ -273,7 +331,7 @@ void main() {
         .map((value) => value.text)
         .toList();
     expect(texts.indexOf('テスト'), lessThan(texts.indexOf('テストケース')));
-    expect(texts.first, 'てす');
+    expect(texts.first, 'テスト');
   });
 
   test('recalls learned words and predicts them from a shorter reading', () {
@@ -287,8 +345,8 @@ void main() {
       predictionLimit: 1,
       options: options,
     );
-    expect(partial.first.text, 'きー');
-    expect(partial[1].text, 'Keynako');
+    expect(partial.first.text, 'Keynako');
+    expect(partial[1].text, 'きー');
     expect(
       converter
           .candidates(input: 'きー', predictionLimit: 0, options: options)
@@ -345,13 +403,13 @@ void main() {
     },
   );
 
-  test('applies learning while preserving pinned kana order', () {
+  test('puts learned kana before unlearned kana', () {
     final values = converter.candidates(
       input: 'にほんご',
       options: const ConversionOptions(learning: {'にほんご\tニホンゴ': 5}),
     );
 
-    expect(values.take(2).map((candidate) => candidate.text), ['にほんご', 'ニホンゴ']);
+    expect(values.take(2).map((candidate) => candidate.text), ['ニホンゴ', 'にほんご']);
   });
 
   test('provides optional half-width, full-width and Unicode candidates', () {
@@ -370,5 +428,23 @@ void main() {
 
     expect(values.first.text, 'hel');
     expect(values.map((value) => value.text), contains('hello'));
+  });
+
+  test('English words use dictionary, learning, then default order', () {
+    const english = EnglishConverter();
+    final values = english.candidates(
+      input: 'hel',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'hello', value: '辞書Hello'),
+        ],
+        learning: {'english:hello\tLearnedHello': 32},
+      ),
+    );
+    expect(values.take(3).map((value) => value.text), [
+      '辞書Hello',
+      'LearnedHello',
+      'hel',
+    ]);
   });
 }

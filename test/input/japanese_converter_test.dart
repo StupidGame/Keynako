@@ -59,7 +59,11 @@ void main() {
       values.indexWhere((value) => value.text == '高い候補'),
       lessThan(values.indexWhere((value) => value.text == '低い候補')),
     );
-    expect(values.skip(1).take(2).map((value) => value.text), ['きーなこ', 'キーナコ']);
+    expect(
+      values.indexWhere((value) => value.text == '低い候補'),
+      lessThan(values.indexWhere((value) => value.text == 'きーなこ')),
+    );
+    expect(values.map((value) => value.text), contains('キーナコ'));
   });
 
   test('pins hiragana and katakana first when live conversion is disabled', () {
