@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "azookey_dictionary.h"
@@ -78,6 +79,7 @@ private:
     void prioritize_learning();
     void observe_stable_clause();
     void reset_stable_clause();
+    bool is_incomplete_combination_candidate(const std::string &value) const;
 
     InputMode mode_ = InputMode::japanese;
     bool live_conversion_ = true;
@@ -90,6 +92,9 @@ private:
     std::size_t pending_word_delete_start_ = std::string::npos;
     std::vector<Candidate> candidates_;
     std::vector<DictionaryEntry> user_dictionary_;
+    std::unordered_set<std::string> incomplete_combination_texts_;
+    std::unordered_set<std::string> exact_registered_texts_;
+    std::vector<std::string> blocked_combination_values_;
     std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;
     std::size_t selected_index_ = 0;
     // Session-local preferences are bounded and never include surrounding text.

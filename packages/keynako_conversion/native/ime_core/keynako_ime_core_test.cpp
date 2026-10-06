@@ -178,6 +178,19 @@ int main() {
     assert(std::any_of(combined_dictionary.candidates().begin(), combined_dictionary.candidates().end(),
         [](const auto &candidate) { return candidate.text == "マキナとレイナ" &&
             candidate.source == "dictionary-combination"; }));
+    for (const auto &input : {"amakinatoreina", "makinapyoreina", "makinatoreinapyo"}) {
+        combined_dictionary.clear();
+        for (const char value : std::string(input)) combined_dictionary.append_ascii(value);
+        assert(std::none_of(combined_dictionary.candidates().begin(),
+            combined_dictionary.candidates().end(), [](const auto &candidate) {
+                return candidate.source == "dictionary-combination";
+            }));
+    }
+    combined_dictionary.clear();
+    for (const char value : std::string("makinatoreinamo")) combined_dictionary.append_ascii(value);
+    assert(std::any_of(combined_dictionary.candidates().begin(), combined_dictionary.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "マキナとレイナも" &&
+            candidate.source == "dictionary-combination"; }));
     ImeSession mixed_dictionary;
     mixed_dictionary.set_user_dictionary({{"ねこ", "猫", 3}});
     for (const char value : std::string("watashihaneko")) mixed_dictionary.append_ascii(value);
@@ -387,6 +400,38 @@ int main() {
     assert(!ordinary_conversion.empty() && ordinary_conversion.front() == "変換");
     assert(std::find(ordinary_conversion.begin(), ordinary_conversion.end(), "返翰") ==
         ordinary_conversion.end());
+    const std::vector<keynako::AzooKeyAdditionalEntry> combined_entries = {
+        {"マキナ", "まきな", 1285, 1285, -8.0f},
+        {"レイナ", "れいな", 1285, 1285, -8.0f},
+    };
+    const auto exact_combination = dictionary.candidates("まきなとれいな", 48, combined_entries);
+    assert(std::find(exact_combination.begin(), exact_combination.end(), "マキナとレイナ") !=
+        exact_combination.end());
+    ImeSession exact_combination_session;
+    assert(exact_combination_session.set_bundled_dictionary_path(dictionary_path));
+    exact_combination_session.set_user_dictionary({
+        {"まきな", "マキナ", 3}, {"れいな", "レイナ", 3},
+    });
+    for (const auto &input : {"amakinatoreina", "makinapyoreina", "makinatoreinapyo"}) {
+        exact_combination_session.clear();
+        for (const char value : std::string(input)) exact_combination_session.append_ascii(value);
+        assert(std::none_of(exact_combination_session.candidates().begin(),
+            exact_combination_session.candidates().end(), [](const auto &candidate) {
+            return candidate.text.find("マキナ") != std::string::npos &&
+                candidate.text.find("レイナ") != std::string::npos;
+        }));
+    }
+    exact_combination_session.insert_zenzai_candidate("マキナとレイナピョ");
+    assert(std::none_of(exact_combination_session.candidates().begin(),
+        exact_combination_session.candidates().end(), [](const auto &candidate) {
+        return candidate.text == "マキナとレイナピョ";
+    }));
+    exact_combination_session.clear();
+    for (const char value : std::string("makinatoreinamo")) exact_combination_session.append_ascii(value);
+    assert(std::any_of(exact_combination_session.candidates().begin(),
+        exact_combination_session.candidates().end(), [](const auto &candidate) {
+        return candidate.text == "マキナとレイナも";
+    }));
     // Same long input and leading result as azooKey's ConverterTests.swift.
     const auto reference_long_sentence = dictionary.candidates(
         "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた", 5);

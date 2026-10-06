@@ -3,6 +3,27 @@ import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
 
+const _combinationConnectors = [
+  'は', 'が', 'を', 'に', 'へ', 'で', 'と', 'も', 'の', 'や', 'か', 'ね', 'よ',
+  'から', 'まで', 'より', 'だけ', 'など', 'しか', 'こそ', 'でも',
+  'です', 'でした', 'だ', 'だった', 'ます', 'ました',
+];
+
+bool _isCombinationConnector(String value) {
+  if (value.isEmpty) return true;
+  final reachable = List<bool>.filled(value.length + 1, false);
+  reachable[0] = true;
+  for (var index = 0; index < value.length; index++) {
+    if (!reachable[index]) continue;
+    for (final connector in _combinationConnectors) {
+      if (value.startsWith(connector, index)) {
+        reachable[index + connector.length] = true;
+      }
+    }
+  }
+  return reachable.last;
+}
+
 class _DictionaryMatch {
   const _DictionaryMatch(this.end, this.value, this.score, this.registered);
 
@@ -18,12 +39,18 @@ class _DictionaryPath {
     this.score,
     this.words,
     this.registeredWords,
+    this.startsWithWord,
+    this.pendingKana,
+    this.validConnectors,
   );
 
   final String text;
   final int score;
   final int words;
   final int registeredWords;
+  final bool startsWithWord;
+  final String pendingKana;
+  final bool validConnectors;
 }
 
 /// Stateless, platform-independent Japanese input transforms and candidates.
@@ -865,7 +892,7 @@ class JapaneseConverter {
       reading.length + 1,
       (_) => <int, List<_DictionaryPath>>{},
     );
-    lattice[0][0] = [const _DictionaryPath('', 0, 0, 0)];
+    lattice[0][0] = [const _DictionaryPath('', 0, 0, 0, false, '', true)];
     void push(int end, _DictionaryPath path) {
       final context = (path.registeredWords > 0 ? 2 : 0) +
           (path.words > 0 ? 1 : 0);
@@ -889,6 +916,9 @@ class JapaneseConverter {
             path.score - 3,
             path.words,
             path.registeredWords,
+            path.startsWithWord,
+            path.pendingKana + reading.substring(index, index + 1),
+            path.validConnectors,
           ),
         );
         for (final match in matches[index]) {
@@ -899,6 +929,9 @@ class JapaneseConverter {
               path.score + match.score,
               path.words + 1,
               path.registeredWords + (match.registered ? 1 : 0),
+              path.startsWithWord || (index == 0 && path.words == 0),
+              '',
+              path.validConnectors && _isCombinationConnector(path.pendingKana),
             ),
           );
         }
@@ -906,7 +939,9 @@ class JapaneseConverter {
     }
     final ranked =
         lattice.last.values.expand((paths) => paths)
-            .where((path) => path.words >= 2 && path.registeredWords >= 1)
+            .where((path) => path.words >= 2 && path.registeredWords >= 1 &&
+                path.startsWithWord && path.validConnectors &&
+                _isCombinationConnector(path.pendingKana))
             .toList()
           ..sort((a, b) => b.score.compareTo(a.score));
     final unique = <String, _DictionaryPath>{};

@@ -137,6 +137,28 @@ void main() {
     expect(candidates.first.source, 'user-combination');
   });
 
+  test('allows particle endings but not unmatched words in combinations', () {
+    const options = ConversionOptions(userDictionary: [
+      ConversionDictionaryEntry(reading: 'まきな', value: 'マキナ'),
+      ConversionDictionaryEntry(reading: 'れいな', value: 'レイナ'),
+    ]);
+    expect(
+      converter.candidates(input: 'まきなとれいなも', options: options)
+          .where((candidate) => candidate.source == 'user-combination')
+          .map((candidate) => candidate.text),
+      contains('マキナとレイナも'),
+    );
+    for (final reading in [
+      'あまきなとれいな', 'まきなぴょれいな', 'まきなとれいなぴょ',
+    ]) {
+      expect(
+        converter.candidates(input: reading, options: options)
+            .where((candidate) => candidate.source == 'user-combination'),
+        isEmpty,
+      );
+    }
+  });
+
   test('combines a registered word with a built-in word', () {
     final candidates = converter.candidates(
       input: 'わたしはねこ',
@@ -157,6 +179,14 @@ void main() {
       candidates.where((candidate) => candidate.text == '私は猫').first.source,
       'learned-combination',
     );
+    final withParticle = converter.candidates(
+      input: 'わたしはねこも',
+      options: const ConversionOptions(
+        learning: {'わたし\t私': 16, 'ねこ\t猫': 16},
+      ),
+    );
+    expect(withParticle.where((candidate) => candidate.source == 'learned-combination')
+        .map((candidate) => candidate.text), contains('私は猫も'));
   });
 
   test('keeps learned and registered paths through a long sentence', () {

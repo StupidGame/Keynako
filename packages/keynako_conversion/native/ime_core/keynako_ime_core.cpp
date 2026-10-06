@@ -223,11 +223,40 @@ std::vector<std::string> special_complete_candidates(const std::string &reading)
     return result;
 }
 
+bool is_combination_connector(const std::string &value) {
+    if (value.empty()) return true;
+    static const std::vector<std::string> connectors = {
+        "は", "が", "を", "に", "へ", "で", "と", "も", "の", "や", "か", "ね", "よ",
+        "から", "まで", "より", "だけ", "など", "しか", "こそ", "でも",
+        "です", "でした", "だ", "だった", "ます", "ました",
+    };
+    std::vector<bool> reachable(value.size() + 1, false);
+    reachable[0] = true;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (!reachable[index]) continue;
+        for (const auto &connector : connectors) {
+            if (value.compare(index, connector.size(), connector) == 0) {
+                reachable[index + connector.size()] = true;
+            }
+        }
+    }
+    return reachable.back();
+}
+
 std::vector<std::string> dictionary_combinations(
     const std::string &reading, const std::vector<DictionaryEntry> &entries,
-    std::size_t limit = 8) {
+    std::size_t limit = 8, bool require_boundary_matches = true,
+    int minimum_registered_words = 1) {
     struct Match { std::size_t end; std::string value; int score; bool registered; };
-    struct Path { std::string text; int score; int words; int registered_words; };
+    struct Path {
+        std::string text;
+        int score;
+        int words;
+        int registered_words;
+        bool starts_with_word;
+        std::string pending_kana;
+        bool valid_connectors;
+    };
     if (reading.empty() || entries.empty()) return {};
     std::vector<std::vector<Match>> matches(reading.size());
     bool registered_match = false;
@@ -256,7 +285,7 @@ std::vector<std::string> dictionary_combinations(
     }
 
     std::vector<std::vector<Path>> beams(reading.size() + 1);
-    beams[0].push_back({"", 0, 0, 0});
+    beams[0].push_back({"", 0, 0, 0, false, "", true});
     const auto by_score = [](const Path &left, const Path &right) {
         return left.score > right.score;
     };
@@ -278,10 +307,14 @@ std::vector<std::string> dictionary_combinations(
         const std::size_t next = std::min(reading.size(), index + step);
         for (const auto &path : current) {
             push(next, {path.text + reading.substr(index, next - index),
-                path.score - 3, path.words, path.registered_words});
+                path.score - 3, path.words, path.registered_words,
+                path.starts_with_word, path.pending_kana + reading.substr(index, next - index),
+                path.valid_connectors});
             for (const auto &match : matches[index]) {
                 push(match.end, {path.text + match.value, path.score + match.score,
-                    path.words + 1, path.registered_words + (match.registered ? 1 : 0)});
+                    path.words + 1, path.registered_words + (match.registered ? 1 : 0),
+                    path.starts_with_word || (index == 0 && path.words == 0), "",
+                    path.valid_connectors && is_combination_connector(path.pending_kana)});
             }
         }
     }
@@ -290,7 +323,11 @@ std::vector<std::string> dictionary_combinations(
     std::vector<std::string> result;
     std::unordered_set<std::string> seen;
     for (const auto &path : ranked) {
-        if (path.words < 2 || path.registered_words < 1 || path.text == reading ||
+        if (path.words < 2 || path.registered_words < minimum_registered_words ||
+            (require_boundary_matches &&
+             (!path.starts_with_word || !path.valid_connectors ||
+              !is_combination_connector(path.pending_kana))) ||
+            path.text == reading ||
             !seen.insert(path.text).second) continue;
         result.push_back(path.text);
         if (result.size() >= limit) break;
@@ -814,8 +851,19 @@ std::string ImeSession::candidate_reading(std::size_t index) const {
 void ImeSession::select_next() { if (!candidates_.empty()) selected_index_ = (selected_index_ + 1) % candidates_.size(); }
 void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ = (selected_index_ + candidates_.size() - 1) % candidates_.size(); }
 
+bool ImeSession::is_incomplete_combination_candidate(const std::string &value) const {
+    if (exact_registered_texts_.find(value) != exact_registered_texts_.end()) return false;
+    if (incomplete_combination_texts_.find(value) != incomplete_combination_texts_.end()) return true;
+    int matched_values = 0;
+    for (const auto &registered : blocked_combination_values_) {
+        if (value.find(registered) != std::string::npos && ++matched_values >= 2) return true;
+    }
+    return false;
+}
+
 void ImeSession::insert_zenzai_candidate(std::string value) {
     if (value.empty()) return;
+    if (is_incomplete_combination_candidate(value)) return;
     if (is_single_hiragana_kana(reading_)) return;
     const auto learned = learning_.find(learning_key());
     const bool strong_learning = learned != learning_.end() &&
@@ -925,7 +973,11 @@ void ImeSession::rebuild_candidates() {
     const std::string conversion_reading = roman_to_hiragana(conversion_input);
     literal_suffix = display_literal_suffix(literal_suffix, mode_);
     reading_ = conversion_reading + literal_suffix;
+    incomplete_combination_texts_.clear();
+    exact_registered_texts_.clear();
+    blocked_combination_values_.clear();
     const auto append_converted = [&](std::string text, const char *source) {
+        if (is_incomplete_combination_candidate(text)) return;
         text += literal_suffix;
         append_unique(candidates_, seen, std::move(text), source);
     };
@@ -1005,6 +1057,31 @@ void ImeSession::rebuild_candidates() {
     std::vector<DictionaryEntry> all_combination_entries = user_dictionary_;
     all_combination_entries.insert(all_combination_entries.end(),
         learned_combination_entries.begin(), learned_combination_entries.end());
+    if (dictionary_combinations(conversion_reading, all_combination_entries, 1, true, 2).empty()) {
+        std::unordered_set<std::string> seen_values;
+        for (const auto &entry : all_combination_entries) {
+            if (!entry.reading.empty() && !entry.value.empty() &&
+                conversion_reading.find(entry.reading) != std::string::npos &&
+                seen_values.insert(entry.value).second) {
+                blocked_combination_values_.push_back(entry.value);
+            }
+        }
+    }
+    const auto all_combinations = dictionary_combinations(
+        conversion_reading, all_combination_entries, 128, false);
+    const auto exact_combinations = dictionary_combinations(
+        conversion_reading, all_combination_entries, 128);
+    const std::unordered_set<std::string> exact_combination_texts(
+        exact_combinations.begin(), exact_combinations.end());
+    for (const auto &value : all_combinations) {
+        if (exact_combination_texts.find(value) == exact_combination_texts.end()) {
+            incomplete_combination_texts_.insert(value);
+        }
+    }
+    for (const auto &entry : user_dictionary_) {
+        if (entry.reading == conversion_reading) exact_registered_texts_.insert(entry.value);
+    }
+    exact_registered_texts_.insert(learned_exact.begin(), learned_exact.end());
     std::unordered_set<std::string> registered_texts(
         registered_combinations.begin(), registered_combinations.end());
     std::unordered_set<std::string> learned_combination_seen;

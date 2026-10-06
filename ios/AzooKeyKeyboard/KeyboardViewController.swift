@@ -2683,6 +2683,27 @@ final class KeyboardViewController: UIInputViewController {
         let combinedTexts = Array(registeredCombinations.prefix(8))
         let learnedCombinationEntries = allLearned.filter { reading.contains($0.reading) }
             .map { (ruby: $0.reading, word: $0.text, importance: min(5, 3 + $0.score / 16)) }
+        let allCombinationEntries = registeredCombinationEntries + learnedCombinationEntries
+        let activeCombinationEntries = allCombinationEntries.filter {
+            !$0.ruby.isEmpty && !$0.word.isEmpty &&
+                reading.contains(katakanaToHiragana($0.ruby))
+        }
+        let exactRegisteredTexts = Set(exactUserTexts + allLearned.filter {
+            $0.reading == reading
+        }.map(\.text))
+        let hasExactPair = activeCombinationEntries.count >= 2 && !dictionaryCombinations(
+            reading, entries: activeCombinationEntries, limit: 1, minimumRegisteredWords: 2
+        ).isEmpty
+        let blockedCombinedValues: [String] = hasExactPair ? [] :
+            Array(Set(activeCombinationEntries.map(\.word)))
+        let incompleteCombinationTexts: Set<String> = activeCombinationEntries.count < 2 ? [] :
+            Set(dictionaryCombinations(
+                reading, entries: activeCombinationEntries, limit: 128,
+                requireBoundaryMatches: false, minimumRegisteredWords: 2
+            )).subtracting(dictionaryCombinations(
+                reading, entries: activeCombinationEntries, limit: 128,
+                minimumRegisteredWords: 2
+            )).subtracting(exactRegisteredTexts)
         let registeredTexts = Set(registeredCombinations)
         var learnedCombinationTexts = dictionaryCombinations(
             reading, entries: learnedCombinationEntries
@@ -2783,8 +2804,11 @@ final class KeyboardViewController: UIInputViewController {
         var seen = Set<String>()
         let ordered = (officialComplete + exactUserTexts + exactLearning.map(\.text)
             + combinedTexts + learnedCombinationTexts + localComplete
-            + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter {
-            !$0.isEmpty && seen.insert($0).inserted
+            + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter { candidate in
+            !candidate.isEmpty && !incompleteCombinationTexts.contains(candidate) &&
+                (exactRegisteredTexts.contains(candidate) || blockedCombinedValues.filter {
+                    candidate.contains($0)
+                }.count < 2) && seen.insert(candidate).inserted
         }
         let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
         let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
@@ -2814,9 +2838,30 @@ final class KeyboardViewController: UIInputViewController {
             .replacingOccurrences(of: "\u{FE0E}", with: "")
     }
 
+    private static let combinationConnectors = [
+        "は", "が", "を", "に", "へ", "で", "と", "も", "の", "や", "か", "ね", "よ",
+        "から", "まで", "より", "だけ", "など", "しか", "こそ", "でも",
+        "です", "でした", "だ", "だった", "ます", "ました"
+    ].map { Array($0) }
+    private func isCombinationConnector(_ value: String) -> Bool {
+        if value.isEmpty { return true }
+        let characters = Array(value)
+        var reachable = Array(repeating: false, count: characters.count + 1)
+        reachable[0] = true
+        for index in characters.indices where reachable[index] {
+            for connector in Self.combinationConnectors where index + connector.count <= characters.count {
+                if characters[index..<(index + connector.count)].elementsEqual(connector) {
+                    reachable[index + connector.count] = true
+                }
+            }
+        }
+        return reachable[characters.count]
+    }
+
     private func dictionaryCombinations(
         _ reading: String, entries: [(ruby: String, word: String, importance: Int)],
-        limit: Int = 8
+        limit: Int = 8, requireBoundaryMatches: Bool = true,
+        minimumRegisteredWords: Int = 1
     ) -> [String] {
         struct Match {
             let end: Int
@@ -2829,6 +2874,9 @@ final class KeyboardViewController: UIInputViewController {
             let score: Int
             let words: Int
             let registeredWords: Int
+            let startsWithWord: Bool
+            let pendingKana: String
+            let validConnectors: Bool
         }
         let characters = Array(reading)
         if characters.count < 2 || entries.isEmpty { return [] }
@@ -2860,7 +2908,8 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         var beams = Array(repeating: [Path](), count: characters.count + 1)
-        beams[0].append(Path(text: "", score: 0, words: 0, registeredWords: 0))
+        beams[0].append(Path(text: "", score: 0, words: 0, registeredWords: 0,
+                             startsWithWord: false, pendingKana: "", validConnectors: true))
         func push(_ end: Int, _ path: Path) {
             beams[end].append(path)
             if beams[end].count > 48 {
@@ -2876,21 +2925,31 @@ final class KeyboardViewController: UIInputViewController {
                     text: path.text + String(characters[index]),
                     score: path.score - 3,
                     words: path.words,
-                    registeredWords: path.registeredWords
+                    registeredWords: path.registeredWords,
+                    startsWithWord: path.startsWithWord,
+                    pendingKana: path.pendingKana + String(characters[index]),
+                    validConnectors: path.validConnectors
                 ))
                 for match in matches[index] {
                     push(match.end, Path(
                         text: path.text + match.value,
                         score: path.score + match.score,
                         words: path.words + 1,
-                        registeredWords: path.registeredWords + (match.registered ? 1 : 0)
+                        registeredWords: path.registeredWords + (match.registered ? 1 : 0),
+                        startsWithWord: path.startsWithWord || (index == 0 && path.words == 0),
+                        pendingKana: "",
+                        validConnectors: path.validConnectors &&
+                            isCombinationConnector(path.pendingKana)
                     ))
                 }
             }
         }
         var seen = Set<String>()
         return Array(beams.last!.sorted { $0.score > $1.score }
-            .filter { $0.words >= 2 && $0.registeredWords >= 1 && $0.text != reading }
+            .filter { $0.words >= 2 && $0.registeredWords >= minimumRegisteredWords &&
+                $0.text != reading &&
+                (!requireBoundaryMatches || ($0.startsWithWord && $0.validConnectors &&
+                    isCombinationConnector($0.pendingKana))) }
             .map(\.text)
             .filter { seen.insert($0).inserted }
             .prefix(limit))
