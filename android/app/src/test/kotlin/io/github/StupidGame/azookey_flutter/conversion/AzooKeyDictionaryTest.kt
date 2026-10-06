@@ -92,6 +92,13 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun officialLowScoreEntriesDoNotCrowdCommonConversions() {
+        val candidates = dictionary.candidates("へんかん", predictionLimit = 0).conversions
+        assertEquals("変換", candidates.first())
+        assertTrue("low-score archaic spelling leaked: $candidates", "返翰" !in candidates)
+    }
+
+    @Test
     fun longSentenceStartsWithTheCommonCompleteConversion() {
         val candidates = dictionary.candidates(
             "わたしはきょうとうきょうのえきでともだちとあいました",

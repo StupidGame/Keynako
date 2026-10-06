@@ -497,10 +497,28 @@ class DesktopInputController extends ChangeNotifier {
 
   void _scheduleZenzai() {
     final engine = _zenzaiEngine;
-    if (engine == null) return;
     final sequence = ++_requestSequence;
-    final reading = composingText;
     _zenzaiDebounce?.cancel();
+    final reading = composingText;
+    final hasExactRegistration = [..._personalDictionary, ..._sharedDictionary]
+        .any(
+          (entry) =>
+              CandidateLearning.normalizeReading(entry.reading) == reading,
+        );
+    final strongLearning = CandidateLearning.exactScores(
+      _learning,
+      reading,
+    ).values.any((score) => score >= 4);
+    if (engine == null ||
+        reading.characters.length == 1 ||
+        (reading.characters.length <= 2 &&
+            _candidates.isNotEmpty &&
+            _candidates.first.text == reading &&
+            !hasExactRegistration &&
+            !strongLearning)) {
+      _zenzaiWorking = false;
+      return;
+    }
     _zenzaiWorking = true;
     _zenzaiStatus = '入力待ち';
     notifyListeners();
@@ -536,15 +554,24 @@ class DesktopInputController extends ChangeNotifier {
       final existingIndex = _candidates.indexWhere(
         (candidate) => candidate.text == generated,
       );
+      // Short readings cannot ground a new model word. Combining kana marks
+      // such as て゚ should not replace an ordinary reading either.
+      if (existingIndex < 0 &&
+          (reading.characters.length == 1 ||
+              _unusualModelText(generated, reading))) {
+        return;
+      }
       if (existingIndex < 0) {
+        final insertion = _candidates.length < 3 ? _candidates.length : 3;
         _candidates = [
+          ..._candidates.take(insertion),
           ConversionCandidate(
             text: generated,
             reading: reading,
-            source: 'zenzai',
+            source: 'zenzai-suggestion',
             score: 1000,
           ),
-          ..._candidates,
+          ..._candidates.skip(insertion),
         ];
       } else if (_candidatePhase(_candidates[existingIndex]) == 0) {
         // The model may select a word already present in a dictionary or learning.
@@ -597,6 +624,22 @@ class DesktopInputController extends ChangeNotifier {
     if (candidate.source.startsWith('user')) return 1;
     if (candidate.source.startsWith('learned')) return 2;
     return 0;
+  }
+
+  static bool _unusualModelText(String value, String reading) {
+    final inputHasKanaMark = reading.runes.any(
+      (rune) => rune == 0x3099 || rune == 0x309A,
+    );
+    return value.runes.any(
+      (rune) =>
+          rune == 0xFFFD ||
+          rune < 0x20 ||
+          (rune >= 0x7F && rune <= 0x9F) ||
+          (rune >= 0xE000 && rune <= 0xF8FF) ||
+          (rune >= 0x202A && rune <= 0x202E) ||
+          (rune >= 0x2066 && rune <= 0x2069) ||
+          ((rune == 0x3099 || rune == 0x309A) && !inputHasKanaMark),
+    );
   }
 
   static int _candidatePhase(ConversionCandidate candidate) {

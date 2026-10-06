@@ -80,6 +80,34 @@ std::size_t utf8_character_count(const std::string &value) {
         [](unsigned char byte) { return (byte & 0xc0) != 0x80; }));
 }
 
+bool unusual_model_text(const std::string &value, const std::string &reading) {
+    const bool input_has_kana_mark = reading.find(u8"\u3099") != std::string::npos ||
+        reading.find(u8"\u309A") != std::string::npos;
+    for (std::size_t index = 0; index < value.size();) {
+        const auto first = static_cast<unsigned char>(value[index]);
+        std::size_t length = 1;
+        char32_t code = first;
+        if (first >= 0xf0 && first <= 0xf4) { length = 4; code = first & 0x07; }
+        else if (first >= 0xe0 && first <= 0xef) { length = 3; code = first & 0x0f; }
+        else if (first >= 0xc2 && first <= 0xdf) { length = 2; code = first & 0x1f; }
+        else if (first >= 0x80) return true;
+        if (index + length > value.size()) return true;
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const auto next = static_cast<unsigned char>(value[index + offset]);
+            if ((next & 0xc0) != 0x80) return true;
+            code = (code << 6) | (next & 0x3f);
+        }
+        if ((length == 3 && code < 0x800) || (length == 4 && code < 0x10000) ||
+            (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff ||
+            code < 0x20 || (code >= 0x7f && code <= 0x9f) ||
+            code == 0xfffd || (code >= 0xe000 && code <= 0xf8ff) ||
+            (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069) ||
+            ((code == 0x3099 || code == 0x309a) && !input_has_kana_mark)) return true;
+        index += length;
+    }
+    return false;
+}
+
 void append_unique(std::vector<Candidate> &out, std::unordered_set<std::string> &seen,
                    std::string text, const char *source) {
     if (!text.empty() && seen.insert(text).second) out.push_back({std::move(text), source});
@@ -632,7 +660,8 @@ void ImeSession::learn_selected() {
         }
         scores[text] = std::min(32, highest + 4);
     } else {
-        scores[text] = std::min(32, scores[text] + 1);
+        // Automatic acceptance must remain weaker than a deliberate selection.
+        if (scores[text] < 4) scores[text] = std::min(3, scores[text] + 1);
     }
     learning_order_.erase(std::remove(learning_order_.begin(), learning_order_.end(), key), learning_order_.end());
     learning_order_.push_back(key);
@@ -674,6 +703,26 @@ void ImeSession::prioritize_learning() {
         if (priority(left) != priority(right)) return priority(left) < priority(right);
         return priority(left) == 1 && score(left) > score(right);
     });
+    const bool exact_registration = std::any_of(user_dictionary_.begin(), user_dictionary_.end(), [this](const auto &entry) {
+            return entry.reading == reading_;
+        });
+    const bool strong_learning = found != learning_.end() &&
+        std::any_of(found->second.begin(), found->second.end(), [](const auto &entry) {
+            return entry.second >= 4;
+        });
+    const auto count = utf8_character_count(reading_);
+    const bool single_kana = reading_.size() == 3 && reading_ >= u8"ぁ" && reading_ <= u8"ゖ";
+    const bool katakana_only = count == 2 && !candidates_.empty() &&
+        candidates_.front().text == hiragana_to_katakana(reading_);
+    if (!exact_registration && !strong_learning && (single_kana || katakana_only)) {
+        const auto literal = std::find_if(candidates_.begin(), candidates_.end(), [this](const auto &candidate) {
+            return candidate.text == reading_ && candidate.source.find("prediction") == std::string::npos;
+        });
+        if (literal != candidates_.end() &&
+            (single_kana || static_cast<std::size_t>(literal - candidates_.begin()) <= 2)) {
+            std::rotate(candidates_.begin(), literal, literal + 1);
+        }
+    }
 }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
@@ -756,19 +805,34 @@ void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ =
 
 void ImeSession::insert_zenzai_candidate(std::string value) {
     if (value.empty()) return;
+    if (reading_.size() == 3 && reading_ >= u8"ぁ" && reading_ <= u8"ゖ") return;
+    const auto learned = learning_.find(learning_key());
+    const bool strong_learning = learned != learning_.end() &&
+        std::any_of(learned->second.begin(), learned->second.end(), [](const auto &entry) {
+            return entry.second >= 4;
+        });
+    const bool exact_registration = std::any_of(user_dictionary_.begin(), user_dictionary_.end(),
+        [this](const auto &entry) { return entry.reading == reading_; });
+    if (utf8_character_count(reading_) <= 2 && !candidates_.empty() &&
+        candidates_.front().text == reading_ && !strong_learning && !exact_registration) return;
     const auto existing = std::find_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
         return candidate.text == value;
     });
+    // Reject malformed or unusual new model text; explicit dictionary entries stay available.
+    if (existing == candidates_.end() && unusual_model_text(value, reading_)) return;
     if (existing != candidates_.end() && existing->source.find("prediction") != std::string::npos) {
         // A model result cannot make an unfinished dictionary or learned reading live.
         return;
     }
+    const bool novel = existing == candidates_.end();
     const bool preserve_selection = converting_ || selected_index_ != 0;
     const auto selected = selected_text();
     candidates_.erase(std::remove_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
         return candidate.text == value;
     }), candidates_.end());
-    candidates_.insert(candidates_.begin(), {std::move(value), "zenzai"});
+    const auto insertion_index = novel ? std::min<std::size_t>(3, candidates_.size()) : 0;
+    candidates_.insert(candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index),
+        {std::move(value), novel ? "zenzai-suggestion" : "zenzai"});
     prioritize_learning();
     selected_index_ = 0;
     if (preserve_selection) {

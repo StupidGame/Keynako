@@ -394,9 +394,16 @@ internal class AzooKeyDictionary(
             val fields = splitTabFields(bytes, textStart, end)
             val ruby = fields.firstOrNull().orEmpty()
             if (ruby.isEmpty()) return emptyList()
-            return numeric.mapIndexed { index, value ->
+            return numeric.mapIndexedNotNull { index, value ->
                 val word = fields.getOrNull(index + 1).orEmpty().ifEmpty { ruby }
-                Entry(word, ruby, value.lcid, value.rcid, value.score)
+                val score = minOf(0f, value.score)
+                // Match DicdataStore.shouldBeRemoved in the Swift converter.
+                // Weak single-character readings otherwise crowd out common words.
+                if (score - DICTIONARY_THRESHOLD < 2f / word.codePointCount(0, word.length)) {
+                    null
+                } else {
+                    Entry(word, ruby, value.lcid, value.rcid, score)
+                }
             }
         }
 
@@ -428,6 +435,7 @@ internal class AzooKeyDictionary(
         private const val BEAM_TRIM_THRESHOLD = 256
         private const val ENTRIES_PER_READING = 32
         private const val FALLBACK_SCORE = -17f
+        private const val DICTIONARY_THRESHOLD = -17f
         private const val DEFAULT_CONNECTION_SCORE = -25f
 
         private fun escapedIdentifier(value: String): String = value

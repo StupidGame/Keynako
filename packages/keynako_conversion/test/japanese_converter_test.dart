@@ -37,6 +37,35 @@ void main() {
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
 
+  test('keeps a single kana literal first unless it was registered', () {
+    expect(converter.candidates(input: 'te', romanInput: true).first.text, 'て');
+    final registered = converter.candidates(
+      input: 'te',
+      romanInput: true,
+      options: const ConversionOptions(
+        userDictionary: [ConversionDictionaryEntry(reading: 'て', value: '登録語')],
+      ),
+    );
+    expect(registered.first.text, '登録語');
+  });
+
+  test('weak automatic learning cannot replace short grammatical kana', () {
+    final automatic = converter.candidates(
+      input: 'shite',
+      romanInput: true,
+      options: const ConversionOptions(learning: {'して\t仕手': 1}),
+    );
+    expect(automatic.first.text, 'して');
+    expect(automatic.map((candidate) => candidate.text), contains('仕手'));
+
+    final deliberate = converter.candidates(
+      input: 'shite',
+      romanInput: true,
+      options: const ConversionOptions(learning: {'して\t仕手': 4}),
+    );
+    expect(deliberate.first.text, '仕手');
+  });
+
   test('hides selected additional emoji without hiding a personal word', () {
     const options = ConversionOptions(
       emojiDenylist: {'🕷', '🕸'},
@@ -249,10 +278,14 @@ void main() {
       greaterThan(0),
     );
     expect(candidates.map((candidate) => candidate.text), contains('日本'));
-    expect(candidates.firstWhere((candidate) => candidate.text == '日本語入力').source,
-        'user-prediction');
-    expect(candidates.firstWhere((candidate) => candidate.text == '日本語入力').reading,
-        'にほんご');
+    expect(
+      candidates.firstWhere((candidate) => candidate.text == '日本語入力').source,
+      'user-prediction',
+    );
+    expect(
+      candidates.firstWhere((candidate) => candidate.text == '日本語入力').reading,
+      'にほんご',
+    );
   });
 
   test('shows a registered long word for both short reading prefixes', () {

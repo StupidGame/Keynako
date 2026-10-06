@@ -2835,6 +2835,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         let zenzaiPriority = zenzai == nil ? [] : Array(engineCandidates.filter {
             completeCandidates.contains($0) && !knownPrefixTexts.contains($0)
+                && (conversionEngine?.baselineTexts.contains($0) == true)
         }.prefix(1))
         let exactDictionaryPriority = dictionaryPriority.filter {
             !predictedTexts.contains($0) && (!partialTexts.contains($0) || exactUserTexts.contains($0))
@@ -2861,12 +2862,28 @@ final class KeyboardViewController: UIInputViewController {
                 predictedTexts.contains($0) && learnedPrefixTexts.contains($0)
             }
         var seen = Set<String>()
-        return (zenzaiPriority + otherCompleteCandidates + exactDictionaryPriority
+        let ordered = (zenzaiPriority + otherCompleteCandidates + exactDictionaryPriority
             + exactLearnedPriority + otherPrefixCandidates + dictionaryPrefixCandidates
             + learnedPrefixCandidates
             + prioritized.filter { fallbackTexts.contains($0) }).filter {
             !$0.isEmpty && seen.insert($0).inserted
         }
+        let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
+        let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
+            conversionDictionaryEntries.contains { katakanaToHiragana($0.ruby) == reading }
+        let baselineLeadingTexts = conversionEngine.map {
+            Array($0.baselineTexts.prefix(2))
+        } ?? []
+        let preferRaw = reading.count <= 2 && baselineLeadingTexts.contains(hiragana) &&
+            (baselineLeadingTexts.first == hiragana || baselineLeadingTexts.first == fullKatakana)
+        let singleKana = reading.count == 1 && reading.unicodeScalars.first.map {
+            (0x3041 ... 0x3096).contains($0.value)
+        } == true
+        if !hasExactRegistration, ordered.contains(hiragana),
+           (preferRaw || singleKana) {
+            return [hiragana] + ordered.filter { $0 != hiragana }
+        }
+        return ordered
     }
 
     private func blockedAdditionalEmoji() -> Set<String> {
@@ -4828,7 +4845,9 @@ private func recordCandidateLearning(
         for word in Array(scores.keys) where word != text { scores[word] = scores[word]! / 2 }
         scores[text] = min((scores.values.max() ?? 0) + 4, 32)
     } else {
-        scores[text] = min((scores[text] ?? 0) + 1, 32)
+        // Automatic acceptance stays weaker than one deliberate correction.
+        let existing = scores[text] ?? 0
+        scores[text] = existing >= 4 ? existing : min(existing + 1, 3)
     }
     let prefix = english ? "english:\(normalized)" : normalized
     for (word, score) in scores where score > 0 { result["\(prefix)\t\(word)"] = score }

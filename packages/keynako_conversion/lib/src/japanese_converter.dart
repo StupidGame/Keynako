@@ -746,15 +746,39 @@ class JapaneseConverter {
       ),
     ];
     final prioritized = _priorityOrder(ordered);
-    if (!options.liveConversion || sourceReading != reading) {
+    final literalLength = reading.runes.length;
+    final preferLiteralKana =
+        literalLength <= 2 &&
+        reading.runes.every((rune) => rune >= 0x3041 && rune <= 0x3096) &&
+        (literalLength == 1 ||
+            (!_dictionary.containsKey(reading) && visiblePredictions.isEmpty)) &&
+        !exactLearning.values.any((score) => score >= 4) &&
+        !options.userDictionary.any(
+          (entry) => katakanaToHiragana(entry.reading) == reading,
+        );
+    List<ConversionCandidate> preferReading(
+      List<ConversionCandidate> candidates,
+    ) {
+      if (!preferLiteralKana) return candidates;
+      final literal = candidates.where(
+        (candidate) => candidate.text == reading,
+      );
+      if (literal.isEmpty) return candidates;
       return [
+        literal.first,
+        ...candidates.where((candidate) => candidate.text != reading),
+      ];
+    }
+
+    if (!options.liveConversion || sourceReading != reading) {
+      return preferReading([
         ...pinned,
         ...prioritized.where(
           (candidate) => !pinnedTexts.contains(candidate.text),
         ),
-      ];
+      ]);
     }
-    return prioritized;
+    return preferReading(prioritized);
   }
 
   List<ConversionCandidate> _priorityOrder(

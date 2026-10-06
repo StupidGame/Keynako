@@ -6,6 +6,42 @@ import 'package:keynako_desktop/input/desktop_input_controller.dart';
 import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
+  test('one kana stays literal and unusual model marks are ignored', () async {
+    final engine = _FakeZenzaiEngine()..result = 'て゚';
+    final controller = DesktopInputController(
+      zenzaiEngineFactory: (_) async => engine,
+    );
+    await controller.setZenzaiModel(ZenzaiModel.xsmall);
+    controller.updateRawInput('te');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(controller.candidates.first.text, 'て');
+    expect(
+      controller.candidates.map((candidate) => candidate.text),
+      isNot(contains('て゚')),
+    );
+    expect(engine.lastRequest, isNull);
+    controller.updateRawInput('tesuto');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(
+      controller.candidates.map((candidate) => candidate.text),
+      isNot(contains('て゚')),
+    );
+    controller.dispose();
+  });
+
+  test('short grammatical kana does not become a rare model word', () async {
+    final engine = _FakeZenzaiEngine()..result = '仕手';
+    final controller = DesktopInputController(
+      zenzaiEngineFactory: (_) async => engine,
+    );
+    await controller.setZenzaiModel(ZenzaiModel.xsmall);
+    controller.updateRawInput('shite');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(controller.candidates.first.text, 'して');
+    expect(engine.lastRequest, isNull);
+    controller.dispose();
+  });
+
   test('a correction overtakes many automatic confirmations', () {
     final controller = DesktopInputController();
     for (var i = 0; i < 100; i++) {
@@ -22,7 +58,7 @@ void main() {
     controller.dispose();
   });
 
-  test('Zenzai leads a learned correction for a complete reading', () async {
+  test('a new model word follows the established conversion', () async {
     final controller = DesktopInputController(
       zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),
     );
@@ -34,52 +70,47 @@ void main() {
     await controller.setZenzaiModel(ZenzaiModel.xsmall);
     controller.updateRawInput('nihongo');
     await Future<void>.delayed(const Duration(milliseconds: 180));
-    expect(controller.candidates.first.text, '日本語入力');
-    expect(controller.candidates[1].text, '日本語');
+    expect(controller.candidates.first.text, '日本語');
+    expect(controller.candidates[1].text, '日本語入力');
     controller.dispose();
   });
 
-  test(
-    'model result leads complete dictionary and learned candidates',
-    () async {
-      final repository = _FakeSharedDictionaryRepository()
-        ..snapshot = const SharedDictionarySnapshot(
-          revision: 'priority',
-          version: '1.1',
-          lastUpdate: 'today',
-          entries: [ConversionDictionaryEntry(reading: 'にほんご', value: '登録語')],
-        );
-      final engine = _FakeZenzaiEngine();
-      final controller = DesktopInputController(
-        sharedDictionaryRepository: repository,
-        zenzaiEngineFactory: (_) async => engine,
+  test('established model matches lead while new words follow standard conversions', () async {
+    final repository = _FakeSharedDictionaryRepository()
+      ..snapshot = const SharedDictionarySnapshot(
+        revision: 'priority',
+        version: '1.1',
+        lastUpdate: 'today',
+        entries: [ConversionDictionaryEntry(reading: 'にほんご', value: '登録語')],
       );
-      controller.updateRawInput('nihongo');
-      controller.selectCandidate(
-        controller.candidates.indexWhere(
-          (candidate) => candidate.text == '日本語',
-        ),
-      );
-      controller.commitSelected();
-      await controller.importSharedDictionary();
-      await controller.setZenzaiModel(ZenzaiModel.xsmall);
-      controller.updateRawInput('nihongo');
-      await Future<void>.delayed(const Duration(milliseconds: 180));
+    final engine = _FakeZenzaiEngine();
+    final controller = DesktopInputController(
+      sharedDictionaryRepository: repository,
+      zenzaiEngineFactory: (_) async => engine,
+    );
+    controller.updateRawInput('nihongo');
+    controller.selectCandidate(
+      controller.candidates.indexWhere((candidate) => candidate.text == '日本語'),
+    );
+    controller.commitSelected();
+    await controller.importSharedDictionary();
+    await controller.setZenzaiModel(ZenzaiModel.xsmall);
+    controller.updateRawInput('nihongo');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
 
-      expect(controller.candidates.take(3).map((candidate) => candidate.text), [
-        '日本語入力',
-        '日本語',
-        '登録語',
-      ]);
-      engine.result = '登録語';
-      controller.updateRawInput('');
-      controller.updateRawInput('nihongo');
-      await Future<void>.delayed(const Duration(milliseconds: 180));
-      expect(controller.candidates.first.text, '登録語');
-      expect(controller.candidates.first.source, 'zenzai');
-      controller.dispose();
-    },
-  );
+    expect(controller.candidates.take(3).map((candidate) => candidate.text), [
+      '日本語',
+      '日本語入力',
+      '登録語',
+    ]);
+    engine.result = '登録語';
+    controller.updateRawInput('');
+    controller.updateRawInput('nihongo');
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(controller.candidates.first.text, '登録語');
+    expect(controller.candidates.first.source, 'zenzai');
+    controller.dispose();
+  });
 
   test(
     'a complete model result leads dictionary and learning completions',
@@ -102,6 +133,11 @@ void main() {
       await controller.setZenzaiModel(ZenzaiModel.xsmall);
       controller.updateRawInput('nihongoka');
       await Future<void>.delayed(const Duration(milliseconds: 180));
+      controller.selectCandidate(
+        controller.candidates.indexWhere(
+          (candidate) => candidate.text == '学習補完',
+        ),
+      );
       controller.commitSelected();
       await controller.importSharedDictionary();
       engine.result = '一致モデル';
@@ -111,7 +147,8 @@ void main() {
       final texts = controller.candidates
           .map((candidate) => candidate.text)
           .toList();
-      expect(texts.first, '一致モデル');
+      expect(texts.first, '日本語');
+      expect(texts, contains('一致モデル'));
       expect(texts.indexOf('登録補完'), greaterThan(texts.indexOf('日本語')));
       expect(texts.indexOf('学習補完'), greaterThan(texts.indexOf('登録補完')));
       expect(texts.indexOf('登録ご'), greaterThan(texts.indexOf('一致モデル')));
@@ -141,7 +178,7 @@ void main() {
     },
   );
 
-  test('places a Zenzai result before base Japanese candidates', () async {
+  test('places a novel Zenzai result after the standard candidate', () async {
     final engine = _FakeZenzaiEngine();
     final controller = DesktopInputController(
       zenzaiEngineFactory: (_) async => engine,
@@ -152,8 +189,9 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 180));
 
     expect(engine.lastRequest?.reading, 'にほんご');
-    expect(controller.candidates.first.text, '日本語入力');
-    expect(controller.candidates.first.source, 'zenzai');
+    expect(controller.candidates.first.text, '日本語');
+    expect(controller.candidates[1].text, '日本語入力');
+    expect(controller.candidates[1].source, 'zenzai-suggestion');
     controller.dispose();
   });
 
@@ -180,12 +218,19 @@ void main() {
     await controller.setZenzaiModel(ZenzaiModel.xsmall);
     controller.updateRawInput('nihongo');
     await Future<void>.delayed(const Duration(milliseconds: 180));
+    controller.selectCandidate(
+      controller.candidates.indexWhere(
+        (candidate) => candidate.text == '日本語入力',
+      ),
+    );
     controller.commitSelected();
     await controller.setZenzaiModel(ZenzaiModel.off);
     controller.updateRawInput('nihongo');
     expect(controller.candidates.first.text, '日本語');
-    expect(controller.candidates.map((candidate) => candidate.text),
-        contains('日本語入力'));
+    expect(
+      controller.candidates.map((candidate) => candidate.text),
+      contains('日本語入力'),
+    );
     controller.updateRawInput('niho');
     expect(controller.displayedComposition, 'にほ');
     expect(

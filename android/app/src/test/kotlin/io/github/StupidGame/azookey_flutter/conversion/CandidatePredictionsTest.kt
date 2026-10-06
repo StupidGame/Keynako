@@ -48,6 +48,53 @@ class CandidatePredictionsTest {
     }
 
     @Test
+    fun singleKanaKeepsTheLiteralAndRejectsUngroundedModelOutput() {
+        assertEquals(
+            listOf("て", "手", "テ"),
+            preferSingleKanaReading("て", listOf("手", "て", "テ"), false),
+        )
+        assertEquals(
+            listOf("登録語", "て"),
+            preferSingleKanaReading("て", listOf("登録語", "て"), true),
+        )
+        assertTrue(!"て゚".isPlausibleZenzaiCandidate("テ", setOf("手", "テ")))
+        assertTrue(!"て゚すと".isPlausibleZenzaiCandidate("テスト", setOf("テスト")))
+        assertTrue(!"\uE000".isPlausibleZenzaiCandidate("テスト"))
+        assertTrue(!"変\u202E換".isPlausibleZenzaiCandidate("テスト"))
+        assertTrue("手".isPlausibleZenzaiCandidate("テ", setOf("手", "テ")))
+    }
+
+    @Test
+    fun shortKanaGrammarBeatsRareCompleteModelMatches() {
+        val base = listOf("して", "シテ", "仕手", "子手")
+        assertEquals("して", rerankedJapaneseCandidates(
+            reading = "して",
+            ranked = listOf("仕手", "子手", "して", "シテ"),
+            baseCandidates = base,
+            predictionReadings = emptyMap(),
+            learning = mapOf("して\t仕手" to 1),
+            preferredZenzaiCandidate = "仕手",
+        ).first())
+    }
+
+    @Test
+    fun novelModelTextFollowsEstablishedCompleteConversions() {
+        val base = listOf("今日は晴れる", "今日は晴れ", "きょうははれる")
+        val ranked = placeNovelGeneratedCandidate(
+            listOf("珍しい候補", "今日は晴れる", "今日は晴れ", "きょうははれる"),
+            "珍しい候補", base.toSet(),
+        )
+        assertEquals("今日は晴れる", rerankedJapaneseCandidates(
+            reading = "きょうははれる",
+            ranked = ranked,
+            baseCandidates = base,
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+            preferredZenzaiCandidate = "珍しい候補",
+        ).first())
+    }
+
+    @Test
     fun commitsTheRawReadingWhenCandidateConversionIsDisabled() {
         assertEquals(
             "かめん",

@@ -89,6 +89,17 @@ internal fun bestLiveJapaneseConversion(
     return ranked.firstOrNull { it in completeConversions && it != hiragana && it != katakana }
 }
 
+/** Keep an uncommitted single kana literal until enough context has been typed. */
+internal fun preferSingleKanaReading(
+    reading: String,
+    candidates: List<String>,
+    hasExactRegistration: Boolean,
+): List<String> {
+    if (reading.length != 1 || reading[0] !in '\u3041'..'\u3096' ||
+        hasExactRegistration || reading !in candidates) return candidates
+    return listOf(reading) + candidates.filter { it != reading }
+}
+
 /** Keep a new model suggestion visible without letting it displace common dictionary results. */
 internal fun placeNovelGeneratedCandidate(
     ranked: List<String>,
@@ -158,17 +169,30 @@ internal fun rerankedJapaneseCandidates(
         learnedCandidates = learned,
         prominentPredictions = prominentPredictions,
     )
-    return prioritizeJapaneseCandidateGroups(
+    val ordered = prioritizeJapaneseCandidateGroups(
         pinned, dictionaryCandidates,
         learningCandidates + learned + learnedPrefixes.map { it.text },
         predictionTexts,
         setOf(reading, hiraganaToKatakana(katakanaToHiragana(reading))),
         partialCandidates,
-        (listOfNotNull(preferredZenzaiCandidate) + ranked).firstOrNull {
+        preferredZenzaiCandidate?.takeIf { it in baseCandidates &&
             it !in predictionTexts && it !in partialCandidates &&
-                it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
+            it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
+        } ?: ranked.firstOrNull { it in baseCandidates && it !in dictionaryCandidates &&
+            it !in learningCandidates && it !in learned &&
+            it !in predictionTexts && it !in partialCandidates &&
+            it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
         },
     )
+    val exactRegistration = dictionaryCandidates.any {
+        it !in predictionTexts && it !in partialCandidates
+    } || learnedCandidates(learning).any {
+        it.reading == katakanaToHiragana(reading) && it.score >= 4
+    }
+    if (baseCandidates.firstOrNull() == reading && reading.length <= 2 && !exactRegistration) {
+        return listOf(reading) + ordered.filter { it != reading }
+    }
+    return preferSingleKanaReading(reading, ordered, exactRegistration)
 }
 
 /** Complete model and standard conversions lead; personal results follow other complete readings. */

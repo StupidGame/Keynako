@@ -64,6 +64,11 @@ int main() {
     ImeSession fixed_priority;
     for (const char value : std::string("tesuto")) fixed_priority.append_ascii(value);
     fixed_priority.insert_zenzai_candidate("学習語");
+    const auto learned_model = std::find_if(fixed_priority.candidates().begin(), fixed_priority.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "学習語"; });
+    assert(learned_model != fixed_priority.candidates().end());
+    assert(fixed_priority.begin_conversion());
+    assert(fixed_priority.select_candidate(static_cast<std::size_t>(learned_model - fixed_priority.candidates().begin())));
     fixed_priority.learn_selected();
     fixed_priority.clear();
     fixed_priority.set_user_dictionary({{"てすと", "登録語", 3}});
@@ -181,12 +186,19 @@ int main() {
     ImeSession learned_combination;
     for (const auto &[ruby, word] : std::vector<std::pair<std::string, std::string>>{
              {"watashi", "私"}, {"neko", "猫"}}) {
+        learned_combination.set_user_dictionary({{ImeSession::roman_to_hiragana(ruby), word, 3}});
         for (const char value : ruby) learned_combination.append_ascii(value);
-        learned_combination.insert_zenzai_candidate(word);
+        const std::string target = word;
+        const auto model_word = std::find_if(learned_combination.candidates().begin(), learned_combination.candidates().end(),
+            [&target](const auto &candidate) { return candidate.text == target; });
+        assert(model_word != learned_combination.candidates().end());
+        assert(learned_combination.begin_conversion());
+        assert(learned_combination.select_candidate(static_cast<std::size_t>(model_word - learned_combination.candidates().begin())));
         assert(learned_combination.selected_text() == word);
         learned_combination.learn_selected();
         learned_combination.clear();
     }
+    learned_combination.set_user_dictionary({});
     for (const char value : std::string("watashihaneko")) learned_combination.append_ascii(value);
     assert(std::any_of(learned_combination.candidates().begin(), learned_combination.candidates().end(),
         [](const auto &candidate) { return candidate.text == "私は猫" &&
@@ -371,6 +383,18 @@ int main() {
     assert(dictionary.predictions("よろ", 1).front() == "よろしく");
     assert(dictionary.predictions("にほ", 1).front() == "日本");
     assert(dictionary.predictions("こんに", 1).front() == "こんにちは");
+    const auto ordinary_conversion = dictionary.candidates("へんかん", 48);
+    assert(!ordinary_conversion.empty() && ordinary_conversion.front() == "変換");
+    assert(std::find(ordinary_conversion.begin(), ordinary_conversion.end(), "返翰") ==
+        ordinary_conversion.end());
+    ImeSession short_reading;
+    assert(short_reading.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("te")) short_reading.append_ascii(value);
+    assert(short_reading.candidates().front().text == "て");
+    short_reading.insert_zenzai_candidate("て゚");
+    assert(short_reading.candidates().front().text == "て");
+    assert(std::none_of(short_reading.candidates().begin(), short_reading.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "て゚"; }));
     const auto requests = dictionary.predictions("おねが", 3);
     assert(std::find(requests.begin(), requests.end(), "お願いします") != requests.end());
     assert(std::find(requests.begin(), requests.end(), "お願いし") == requests.end());
@@ -382,6 +406,19 @@ int main() {
     ImeSession bundled;
     assert(bundled.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("nihongo")) bundled.append_ascii(value);
+    const auto normal_first = bundled.candidates().front().text;
+    bundled.insert_zenzai_candidate("珍しい候補");
+    assert(bundled.candidates().front().text == normal_first);
+    ImeSession grammatical_kana;
+    assert(grammatical_kana.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("shite")) grammatical_kana.append_ascii(value);
+    assert(grammatical_kana.candidates().front().text == "して");
+    grammatical_kana.insert_zenzai_candidate("仕手");
+    assert(grammatical_kana.candidates().front().text == "して");
+    ImeSession polite_kana;
+    assert(polite_kana.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("masu")) polite_kana.append_ascii(value);
+    assert(polite_kana.candidates().front().text == "ます");
     const auto has_japanese = std::any_of(
         bundled.candidates().begin(), bundled.candidates().end(),
         [](const keynako::Candidate &candidate) { return candidate.text == "日本語"; });

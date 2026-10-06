@@ -68,6 +68,7 @@ import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
+import io.github.StupidGame.azookey_flutter.conversion.preferSingleKanaReading
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.prioritizeJapaneseCandidateGroups
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
@@ -2703,6 +2704,11 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun requestZenzaiCandidates(reading: String, baseCandidates: List<String>) {
+        if ((reading.length == 1 && reading[0] in '\u3041'..'\u3096') ||
+            (reading.length <= 2 && baseCandidates.firstOrNull() == reading)) {
+            zenzaiRuntime.cancel()
+            return
+        }
         if (mode != "japanese" ||
             !settings.optBoolean("enable_zenzai", true) ||
             reading.isBlank() ||
@@ -2961,13 +2967,26 @@ class AzooKeyInputMethodService : InputMethodService() {
                     learnedPrefixes.drop(2).map { it.text }
             ).distinct().take(4),
         )
-        return prioritizeJapaneseCandidateGroups(
+        val ordered = prioritizeJapaneseCandidateGroups(
             pinned, candidateDictionaryPriority,
             candidateLearningPriority,
             candidatePredictionReadings.keys,
             setOf(reading, katakana, katakanaToHalfWidth(katakana), rawRoman, asciiToFullWidth(rawRoman)),
             candidatePartialTexts,
         )
+        val strongLearning = learnedCandidates(learning).any {
+            it.reading == reading && it.score >= 4
+        }
+        val exactRegistration = registeredExact.isNotEmpty() || strongLearning ||
+            hotfixDictionaryEntries.any { katakanaToHiragana(it.ruby) == reading }
+        val shortKanaDefault = reading.length <= 2 &&
+            allowedOfficialConversions.take(2).contains(reading) &&
+            allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))
+        if (shortKanaDefault &&
+            !exactRegistration) {
+            return listOf(reading) + ordered.filter { it != reading }
+        }
+        return preferSingleKanaReading(reading, ordered, exactRegistration)
     }
 
     private fun buildEnglishCandidates(input: String): List<String> {

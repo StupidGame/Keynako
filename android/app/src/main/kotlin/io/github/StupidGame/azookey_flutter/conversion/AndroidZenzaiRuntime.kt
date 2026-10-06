@@ -66,7 +66,9 @@ internal class AndroidZenzaiRuntime(context: Context) {
                         rightContext,
                         reading,
                         maxTokens,
-                    ).trim().takeIf { it.isPlausibleZenzaiCandidate(reading) }.orEmpty()
+                    ).trim().takeIf {
+                        it.isPlausibleZenzaiCandidate(reading, baseCandidates.toSet())
+                    }.orEmpty()
                 } else {
                     ""
                 }
@@ -159,14 +161,24 @@ internal class AndroidZenzaiRuntime(context: Context) {
     }
 }
 
-private fun String.isPlausibleZenzaiCandidate(reading: String): Boolean {
+internal fun String.isPlausibleZenzaiCandidate(
+    reading: String,
+    established: Set<String> = emptySet(),
+): Boolean {
     if (isEmpty()) return false
     val maximumLength = maxOf(48, reading.length * 3 + 24)
     if (length > maximumLength) return false
+    if (this !in established && (
+            reading.codePointCount(0, reading.length) == 1 ||
+                (any { it == '\u3099' || it == '\u309A' } &&
+                    reading.none { it == '\u3099' || it == '\u309A' })
+        )) return false
     return none { character ->
         character == '\uFFFD' ||
             character in '\uE000'..'\uF8FF' ||
-            (character.isISOControl() && character != '\n' && character != '\t')
+            character in '\u202A'..'\u202E' ||
+            character in '\u2066'..'\u2069' ||
+            character.isISOControl()
     }
 }
 

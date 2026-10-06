@@ -2,6 +2,21 @@ import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('automatic acceptance stays below a deliberate correction', () {
+    final learning = <String, int>{};
+    for (var i = 0; i < 20; i++) {
+      CandidateLearning.record(learning, reading: 'して', text: '仕手');
+    }
+    expect(learning['して\t仕手'], 3);
+    CandidateLearning.record(
+      learning,
+      reading: 'して',
+      text: 'して',
+      explicitSelection: true,
+    );
+    expect(learning['して\tして'], greaterThan(learning['して\t仕手']!));
+  });
+
   test('a correction overtakes an old repeatedly accepted choice', () {
     final learning = {'あい\t愛': 1000000, 'べつ\t別': 7};
     CandidateLearning.record(

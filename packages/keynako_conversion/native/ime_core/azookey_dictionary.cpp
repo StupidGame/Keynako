@@ -32,6 +32,7 @@ constexpr std::size_t kBeamWidth = 48;
 constexpr std::size_t kBeamTrimThreshold = 256;
 constexpr std::size_t kEntriesPerReading = 32;
 constexpr float kFallbackScore = -17.0f;
+constexpr float kDictionaryThreshold = -17.0f;
 constexpr float kDefaultConnectionScore = -25.0f;
 
 std::vector<std::uint8_t> read_bytes(const std::filesystem::path &path) {
@@ -303,8 +304,13 @@ private:
         for (std::size_t index = 0; index < count; ++index) {
             std::string word = index + 1 < fields.size() ? fields[index + 1] : "";
             if (word.empty()) word = fields.front();
+            const float score = std::min(0.0f, numeric[index].score);
+            // Match DicdataStore.shouldBeRemoved in the Swift converter.
+            // Registered entries are added separately and remain unaffected.
+            if (score - kDictionaryThreshold <
+                2.0f / static_cast<float>(utf8_to_u32(word).size())) continue;
             result.push_back({std::move(word), fields.front(), numeric[index].lcid,
-                              numeric[index].rcid, numeric[index].score});
+                              numeric[index].rcid, score});
         }
         return result;
     }

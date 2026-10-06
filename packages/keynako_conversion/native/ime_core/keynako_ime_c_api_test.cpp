@@ -28,7 +28,15 @@ int main() {
         if (value != '\0') keynako_ime_append_ascii(session, value);
     }
     keynako_ime_insert_zenzai(session, "日本語です");
-    assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
+    assert(std::strcmp(keynako_ime_selected_text(session), "日本語") == 0);
+    bool has_model_suggestion = false;
+    for (std::size_t index = 1; index < keynako_ime_candidate_count(session); ++index) {
+        if (std::strcmp(keynako_ime_candidate_at(session, index), "日本語です") == 0) {
+            has_model_suggestion = true;
+            break;
+        }
+    }
+    assert(has_model_suggestion);
     keynako_ime_learn_selected(session);
     keynako_ime_clear(session);
     for (const char value : "nihongo") {

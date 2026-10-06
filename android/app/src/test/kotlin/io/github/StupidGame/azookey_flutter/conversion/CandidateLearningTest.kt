@@ -6,6 +6,15 @@ import org.junit.Test
 
 class CandidateLearningTest {
     @Test
+    fun automaticAcceptanceRemainsWeakerThanExplicitSelection() {
+        val learning = mutableMapOf<String, Int>()
+        repeat(20) { recordCandidateLearning(learning, "して", "仕手") }
+        assertEquals(3, learning["して\t仕手"])
+        recordCandidateLearning(learning, "して", "して", explicitSelection = true)
+        assertTrue(learning.getValue("して\tして") > learning.getValue("して\t仕手"))
+    }
+
+    @Test
     fun correctionOvertakesPreviouslyFrequentChoice() {
         val learning = mutableMapOf("あい\t愛" to 1_000_000, "べつ\t別" to 7)
         recordCandidateLearning(learning, "あい", "藍", explicitSelection = true)

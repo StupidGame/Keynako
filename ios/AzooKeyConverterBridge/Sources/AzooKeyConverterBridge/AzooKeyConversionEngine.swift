@@ -175,16 +175,31 @@ public final class AzooKeyConversionEngine {
             composingText,
             options: options(for: .off, predictiveInput: false)
         )
-        let result = modelURL == nil
+        let baselineLeadingTexts = baseline.mainResults.prefix(2).map(\.text)
+        let keepShortReading = reading.count <= 2 && baselineLeadingTexts.contains(reading) &&
+            (baselineLeadingTexts.first == reading || baselineLeadingTexts.first == Self.toKatakana(reading))
+        let result = modelURL == nil || reading.count == 1 || keepShortReading
             ? baseline
             : converter.requestCandidates(
                 composingText,
                 options: options(for: zenzaiMode, predictiveInput: true)
             )
         baselineTexts = baseline.mainResults.map(\.text)
-        let mainTexts = Set(result.mainResults.map(\.text)).union(baselineTexts)
-        predictionTexts = Set(result.predictionResults.map(\.text)).subtracting(mainTexts)
-        let values = result.mainResults + baseline.mainResults + result.predictionResults
+        let established = Set(baselineTexts)
+        let modelResults = result.mainResults.filter { candidate in
+            if established.contains(candidate.text) { return true }
+            if reading.count == 1 { return false }
+            return Self.plausibleNovelText(candidate.text, reading: reading)
+        }
+        let mainTexts = Set(modelResults.map(\.text)).union(established)
+        let modelPredictions = result.predictionResults.filter {
+            established.contains($0.text) || Self.plausibleNovelText($0.text, reading: reading)
+        }
+        predictionTexts = Set(modelPredictions.map(\.text)).subtracting(mainTexts)
+        let modelMatches = modelResults.filter { established.contains($0.text) }
+        let novelModelResults = modelResults.filter { !established.contains($0.text) }
+        let values = modelMatches + Array(baseline.mainResults.prefix(3)) + novelModelResults
+            + Array(baseline.mainResults.dropFirst(3)) + modelPredictions
         lastCandidates = [:]
         var texts: [String] = []
         var seen = Set<String>()
@@ -287,6 +302,24 @@ public final class AzooKeyConversionEngine {
             }
             return Character(scalar)
         })
+    }
+
+    private static func plausibleNovelText(_ text: String, reading: String) -> Bool {
+        let inputHasKanaMark = reading.unicodeScalars.contains {
+            $0.value == 0x3099 || $0.value == 0x309A
+        }
+        return !text.unicodeScalars.contains { scalar in
+            let value = scalar.value
+            switch value {
+            case 0x00 ... 0x1F, 0x7F ... 0x9F, 0xE000 ... 0xF8FF,
+                 0x202A ... 0x202E, 0x2066 ... 0x2069, 0xFFFD:
+                return true
+            case 0x3099, 0x309A:
+                return !inputHasKanaMark
+            default:
+                return false
+            }
+        }
     }
 
     private static func toHiragana(_ value: String) -> String {
