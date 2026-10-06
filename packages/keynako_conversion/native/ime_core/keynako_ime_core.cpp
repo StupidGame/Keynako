@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <tuple>
 #include <unordered_map>
@@ -973,9 +974,10 @@ void ImeSession::rebuild_candidates() {
         std::string source;
     };
     std::vector<SharedPrediction> shared_predictions;
+    std::vector<Candidate> deferred_conversions;
     for (const auto &entry : user_dictionary_) {
         if (entry.reading == conversion_reading) {
-            append_converted(entry.value, entry.source.c_str());
+            deferred_conversions.push_back({entry.value, entry.source});
         } else if (entry.reading.size() > conversion_reading.size() &&
                    entry.reading.rfind(conversion_reading, 0) == 0) {
             shared_predictions.push_back({entry.value, entry.importance,
@@ -998,8 +1000,7 @@ void ImeSession::rebuild_candidates() {
     const auto registered_combinations = dictionary_combinations(
         conversion_reading, user_dictionary_, 32);
     for (std::size_t i = 0; i < std::min<std::size_t>(8, registered_combinations.size()); ++i) {
-        auto value = registered_combinations[i];
-        append_converted(std::move(value), "dictionary-combination");
+        deferred_conversions.push_back({registered_combinations[i], "dictionary-combination"});
     }
     std::vector<DictionaryEntry> all_combination_entries = user_dictionary_;
     all_combination_entries.insert(all_combination_entries.end(),
@@ -1012,7 +1013,7 @@ void ImeSession::rebuild_candidates() {
         for (const auto &value : values) {
             if (registered_texts.find(value) != registered_texts.end() ||
                 !learned_combination_seen.insert(value).second) continue;
-            append_converted(value, "learned-combination");
+            deferred_conversions.push_back({value, "learned-combination"});
             if (++learned_combination_count >= 8) break;
         }
     };
@@ -1022,23 +1023,31 @@ void ImeSession::rebuild_candidates() {
         add_learned_combinations(dictionary_combinations(
             conversion_reading, all_combination_entries, 32));
     }
-    for (const auto &word : learned_exact) {
-        append_unique(candidates_, seen, word, "learned");
-    }
     for (const auto &entry : learned_predictions) {
         append_unique(prefix_predictions, prediction_seen, entry.text, "learned-prediction");
     }
     if (bundled_dictionary_ && !conversion_reading.empty()) {
         std::vector<AzooKeyAdditionalEntry> additional_entries;
         for (const auto &entry : user_dictionary_) {
-            if (entry.has_word_weight) {
-                additional_entries.push_back({entry.value, entry.reading, entry.lcid,
-                                              entry.rcid, entry.word_weight});
-            } else if (entry.source == "personal" && !entry.reading.empty() &&
-                       conversion_reading.find(entry.reading) != std::string::npos) {
-                additional_entries.push_back({entry.value, entry.reading, 1285, 1285,
-                                              static_cast<float>((entry.importance - 3) * 2 - 9)});
-            }
+            if (entry.reading.empty() || entry.value.empty() ||
+                (conversion_reading.find(entry.reading) == std::string::npos &&
+                 entry.reading.rfind(conversion_reading, 0) != 0)) continue;
+            const auto weight = entry.has_word_weight ? entry.word_weight :
+                static_cast<float>((entry.importance - 3) * 2 - 9);
+            additional_entries.push_back({entry.value, entry.reading, entry.lcid,
+                                          entry.rcid, weight});
+        }
+        for (const auto &entry : learned_combination_entries) {
+            const auto found = learning_.find(entry.reading);
+            if (found == learning_.end()) continue;
+            const auto score = found->second.find(entry.value);
+            if (score == found->second.end()) continue;
+            const auto count = std::clamp(score->second * 8, 0, 255);
+            const auto fraction = 1.0 - static_cast<double>(count) / 255.0;
+            const auto length = std::max<std::size_t>(1, utf8_character_count(entry.reading));
+            const auto weight = static_cast<float>(-1.0 - 4.0 / length -
+                                                   3.0 * std::pow(fraction, 3));
+            additional_entries.push_back({entry.value, entry.reading, 1285, 1285, weight});
         }
         for (auto &value : bundled_dictionary_->candidates(
                  conversion_reading, 48, additional_entries)) {
@@ -1048,6 +1057,12 @@ void ImeSession::rebuild_candidates() {
                  conversion_reading, 32, additional_entries)) {
             append_prediction(std::move(value), "azookey-prediction");
         }
+    }
+    for (const auto &entry : deferred_conversions) {
+        append_converted(entry.text, entry.source.c_str());
+    }
+    for (const auto &word : learned_exact) {
+        append_unique(candidates_, seen, word, "learned");
     }
     const auto dictionary = kDictionary.find(conversion_reading);
     if (dictionary != kDictionary.end()) {

@@ -27,8 +27,7 @@ internal data class AzooKeyHotfixDictionaryEntry(
 
 /**
  * Android cannot link the Swift-only AzooKeyKanaKanjiConverter package. This
- * class reads the same LOUDS dictionary and applies the converter's word and
- * connection scores with an N-best beam search.
+ * class reads the same LOUDS dictionary and searches scored paths by right CID.
  */
 internal class AzooKeyDictionary(
     private val source: DictionaryAssetSource,
@@ -38,6 +37,7 @@ internal class AzooKeyDictionary(
         val ruby: String,
         val lcid: Int,
         val rcid: Int,
+        val mid: Int,
         val score: Float,
     )
 
@@ -45,6 +45,7 @@ internal class AzooKeyDictionary(
         val text: String,
         val score: Float,
         val lastRcid: Int,
+        val clauseMids: List<Int>,
     )
 
     private data class ConnectionLine(
@@ -60,6 +61,12 @@ internal class AzooKeyDictionary(
     }
     private val shards = mutableMapOf<Char, LoudsShard?>()
     private val connectionLines = mutableMapOf<Int, ConnectionLine>()
+    private val meaningScores: FloatArray by lazy {
+        val bytes = runCatching { source.read("mm.binary") }.getOrDefault(byteArrayOf())
+        if (bytes.size < MID_COUNT * MID_COUNT * Float.SIZE_BYTES) return@lazy floatArrayOf()
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        FloatArray(MID_COUNT * MID_COUNT) { buffer.float }
+    }
     private data class ConversionCacheKey(
         val reading: String,
         val limit: Int,
@@ -88,6 +95,7 @@ internal class AzooKeyDictionary(
                 ruby = it.ruby.toKatakana(),
                 lcid = it.lcid,
                 rcid = it.rcid,
+                mid = it.mid,
                 score = it.wordWeight.toFloat(),
             )
         }
@@ -122,13 +130,14 @@ internal class AzooKeyDictionary(
         limit: Int,
         additionalEntries: List<Entry>,
     ): List<String> {
-        val beams = Array(reading.length + 1) { mutableListOf<Path>() }
-        beams[0].add(Path("", 0f, BOS_CID))
+        val lattice = Array(reading.length + 1) { mutableMapOf<Int, MutableList<Path>>() }
+        lattice[0][BOS_CID] = mutableListOf(Path("", 0f, BOS_CID, emptyList()))
 
         for (start in reading.indices) {
-            val previous = beams[start]
-                .sortedByDescending(Path::score)
-                .take(BEAM_WIDTH)
+            val previous = lattice[start].values.flatMap { context ->
+                if (context.size > PATHS_PER_CONTEXT) trimContext(context)
+                context
+            }
             if (previous.isEmpty()) continue
 
             val shard = shard(reading[start])
@@ -145,31 +154,23 @@ internal class AzooKeyDictionary(
                     matchesByEnd.getOrPut(end) { mutableListOf() }.add(entry)
                 }
             }
-            var hasSingleCharacterEntry = false
             for ((end, entries) in matchesByEnd) {
-                if (end == start + 1 && entries.isNotEmpty()) hasSingleCharacterEntry = true
                 appendPaths(
-                    beams[end],
+                    lattice[end],
                     previous,
-                    entries.sortedByDescending(Entry::score).take(ENTRIES_PER_READING),
+                    entries.sortedByDescending(Entry::score),
                 )
             }
-
-            if (!hasSingleCharacterEntry) {
-                val fallback = Entry(
-                    word = reading[start].toString().toHiragana(),
-                    ruby = reading[start].toString(),
-                    lcid = GENERAL_NOUN_CID,
-                    rcid = GENERAL_NOUN_CID,
-                    score = FALLBACK_SCORE,
-                )
-                appendPaths(beams[start + 1], previous, listOf(fallback))
-            }
+            val ruby = reading[start].toString()
+            appendPaths(lattice[start + 1], previous, listOf(
+                Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
+                Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
+            ))
         }
 
         val result = LinkedHashSet<String>()
-        for (path in beams.last().sortedByDescending {
-            it.score + connectionScore(it.lastRcid, EOS_CID)
+        for (path in lattice.last().values.flatten().sortedByDescending {
+            it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
         }) {
             if (path.text.isNotBlank()) result.add(path.text)
             if (result.size >= limit) break
@@ -178,29 +179,75 @@ internal class AzooKeyDictionary(
     }
 
     private fun appendPaths(
-        destination: MutableList<Path>,
+        destination: MutableMap<Int, MutableList<Path>>,
         previous: List<Path>,
         entries: List<Entry>,
     ) {
         for (entry in entries) {
+            val context = destination.getOrPut(entry.rcid) { mutableListOf() }
             for (path in previous) {
-                destination.add(
+                val mid = if (contributesMid(entry)) entry.mid else UNKNOWN_MID
+                val clauseMids = when {
+                    path.clauseMids.isEmpty() || beginsClause(path.lastRcid, entry.lcid) ->
+                        path.clauseMids + mid
+                    (path.clauseMids.last() == UNKNOWN_MID && entry.mid != UNKNOWN_MID) ||
+                        contributesMid(entry) -> path.clauseMids.dropLast(1) + entry.mid
+                    else -> path.clauseMids
+                }
+                context.add(
                     Path(
                         text = path.text + entry.word,
                         score = path.score + entry.score + connectionScore(path.lastRcid, entry.lcid),
                         lastRcid = entry.rcid,
+                        clauseMids = clauseMids,
                     ),
                 )
             }
+            if (context.size > CONTEXT_TRIM_THRESHOLD) trimContext(context)
         }
-        if (destination.size > BEAM_TRIM_THRESHOLD) {
-            val trimmed = destination
-                .sortedByDescending(Path::score)
-                .distinctBy { it.text to it.lastRcid }
-                .take(BEAM_WIDTH)
-            destination.clear()
-            destination.addAll(trimmed)
+    }
+
+    private fun trimContext(context: MutableList<Path>) {
+        val best = context.sortedByDescending(Path::score).take(PATHS_PER_CONTEXT)
+        context.clear()
+        context.addAll(best)
+    }
+
+    private fun semanticScore(clauseMids: List<Int>): Float {
+        if (clauseMids.size < 2) return 0f
+        val scores = meaningScores
+        if (scores.isEmpty()) return 0f
+        var previous = UNKNOWN_MID
+        var total = 0f
+        for (mid in clauseMids) {
+            if (previous in 0 until MID_COUNT && mid in 0 until MID_COUNT &&
+                previous != UNKNOWN_MID && mid != UNKNOWN_MID) {
+                total += scores[previous * MID_COUNT + mid]
+            }
+            previous = mid
         }
+        return total
+    }
+
+    private fun beginsClause(former: Int, latter: Int): Boolean {
+        val latterType = wordType(latter)
+        if (latterType == 3 || wordType(former) == 3) return false
+        return latterType in 0..1 && wordType(former) != 0
+    }
+
+    private fun contributesMid(entry: Entry): Boolean {
+        fun special(cid: Int) = cid in 895..1280 || cid in 1297..1305
+        return special(entry.lcid) || special(entry.rcid) ||
+            wordType(entry.lcid) == 1 || wordType(entry.rcid) == 1
+    }
+
+    private fun wordType(cid: Int): Int = when {
+        cid == BOS_CID || cid == EOS_CID -> 3
+        cid == 1315 || cid == 6 || cid in 557..560 -> 0
+        cid in 561..867 || cid in 1283..1296 || cid in 1306..1309 ||
+            cid in 11..52 || cid in 555..556 || cid in 1281..1282 ||
+            cid == 1314 || cid in 1..5 || cid == 9 -> 1
+        else -> 2
     }
 
     private fun predict(
@@ -380,14 +427,14 @@ internal class AzooKeyDictionary(
             val payload = ByteBuffer.wrap(bytes, start, end - start).order(ByteOrder.LITTLE_ENDIAN)
             val count = payload.short.toInt() and 0xffff
             if (count == 0 || payload.remaining() < count * 10) return emptyList()
-            data class Numeric(val lcid: Int, val rcid: Int, val score: Float)
+            data class Numeric(val lcid: Int, val rcid: Int, val mid: Int, val score: Float)
             val numeric = ArrayList<Numeric>(count)
             repeat(count) {
                 val lcid = payload.short.toInt() and 0xffff
                 val rcid = payload.short.toInt() and 0xffff
-                payload.short // meaning id; word/connection scoring does not need it here.
+                val mid = payload.short.toInt() and 0xffff
                 val score = payload.float
-                numeric.add(Numeric(lcid, rcid, score))
+                numeric.add(Numeric(lcid, rcid, mid, score))
             }
 
             val textStart = payload.position()
@@ -402,7 +449,7 @@ internal class AzooKeyDictionary(
                 if (score - DICTIONARY_THRESHOLD < 2f / word.codePointCount(0, word.length)) {
                     null
                 } else {
-                    Entry(word, ruby, value.lcid, value.rcid, score)
+                    Entry(word, ruby, value.lcid, value.rcid, value.mid, score)
                 }
             }
         }
@@ -424,17 +471,18 @@ internal class AzooKeyDictionary(
         private const val ROOT_NODE = 1
         private const val BOS_CID = 0
         private const val EOS_CID = 1316
-        private const val GENERAL_NOUN_CID = 1285
+        private const val PROPER_NOUN_CID = 1288
+        private const val GENERAL_MID = 501
+        private const val UNKNOWN_MID = 500
+        private const val MID_COUNT = 502
         private const val CID_COUNT = 1319
         private const val SHARD_SHIFT = 11
         private const val LOCAL_MASK = (1 shl SHARD_SHIFT) - 1
         private const val MAX_WORD_LENGTH = 20
         private const val MAX_PREDICTION_DEPTH = 8
         private const val MAX_PREDICTION_NODES = 192
-        private const val BEAM_WIDTH = 48
-        private const val BEAM_TRIM_THRESHOLD = 256
-        private const val ENTRIES_PER_READING = 32
-        private const val FALLBACK_SCORE = -17f
+        private const val PATHS_PER_CONTEXT = 20
+        private const val CONTEXT_TRIM_THRESHOLD = 64
         private const val DICTIONARY_THRESHOLD = -17f
         private const val DEFAULT_CONNECTION_SCORE = -25f
 

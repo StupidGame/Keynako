@@ -151,44 +151,35 @@ internal fun rerankedJapaneseCandidates(
     partialCandidates: Set<String> = emptySet(),
     preferredZenzaiCandidate: String? = null,
 ): List<String> {
-    val learned = exactLearnedJapaneseCandidates(reading, learning)
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
     val predictionTexts = predictionReadings.keys + learnedPrefixes.map { it.text }
-    val personalized = prioritizeLearnedJapaneseCandidates(reading, ranked, learning)
-    val liveCandidate = personalized.firstOrNull {
-        it !in learned && it !in predictionTexts &&
-            it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
-    }
-    val prominentPredictions = (
-        baseCandidates.filter { it in predictionTexts } + learnedPrefixes.map { it.text }
-    ).distinct().take(4)
-    val pinned = pinJapaneseKanaCandidates(
-        reading = reading,
-        ranked = personalized,
-        liveCandidate = liveCandidate,
-        learnedCandidates = learned,
-        prominentPredictions = prominentPredictions,
-    )
-    val ordered = prioritizeJapaneseCandidateGroups(
-        pinned, dictionaryCandidates,
-        learningCandidates + learned + learnedPrefixes.map { it.text },
-        predictionTexts,
-        setOf(reading, hiraganaToKatakana(katakanaToHiragana(reading))),
-        partialCandidates,
-        preferredZenzaiCandidate?.takeIf { it in baseCandidates &&
-            it !in predictionTexts && it !in partialCandidates &&
-            it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
-        } ?: ranked.firstOrNull { it in baseCandidates && it !in dictionaryCandidates &&
-            it !in learningCandidates && it !in learned &&
-            it !in predictionTexts && it !in partialCandidates &&
-            it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
-        },
-    )
-    val exactRegistration = dictionaryCandidates.any {
-        it !in predictionTexts && it !in partialCandidates
-    } || learnedCandidates(learning).any {
-        it.reading == katakanaToHiragana(reading) && it.score >= 4
-    }
+    val katakana = hiraganaToKatakana(katakanaToHiragana(reading))
+    val fallback = setOf(reading, katakana)
+    val baseSet = baseCandidates.toSet()
+    fun complete(value: String) = value.isNotBlank() && value !in predictionTexts &&
+        value !in partialCandidates && value !in fallback
+    // Zenzai's order applies to candidates grounded in the dictionary lattice.
+    // A generated word joins after the first few complete paths.
+    val established = ranked.filter { complete(it) && it in baseSet }
+    val novel = ranked.filter { complete(it) && it !in baseSet }
+    val preferred = preferredZenzaiCandidate?.takeIf { it in established }
+    val exact = (listOfNotNull(preferred) + established +
+        dictionaryCandidates.filter(::complete) + learningCandidates.filter(::complete) +
+        baseCandidates.filter(::complete)).distinct()
+    val full = (exact.take(3) + novel + exact.drop(3)).distinct()
+    val prominentPredictions = (baseCandidates.filter { it in predictionTexts } +
+        learnedPrefixes.map { it.text }).distinct().take(4)
+    val otherPredictions = (ranked + dictionaryCandidates + learningCandidates + baseCandidates)
+        .filter { it in predictionTexts && it !in prominentPredictions }.distinct()
+    val partial = (ranked + dictionaryCandidates + learningCandidates + baseCandidates)
+        .filter { it in partialCandidates && it !in predictionTexts }.distinct()
+    val ordered = (full.take(1) + prominentPredictions + full.drop(1) +
+        otherPredictions + partial + baseCandidates.filter { it in fallback } +
+        ranked.filter { it in fallback }).filter(String::isNotBlank).distinct()
+    val exactRegistration = dictionaryCandidates.any { complete(it) } ||
+        learnedCandidates(learning).any {
+            it.reading == katakanaToHiragana(reading) && it.score >= 4
+        }
     if (baseCandidates.firstOrNull() == reading && reading.length <= 2 &&
         !exactRegistration && prominentPredictions.isEmpty()) {
         return listOf(reading) + ordered.filter { it != reading }

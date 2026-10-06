@@ -2759,113 +2759,31 @@ final class KeyboardViewController: UIInputViewController {
         candidatePredictionReadings = predictionReadings.filter { !exactTexts.contains($0.key) }
         unknownPredictionTexts = enginePredictionTexts.subtracting(exactTexts)
             .subtracting(Set(candidatePredictionReadings.keys))
-        var scores: [String: Int] = [:]
-        for entry in exactLearning {
-            scores[entry.text] = max(scores[entry.text] ?? 0, entry.score)
-        }
-        result.append(contentsOf: exactLearning.map(\.text))
-        result = result.enumerated().sorted {
-            let left = scores[$0.element] ?? 0
-            let right = scores[$1.element] ?? 0
-            return left == right ? $0.offset < $1.offset : left > right
-        }.map(\.element)
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
-        let learnedTexts = exactLearning.map(\.text)
-        let stableEngineCandidate = conversionEngine?.baselineTexts.first {
-            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
-                && !knownPrefixTexts.contains($0)
-                && !blockedEmoji.contains(Self.normalizedEmoji($0))
-                && $0 != hiragana && $0 != fullKatakana
-        }
-        let engineCandidate = stableEngineCandidate ?? engineCandidates.first {
-            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
-                && !knownPrefixTexts.contains($0)
-                && $0 != hiragana && $0 != fullKatakana
-        }
-        let rankedRegistered = registeredPrefixPredictions.sorted {
-            let leftRemaining = max(0, $0.ruby.count - reading.count)
-            let rightRemaining = max(0, $1.ruby.count - reading.count)
-            let leftScore = min(5, max(1, $0.importance)) * 20 - min(1000, leftRemaining) * 4
-            let rightScore = min(5, max(1, $1.importance)) * 20 - min(1000, rightRemaining) * 4
-            if leftScore != rightScore { return leftScore > rightScore }
-            return leftRemaining < rightRemaining
-        }
-        var prioritized: [String] = []
-        if !registeredPrefixPredictions.isEmpty || !learnedPrefixes.isEmpty {
-            prioritized.append(
-                learnedTexts.first
-                    ?? exactUserTexts.first
-                    ?? engineCandidate
-                    ?? combinedTexts.first
-                    ?? Self.systemDictionary[reading]?.first
-                    ?? hiragana
-            )
-            let registeredTexts = rankedRegistered.map(\.text).filter { !completeTexts.contains($0) }
-            let learnedPrefixTexts = learnedPrefixes.map(\.text).filter {
-                !completeTexts.contains($0) && !learnedTexts.contains($0)
-            }
-            var visiblePrefixes = Set<String>()
-            prioritized.append(contentsOf: (
-                Array(registeredTexts.prefix(2)) + Array(learnedPrefixTexts.prefix(2)) +
-                Array(registeredTexts.dropFirst(2)) + Array(learnedPrefixTexts.dropFirst(2))
-            ).filter { visiblePrefixes.insert($0).inserted }.prefix(4))
-        }
-        prioritized.append(contentsOf: learnedTexts)
-        prioritized.append(contentsOf: exactUserTexts)
-        if let engineCandidate { prioritized.append(engineCandidate) }
-        prioritized.append(contentsOf: combinedTexts)
-        prioritized.append(contentsOf: Self.systemDictionary[reading] ?? [])
-        prioritized.append(contentsOf: [hiragana, fullKatakana])
-        prioritized.append(contentsOf: result)
-        let dictionaryPriority = exactUserTexts + conversionDictionaryEntries.filter {
-            katakanaToHiragana($0.ruby) == reading
-        }.map(\.word) + combinedTexts
-        let learnedPriority = exactLearning.map(\.text) + learnedCombinationTexts
         let predictedTexts = Set(candidatePredictionReadings.keys).union(unknownPredictionTexts)
-        let fallbackTexts = Set([composing, hiragana, fullKatakana, rawRoman])
         let partialTexts = Set(conversionDictionaryEntries.compactMap { entry -> String? in
             let ruby = katakanaToHiragana(entry.ruby)
             guard !ruby.isEmpty, reading.count > ruby.count, reading.hasPrefix(ruby) else { return nil }
             return entry.word + String(reading.dropFirst(ruby.count))
         })
-        let completeCandidates = prioritized.filter {
-            !predictedTexts.contains($0) && !fallbackTexts.contains($0)
+        // The official converter already scores registered words, grammar and
+        // learned paths in its lattice. Preserve its result order here.
+        let officialComplete = engineCandidates.filter {
+            !predictedTexts.contains($0) && !knownPrefixTexts.contains($0)
                 && !partialTexts.contains($0)
         }
-        let zenzaiPriority = zenzai == nil ? [] : Array(engineCandidates.filter {
-            completeCandidates.contains($0) && !knownPrefixTexts.contains($0)
-                && (conversionEngine?.baselineTexts.contains($0) == true)
-        }.prefix(1))
-        let exactDictionaryPriority = dictionaryPriority.filter {
-            !predictedTexts.contains($0) && (!partialTexts.contains($0) || exactUserTexts.contains($0))
+        let localComplete = result.filter {
+            !predictedTexts.contains($0) && !knownPrefixTexts.contains($0)
+                && !partialTexts.contains($0)
         }
-        let exactLearnedPriority = learnedPriority.filter {
-            !predictedTexts.contains($0) && !partialTexts.contains($0)
-        }
-        let otherCompleteCandidates = completeCandidates.filter {
-            !dictionaryPriority.contains($0) && !learnedPriority.contains($0)
-        }
-        let dictionaryPrefixTexts = Set(rankedRegistered.map(\.text)).union(partialTexts)
-        let learnedPrefixTexts = Set(learnedPrefixes.map(\.text))
-        let otherPrefixCandidates = prioritized.filter {
-            predictedTexts.contains($0) && !dictionaryPrefixTexts.contains($0)
-                && !learnedPrefixTexts.contains($0)
-        }
-        let dictionaryPrefixCandidates = prioritized.filter { partialTexts.contains($0) }
-            + rankedRegistered.map(\.text)
-            + prioritized.filter {
-                predictedTexts.contains($0) && dictionaryPrefixTexts.contains($0)
-            }
-        let learnedPrefixCandidates = learnedPrefixes.map(\.text)
-            + prioritized.filter {
-                predictedTexts.contains($0) && learnedPrefixTexts.contains($0)
-            }
+        let prefixCandidates = registeredPrefixPredictions.map(\.text)
+            + learnedPrefixes.map(\.text) + prefixPredictions
+            + result.filter { partialTexts.contains($0) }
         var seen = Set<String>()
-        let ordered = (zenzaiPriority + otherCompleteCandidates + exactDictionaryPriority
-            + exactLearnedPriority + otherPrefixCandidates + dictionaryPrefixCandidates
-            + learnedPrefixCandidates
-            + prioritized.filter { fallbackTexts.contains($0) }).filter {
+        let ordered = (officialComplete + exactUserTexts + exactLearning.map(\.text)
+            + combinedTexts + learnedCombinationTexts + localComplete
+            + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter {
             !$0.isEmpty && seen.insert($0).inserted
         }
         let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
@@ -2874,13 +2792,9 @@ final class KeyboardViewController: UIInputViewController {
         let baselineLeadingTexts = conversionEngine.map {
             Array($0.baselineTexts.prefix(2))
         } ?? []
-        let preferRaw = reading.count <= 2 && baselineLeadingTexts.contains(hiragana) &&
+        let shortRawReading = reading.count <= 2 && baselineLeadingTexts.contains(hiragana) &&
             (baselineLeadingTexts.first == hiragana || baselineLeadingTexts.first == fullKatakana)
-        let singleKana = reading.count == 1 && reading.unicodeScalars.first.map {
-            (0x3041 ... 0x3096).contains($0.value)
-        } == true
-        if !hasExactRegistration, ordered.contains(hiragana),
-           (preferRaw || singleKana) {
+        if !hasExactRegistration, shortRawReading, ordered.contains(hiragana) {
             return [hiragana] + ordered.filter { $0 != hiragana }
         }
         return ordered

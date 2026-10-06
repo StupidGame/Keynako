@@ -159,6 +159,18 @@ void main() {
     );
   });
 
+  test('keeps learned and registered paths through a long sentence', () {
+    final candidates = converter.candidates(
+      input: 'わたしはねこときょうのにほんご',
+      options: const ConversionOptions(
+        userDictionary: [ConversionDictionaryEntry(reading: 'ねこ', value: '猫')],
+        learning: {'わたし\t私': 8},
+      ),
+    );
+    expect(candidates.map((candidate) => candidate.text),
+        contains('私は猫と今日の日本語'));
+  });
+
   test('keeps dictionary combinations before mixed learned combinations', () {
     final candidates = converter.candidates(
       input: 'まきなとれいな',

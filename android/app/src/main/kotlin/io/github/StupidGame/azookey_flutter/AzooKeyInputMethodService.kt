@@ -54,7 +54,6 @@ import io.github.StupidGame.azookey_flutter.conversion.StableClauseCompletion
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
-import io.github.StupidGame.azookey_flutter.conversion.bestLiveJapaneseConversion
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.dictionaryCombinationCandidates
@@ -67,12 +66,9 @@ import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
-import io.github.StupidGame.azookey_flutter.conversion.pinJapaneseKanaCandidates
 import io.github.StupidGame.azookey_flutter.conversion.preferSingleKanaReading
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
-import io.github.StupidGame.azookey_flutter.conversion.prioritizeJapaneseCandidateGroups
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
-import io.github.StupidGame.azookey_flutter.conversion.rankJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
@@ -2858,11 +2854,27 @@ class AzooKeyInputMethodService : InputMethodService() {
                 katakanaToHiragana(it.ruby) == reading
             }.map { it.word } + combinedWords + registeredPredictions.map(ReadingPrediction::text)
         ).filter(String::isNotBlank).distinct()
+        val learning = learningScores()
+        val learnedDictionaryEntries = learnedCandidates(learning).filter {
+            reading.contains(it.reading) || it.reading.startsWith(reading)
+        }.map { entry ->
+            val count = (entry.score * 8).coerceIn(0, 255)
+            val remaining = 1.0 - count / 255.0
+            AzooKeyHotfixDictionaryEntry(
+                word = entry.text,
+                ruby = entry.reading,
+                wordWeight = -1.0 - 4.0 / entry.reading.length.coerceAtLeast(1) -
+                    3.0 * remaining * remaining * remaining,
+                lcid = 1285,
+                rcid = 1285,
+                mid = 501,
+            )
+        }
         val officialCandidates = runCatching {
             azooKeyDictionary.candidates(
                 reading,
                 predictionLimit,
-                additionalEntries = hotfixDictionaryEntries + personalEntries,
+                additionalEntries = hotfixDictionaryEntries + personalEntries + learnedDictionaryEntries,
                 additionalDictionaryVersion = hotfixDictionaryVersion,
             )
         }.onFailure {
@@ -2870,7 +2882,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         }.getOrElse {
             DictionaryCandidates(emptyList(), emptyList())
         }
-        val explicitWords = (personalEntries + hotfixDictionaryEntries).mapTo(mutableSetOf()) { it.word }
+        val explicitWords = (personalEntries + hotfixDictionaryEntries + learnedDictionaryEntries)
+            .mapTo(mutableSetOf()) { it.word }
         val allowedOfficialConversions = officialCandidates.conversions.filter {
             it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
         }
@@ -2881,7 +2894,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (allowedOfficialConversions.isEmpty()) {
             systemDictionary[reading]?.let(values::addAll)
         }
-        val completeConversions = values.toSet()
         values.add(reading)
         if (predictionLimit > 0) {
             for (prediction in prefixPredictionEntries(
@@ -2924,7 +2936,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         if (settings.optBoolean("kaomoji_dictionary_enabled", false)) kaomojiDictionary[reading]?.let(values::addAll)
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
-        val learning = learningScores()
         val learned = exactLearnedJapaneseCandidates(reading, learning)
         val learnedCombinationEntries = learnedCandidates(learning).filter {
             reading.contains(it.reading)
@@ -2948,32 +2959,24 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         candidateLearningPriority = learned + learnedCombinations + learnedPrefixes.map { it.text }
         candidatePredictionReadings = predictionReadings.filterKeys { it !in exactTexts }
-        val ranked = rankJapaneseCandidates(
-            reading = reading,
-            conversions = values.toList(),
-            predictions = predictedValues.toList(),
-            learning = learning,
-            predictionLimit = predictionLimit,
-        )
-        val pinned = pinJapaneseKanaCandidates(
-            reading = reading,
-            ranked = ranked,
-            liveCandidate = bestLiveJapaneseConversion(reading, completeConversions, ranked),
-            learnedCandidates = learned,
-            prominentPredictions = (
-                registeredPredictions.take(2).map(ReadingPrediction::text) +
-                    learnedPrefixes.take(2).map { it.text } +
-                    registeredPredictions.drop(2).map(ReadingPrediction::text) +
-                    learnedPrefixes.drop(2).map { it.text }
-            ).distinct().take(4),
-        )
-        val ordered = prioritizeJapaneseCandidateGroups(
-            pinned, candidateDictionaryPriority,
-            candidateLearningPriority,
-            candidatePredictionReadings.keys,
-            setOf(reading, katakana, katakanaToHalfWidth(katakana), rawRoman, asciiToFullWidth(rawRoman)),
-            candidatePartialTexts,
-        )
+        // Preserve the LOUDS lattice ranking through the candidate list.
+        // The converter's first five paths correspond to its full-input group;
+        // registered, learned and predictive results fill the remaining groups.
+        val officialComplete = allowedOfficialConversions.filter { it !in candidatePartialTexts }
+        val fallback = setOf(reading, katakana, katakanaToHalfWidth(katakana),
+            rawRoman, asciiToFullWidth(rawRoman))
+        val localComplete = (registeredExact + combinedWords + learnedCombinations +
+            learned + specialCandidates + values.filter {
+                it !in fallback && it !in candidatePartialTexts && it !in allowedOfficialConversions
+            }).filter { it.isNotBlank() && it !in candidatePredictionReadings }
+        val completions = (registeredPredictions.map(ReadingPrediction::text) +
+            learnedPrefixes.map { it.text } + predictedValues).filter {
+            it.isNotBlank() && it !in officialComplete
+        }.distinct().take(predictionLimit)
+        val ordered = (officialComplete.take(5) + localComplete + completions.take(3) +
+            officialComplete.drop(5) + completions.drop(3) +
+            values.filter { it in candidatePartialTexts } + values.filter { it in fallback })
+            .filter(String::isNotBlank).distinct()
         val strongLearning = learnedCandidates(learning).any {
             it.reading == reading && it.score >= 4
         }

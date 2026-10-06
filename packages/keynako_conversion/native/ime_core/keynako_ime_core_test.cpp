@@ -387,6 +387,11 @@ int main() {
     assert(!ordinary_conversion.empty() && ordinary_conversion.front() == "変換");
     assert(std::find(ordinary_conversion.begin(), ordinary_conversion.end(), "返翰") ==
         ordinary_conversion.end());
+    // Same long input and leading result as azooKey's ConverterTests.swift.
+    const auto reference_long_sentence = dictionary.candidates(
+        "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた", 5);
+    assert(!reference_long_sentence.empty() && reference_long_sentence.front() ==
+        "幼少期からテニス水泳野球少林寺拳法など様々なスポーツを経験しながら育ち小学校時代はロサンゼルス近郊に滞在しておりゴルフやテニスを習っていた");
     ImeSession short_reading;
     assert(short_reading.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("te")) short_reading.append_ascii(value);

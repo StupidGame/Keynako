@@ -21,19 +21,20 @@ namespace {
 constexpr int kRootNode = 1;
 constexpr int kBosCid = 0;
 constexpr int kEosCid = 1316;
-constexpr int kGeneralNounCid = 1285;
 constexpr int kCidCount = 1319;
 constexpr int kShardShift = 11;
 constexpr int kLocalMask = (1 << kShardShift) - 1;
 constexpr std::size_t kMaxWordLength = 20;
 constexpr std::size_t kMaxPredictionDepth = 8;
 constexpr std::size_t kMaxPredictionNodes = 192;
-constexpr std::size_t kBeamWidth = 48;
-constexpr std::size_t kBeamTrimThreshold = 256;
-constexpr std::size_t kEntriesPerReading = 32;
-constexpr float kFallbackScore = -17.0f;
+constexpr std::size_t kPathsPerContext = 20;
+constexpr std::size_t kContextTrimThreshold = 64;
 constexpr float kDictionaryThreshold = -17.0f;
 constexpr float kDefaultConnectionScore = -25.0f;
+constexpr int kProperNounCid = 1288;
+constexpr int kGeneralMid = 501;
+constexpr int kUnknownMid = 500;
+constexpr int kMidCount = 502;
 
 std::vector<std::uint8_t> read_bytes(const std::filesystem::path &path) {
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
@@ -157,6 +158,7 @@ struct Entry {
     std::string ruby;
     int lcid = 0;
     int rcid = 0;
+    int mid = kUnknownMid;
     float score = 0;
 };
 
@@ -164,12 +166,37 @@ struct BeamPath {
     std::string text;
     float score = 0;
     int last_rcid = 0;
+    std::vector<int> clause_mids;
 };
 
 struct ConnectionLine {
     float default_score = kDefaultConnectionScore;
     std::unordered_map<int, float> overrides;
 };
+
+int word_type(int cid) {
+    if (cid == kBosCid || cid == kEosCid) return 3;
+    if (cid == 1315 || cid == 6 || (cid >= 557 && cid <= 560)) return 0;
+    if ((cid >= 561 && cid < 868) || (cid >= 1283 && cid < 1297) ||
+        (cid >= 1306 && cid < 1310) || (cid >= 11 && cid < 53) ||
+        (cid >= 555 && cid < 557) || (cid >= 1281 && cid < 1283) ||
+        cid == 1314 || (cid >= 1 && cid <= 5) || cid == 9) return 1;
+    return 2;
+}
+
+bool begins_clause(int former, int latter) {
+    const int latter_type = word_type(latter);
+    if (latter_type == 3 || word_type(former) == 3) return false;
+    return (latter_type == 0 || latter_type == 1) && word_type(former) != 0;
+}
+
+bool contributes_mid(const Entry &entry) {
+    const auto special = [](int cid) {
+        return (cid >= 895 && cid <= 1280) || (cid >= 1297 && cid <= 1305);
+    };
+    return special(entry.lcid) || special(entry.rcid) ||
+        word_type(entry.lcid) == 1 || word_type(entry.rcid) == 1;
+}
 
 std::vector<std::string> split_tab_fields(const std::vector<std::uint8_t> &bytes,
                                           std::size_t start, std::size_t end) {
@@ -289,12 +316,12 @@ private:
         const auto count = read_u16(bytes, start);
         std::size_t position = start + 2;
         if (count == 0 || position + static_cast<std::size_t>(count) * 10 > end) return {};
-        struct Numeric { int lcid; int rcid; float score; };
+        struct Numeric { int lcid; int rcid; int mid; float score; };
         std::vector<Numeric> numeric;
         numeric.reserve(count);
         for (std::size_t index = 0; index < count; ++index) {
             numeric.push_back({read_u16(bytes, position), read_u16(bytes, position + 2),
-                               read_float(bytes, position + 6)});
+                               read_u16(bytes, position + 4), read_float(bytes, position + 6)});
             position += 10;
         }
         const auto fields = split_tab_fields(bytes, position, end);
@@ -310,7 +337,7 @@ private:
             if (score - kDictionaryThreshold <
                 2.0f / static_cast<float>(utf8_to_u32(word).size())) continue;
             result.push_back({std::move(word), fields.front(), numeric[index].lcid,
-                              numeric[index].rcid, score});
+                              numeric[index].rcid, numeric[index].mid, score});
         }
         return result;
     }
@@ -357,6 +384,7 @@ struct AzooKeyDictionary::Impl {
             character_ids[characters[index]] = static_cast<int>(index);
         }
         ready = !character_ids.empty();
+        mm_bytes = read_bytes(root / "mm.binary");
     }
 
     LoudsShard *shard(char32_t first) {
@@ -398,27 +426,44 @@ struct AzooKeyDictionary::Impl {
             : override->second;
     }
 
-    void append_paths(std::vector<BeamPath> &destination,
+    void append_paths(std::unordered_map<int, std::vector<BeamPath>> &destination,
                       const std::vector<BeamPath> &previous,
                       const std::vector<Entry> &entries) {
         for (const auto &entry : entries) {
+            auto &context_paths = destination[entry.rcid];
             for (const auto &path : previous) {
-                destination.push_back({path.text + entry.word,
+                BeamPath next{path.text + entry.word,
                     path.score + entry.score + connection_score(path.last_rcid, entry.lcid),
-                    entry.rcid});
+                    entry.rcid, path.clause_mids};
+                if (next.clause_mids.empty() || begins_clause(path.last_rcid, entry.lcid)) {
+                    next.clause_mids.push_back(contributes_mid(entry) ? entry.mid : kUnknownMid);
+                } else if ((next.clause_mids.back() == kUnknownMid && entry.mid != kUnknownMid) ||
+                           contributes_mid(entry)) {
+                    next.clause_mids.back() = entry.mid;
+                }
+                context_paths.push_back(std::move(next));
             }
+            if (context_paths.size() > kContextTrimThreshold) trim_context(context_paths);
         }
-        if (destination.size() <= kBeamTrimThreshold) return;
-        std::stable_sort(destination.begin(), destination.end(),
+    }
+
+    static void trim_context(std::vector<BeamPath> &paths) {
+        std::stable_sort(paths.begin(), paths.end(),
             [](const BeamPath &left, const BeamPath &right) { return left.score > right.score; });
-        std::unordered_set<std::string> seen;
-        std::vector<BeamPath> trimmed;
-        for (auto &path : destination) {
-            const auto key = path.text + '\0' + std::to_string(path.last_rcid);
-            if (seen.insert(key).second) trimmed.push_back(std::move(path));
-            if (trimmed.size() >= kBeamWidth) break;
+        if (paths.size() > kPathsPerContext) paths.resize(kPathsPerContext);
+    }
+
+    float semantic_score(const BeamPath &path) const {
+        float score = 0;
+        int previous = kUnknownMid;
+        for (const int mid : path.clause_mids) {
+            if (previous != kUnknownMid && mid != kUnknownMid &&
+                previous >= 0 && previous < kMidCount && mid >= 0 && mid < kMidCount) {
+                score += read_float(mm_bytes, static_cast<std::size_t>(previous * kMidCount + mid) * 4);
+            }
+            previous = mid;
         }
-        destination = std::move(trimmed);
+        return score;
     }
 
     std::filesystem::path root;
@@ -426,6 +471,7 @@ struct AzooKeyDictionary::Impl {
     std::unordered_map<char32_t, int> character_ids;
     std::unordered_map<char32_t, std::unique_ptr<LoudsShard>> shards;
     std::unordered_map<int, ConnectionLine> connection_lines;
+    std::vector<std::uint8_t> mm_bytes;
 };
 
 AzooKeyDictionary::AzooKeyDictionary(std::filesystem::path root)
@@ -452,16 +498,17 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         auto ruby = to_katakana(utf8_to_u32(value.ruby));
         if (ruby.empty() || value.word.empty()) continue;
         dynamic_entries.push_back({std::move(ruby),
-            {value.word, value.ruby, value.lcid, value.rcid, value.score}});
+            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score}});
     }
-    std::vector<std::vector<BeamPath>> beams(reading.size() + 1);
-    beams.front().push_back({"", 0, kBosCid});
+    std::vector<std::unordered_map<int, std::vector<BeamPath>>> lattice(reading.size() + 1);
+    lattice.front()[kBosCid].push_back({"", 0, kBosCid, {}});
 
     for (std::size_t start = 0; start < reading.size(); ++start) {
-        auto previous = beams[start];
-        std::stable_sort(previous.begin(), previous.end(),
-            [](const BeamPath &left, const BeamPath &right) { return left.score > right.score; });
-        if (previous.size() > kBeamWidth) previous.resize(kBeamWidth);
+        std::vector<BeamPath> previous;
+        for (auto &[cid, paths] : lattice[start]) {
+            if (paths.size() > kPathsPerContext) Impl::trim_context(paths);
+            previous.insert(previous.end(), paths.begin(), paths.end());
+        }
         if (previous.empty()) continue;
 
         std::map<std::size_t, std::vector<Entry>> matches_by_end;
@@ -481,30 +528,34 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
                 matches_by_end[end].push_back(dynamic.entry);
             }
         }
-        bool has_single_character_entry = false;
         for (auto &[end, entries] : matches_by_end) {
-            if (end == start + 1 && !entries.empty()) has_single_character_entry = true;
             std::stable_sort(entries.begin(), entries.end(),
                 [](const Entry &left, const Entry &right) { return left.score > right.score; });
-            if (entries.size() > kEntriesPerReading) entries.resize(kEntriesPerReading);
-            impl_->append_paths(beams[end], previous, entries);
+            impl_->append_paths(lattice[end], previous, entries);
         }
-        if (!has_single_character_entry) {
-            const Entry fallback{to_hiragana(reading[start]), u32_to_utf8({reading[start]}),
-                                 kGeneralNounCid, kGeneralNounCid, kFallbackScore};
-            impl_->append_paths(beams[start + 1], previous, {fallback});
-        }
+        // azooKey supplies hiragana and katakana one-character nodes even
+        // when the dictionary also contains a homophone at this position.
+        const auto ruby = u32_to_utf8({reading[start]});
+        impl_->append_paths(lattice[start + 1], previous, {
+            {to_hiragana(reading[start]), ruby, kProperNounCid, kProperNounCid,
+             kGeneralMid, -13.0f},
+            {ruby, ruby, kProperNounCid, kProperNounCid, kGeneralMid, -14.0f},
+        });
     }
 
-    // A complete conversion must also connect to the end of the composition.
-    for (auto &path : beams.back()) {
-        path.score += impl_->connection_score(path.last_rcid, kEosCid);
+    std::vector<BeamPath> complete;
+    for (auto &[cid, paths] : lattice.back()) {
+        for (auto &path : paths) {
+            path.score += impl_->connection_score(path.last_rcid, kEosCid) +
+                          impl_->semantic_score(path);
+            complete.push_back(std::move(path));
+        }
     }
-    std::stable_sort(beams.back().begin(), beams.back().end(),
+    std::stable_sort(complete.begin(), complete.end(),
         [](const BeamPath &left, const BeamPath &right) { return left.score > right.score; });
     std::unordered_set<std::string> seen;
     std::vector<std::string> result;
-    for (const auto &path : beams.back()) {
+    for (const auto &path : complete) {
         if (!path.text.empty() && seen.insert(path.text).second) result.push_back(path.text);
         if (result.size() >= limit) break;
     }
@@ -530,7 +581,7 @@ std::vector<std::string> AzooKeyDictionary::predictions(
             continue;
         }
         entries.push_back(
-            {value.word, value.ruby, value.lcid, value.rcid, value.score});
+            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score});
     }
     const std::size_t prefix_length = prefix.size();
     entries.erase(

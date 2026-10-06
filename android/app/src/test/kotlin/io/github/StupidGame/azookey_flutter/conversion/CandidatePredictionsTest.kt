@@ -344,9 +344,9 @@ class CandidatePredictionsTest {
     }
 
     @Test
-    fun zenzaiResultLeadsExactWordsButNeverAnUnfinishedCompletion() {
+    fun zenzaiKeepsScoredCompletePathsAheadOfNovelWordsAndCompletions() {
         assertEquals(
-            listOf("モデル候補", "登録語", "学習語", "登録補完"),
+            listOf("学習語", "登録語", "モデル候補", "登録補完"),
             rerankedJapaneseCandidates(
                 reading = "にほんご",
                 ranked = listOf("登録補完", "モデル候補", "学習語", "登録語", "にほんご"),

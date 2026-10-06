@@ -859,19 +859,29 @@ class JapaneseConverter {
       }
     }
 
-    final beams = List.generate(reading.length + 1, (_) => <_DictionaryPath>[]);
-    beams[0].add(const _DictionaryPath('', 0, 0, 0));
+    // Keep paths with and without a registered word separately. A single
+    // global beam can discard every registered path halfway through a sentence.
+    final lattice = List.generate(
+      reading.length + 1,
+      (_) => <int, List<_DictionaryPath>>{},
+    );
+    lattice[0][0] = [const _DictionaryPath('', 0, 0, 0)];
     void push(int end, _DictionaryPath path) {
-      final paths = beams[end]..add(path);
+      final context = (path.registeredWords > 0 ? 2 : 0) +
+          (path.words > 0 ? 1 : 0);
+      final paths = lattice[end].putIfAbsent(context, () => [])..add(path);
       if (paths.length > 48) {
         paths.sort((a, b) => b.score.compareTo(a.score));
-        paths.removeRange(16, paths.length);
+        paths.removeRange(20, paths.length);
       }
     }
 
     for (var index = 0; index < reading.length; index++) {
-      final current = beams[index]..sort((a, b) => b.score.compareTo(a.score));
-      for (final path in current.take(16)) {
+      final current = lattice[index].values.expand((paths) {
+        paths.sort((a, b) => b.score.compareTo(a.score));
+        return paths.take(20);
+      });
+      for (final path in current) {
         push(
           index + 1,
           _DictionaryPath(
@@ -895,7 +905,7 @@ class JapaneseConverter {
       }
     }
     final ranked =
-        beams.last
+        lattice.last.values.expand((paths) => paths)
             .where((path) => path.words >= 2 && path.registeredWords >= 1)
             .toList()
           ..sort((a, b) => b.score.compareTo(a.score));

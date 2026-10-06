@@ -196,10 +196,9 @@ public final class AzooKeyConversionEngine {
             established.contains($0.text) || Self.plausibleNovelText($0.text, reading: reading)
         }
         predictionTexts = Set(modelPredictions.map(\.text)).subtracting(mainTexts)
-        let modelMatches = modelResults.filter { established.contains($0.text) }
-        let novelModelResults = modelResults.filter { !established.contains($0.text) }
-        let values = modelMatches + Array(baseline.mainResults.prefix(3)) + novelModelResults
-            + Array(baseline.mainResults.dropFirst(3)) + modelPredictions
+        // Keep the converter's own lattice/model ranking. The standard result
+        // only fills gaps left by invalid model text or unavailable weights.
+        let values = modelResults + baseline.mainResults + modelPredictions
         lastCandidates = [:]
         var texts: [String] = []
         var seen = Set<String>()

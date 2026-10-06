@@ -108,6 +108,18 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun matchesAzooKeysLongSentenceReference() {
+        val candidates = dictionary.candidates(
+            "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた",
+            predictionLimit = 0,
+        ).conversions
+        assertEquals(
+            "幼少期からテニス水泳野球少林寺拳法など様々なスポーツを経験しながら育ち小学校時代はロサンゼルス近郊に滞在しておりゴルフやテニスを習っていた",
+            candidates.first(),
+        )
+    }
+
+    @Test
     fun createsPredictionsFromTheOfficialAzooKeyDictionary() {
         val predictions = dictionary.candidates("こんに", predictionLimit = 16).predictions
 
