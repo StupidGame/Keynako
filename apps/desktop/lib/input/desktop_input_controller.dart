@@ -594,9 +594,9 @@ class DesktopInputController extends ChangeNotifier {
 
   static int _candidatePriority(ConversionCandidate candidate) {
     if (candidate.source == 'zenzai') return -1;
-    if (candidate.source.startsWith('user')) return 0;
-    if (candidate.source.startsWith('learned')) return 1;
-    return 2;
+    if (candidate.source.startsWith('user')) return 1;
+    if (candidate.source.startsWith('learned')) return 2;
+    return 0;
   }
 
   static int _candidatePhase(ConversionCandidate candidate) {

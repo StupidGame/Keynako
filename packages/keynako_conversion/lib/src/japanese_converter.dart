@@ -771,18 +771,17 @@ class JapaneseConverter {
 
   int _candidatePriority(ConversionCandidate candidate) =>
       switch (candidate.source) {
-        'user' || 'user-combination' => 0,
-        'learned' || 'learned-combination' => 1,
-        'user-prefix' => 3,
-        'user-prediction' => 4,
+        'user' || 'user-combination' => 1,
+        'learned' || 'learned-combination' => 2,
+        'user-prefix' || 'user-prediction' => 4,
         'learned-prediction' => 5,
-        _ when candidate.source.contains('prediction') => 6,
+        _ when candidate.source.contains('prediction') => 3,
         'hiragana' ||
         'katakana' ||
         'half-kana' ||
         'full-width' ||
         'english' => 7,
-        _ => 2,
+        _ => 0,
       };
 
   List<ConversionCandidate> _rank(Iterable<ConversionCandidate> candidates) {

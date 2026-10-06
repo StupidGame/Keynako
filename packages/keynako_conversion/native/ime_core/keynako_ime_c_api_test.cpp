@@ -34,7 +34,7 @@ int main() {
     for (const char value : "nihongo") {
         if (value != '\0') keynako_ime_append_ascii(session, value);
     }
-    assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
+    assert(std::strcmp(keynako_ime_selected_text(session), "日本語") == 0);
     keynako_ime_insert_zenzai(session, "日本語");
     assert(std::strcmp(keynako_ime_selected_text(session), "日本語") == 0);
     keynako_ime_set_mode(session, 1);

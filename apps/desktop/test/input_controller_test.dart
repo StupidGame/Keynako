@@ -68,8 +68,8 @@ void main() {
 
       expect(controller.candidates.take(3).map((candidate) => candidate.text), [
         '日本語入力',
-        '登録語',
         '日本語',
+        '登録語',
       ]);
       engine.result = '登録語';
       controller.updateRawInput('');
@@ -183,7 +183,9 @@ void main() {
     controller.commitSelected();
     await controller.setZenzaiModel(ZenzaiModel.off);
     controller.updateRawInput('nihongo');
-    expect(controller.candidates.first.text, '日本語入力');
+    expect(controller.candidates.first.text, '日本語');
+    expect(controller.candidates.map((candidate) => candidate.text),
+        contains('日本語入力'));
     controller.updateRawInput('niho');
     expect(controller.displayedComposition, 'にほ');
     expect(

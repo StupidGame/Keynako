@@ -656,10 +656,10 @@ void ImeSession::prioritize_learning() {
         if (candidate.source == "zenzai") return -1;
         if (candidate.source == "personal" || candidate.source == "shared" ||
             candidate.source == "dictionary-combination" ||
-            candidate.source == "personal-prediction" || candidate.source == "shared-prediction") return 0;
+            candidate.source == "personal-prediction" || candidate.source == "shared-prediction") return 1;
         if (candidate.source == "learned" || candidate.source == "learned-prediction" ||
-            candidate.source == "learned-combination") return 1;
-        return 2;
+            candidate.source == "learned-combination") return 2;
+        return 0;
     };
     std::stable_sort(candidates_.begin(), candidates_.end(), [&](const auto &left, const auto &right) {
         const bool left_prediction = left.source.find("prediction") != std::string::npos;

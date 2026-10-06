@@ -2842,12 +2842,28 @@ final class KeyboardViewController: UIInputViewController {
         let exactLearnedPriority = learnedPriority.filter {
             !predictedTexts.contains($0) && !partialTexts.contains($0)
         }
-        let prefixCandidates = prioritized.filter { partialTexts.contains($0) }
-            + rankedRegistered.map(\.text) + learnedPrefixes.map(\.text)
-            + prioritized.filter { predictedTexts.contains($0) }
+        let otherCompleteCandidates = completeCandidates.filter {
+            !dictionaryPriority.contains($0) && !learnedPriority.contains($0)
+        }
+        let dictionaryPrefixTexts = Set(rankedRegistered.map(\.text)).union(partialTexts)
+        let learnedPrefixTexts = Set(learnedPrefixes.map(\.text))
+        let otherPrefixCandidates = prioritized.filter {
+            predictedTexts.contains($0) && !dictionaryPrefixTexts.contains($0)
+                && !learnedPrefixTexts.contains($0)
+        }
+        let dictionaryPrefixCandidates = prioritized.filter { partialTexts.contains($0) }
+            + rankedRegistered.map(\.text)
+            + prioritized.filter {
+                predictedTexts.contains($0) && dictionaryPrefixTexts.contains($0)
+            }
+        let learnedPrefixCandidates = learnedPrefixes.map(\.text)
+            + prioritized.filter {
+                predictedTexts.contains($0) && learnedPrefixTexts.contains($0)
+            }
         var seen = Set<String>()
-        return (zenzaiPriority + exactDictionaryPriority + exactLearnedPriority
-            + completeCandidates + prefixCandidates
+        return (zenzaiPriority + otherCompleteCandidates + exactDictionaryPriority
+            + exactLearnedPriority + otherPrefixCandidates + dictionaryPrefixCandidates
+            + learnedPrefixCandidates
             + prioritized.filter { fallbackTexts.contains($0) }).filter {
             !$0.isEmpty && seen.insert($0).inserted
         }

@@ -249,7 +249,7 @@ class CandidatePredictionsTest {
             dictionary, learned,
             setOf("登録補完", "学習補完"), setOf("かめ"),
         )
-        assertEquals(listOf("登録語", "学習語", "モデル候補", "登録補完", "学習補完", "かめ"), ordered)
+        assertEquals(listOf("モデル候補", "登録語", "学習語", "登録補完", "学習補完", "かめ"), ordered)
         assertEquals(
             listOf("モデル候補", "登録語", "学習語", "登録補完", "学習補完", "かめ"),
             prioritizeJapaneseCandidateGroups(

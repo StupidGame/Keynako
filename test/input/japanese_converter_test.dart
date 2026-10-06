@@ -30,12 +30,12 @@ void main() {
       romanInput: true,
     );
 
-    expect(values.take(2).map((value) => value.text), ['日本語入力', '日本語']);
+    expect(values.take(2).map((value) => value.text), ['日本語', '日本語入力']);
     expect(values.indexWhere((value) => value.text == 'にほんご'), greaterThan(1));
     expect(values.map((value) => value.text), contains('日本語'));
     expect(
       values.indexWhere((value) => value.text == '日本語入力'),
-      lessThan(values.indexWhere((value) => value.text == '日本語')),
+      greaterThan(values.indexWhere((value) => value.text == '日本語')),
     );
   });
 

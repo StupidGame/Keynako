@@ -171,7 +171,7 @@ internal fun rerankedJapaneseCandidates(
     )
 }
 
-/** Complete model results lead, followed by other complete readings and then completions. */
+/** Complete model and standard conversions lead; personal results follow other complete readings. */
 internal fun prioritizeJapaneseCandidateGroups(
     candidates: Iterable<String>,
     dictionaryCandidates: Iterable<String>,
@@ -189,15 +189,18 @@ internal fun prioritizeJapaneseCandidateGroups(
         preferredZenzaiCandidate !in partialTexts) {
         add(preferredZenzaiCandidate)
     }
+    addAll(other.filter {
+        it !in predictionTexts && it !in fallbackTexts && it !in partialTexts &&
+            it !in dictionary && it !in learned
+    })
     addAll(dictionary.filter { it !in predictionTexts && it !in partialTexts })
     addAll(learned.filter { it !in predictionTexts && it !in partialTexts })
-    addAll(other.filter { it !in predictionTexts && it !in fallbackTexts && it !in partialTexts })
+    addAll(other.filter { it in predictionTexts && it !in dictionary && it !in learned })
     addAll(other.filter { it in partialTexts && it !in predictionTexts })
     addAll(dictionary.filter { it in partialTexts && it !in predictionTexts })
     addAll(learned.filter { it in partialTexts && it !in predictionTexts })
     addAll(dictionary.filter { it in predictionTexts })
     addAll(learned.filter { it in predictionTexts })
-    addAll(other.filter { it in predictionTexts })
     addAll(other.filter { it in fallbackTexts })
 }.toList()
 

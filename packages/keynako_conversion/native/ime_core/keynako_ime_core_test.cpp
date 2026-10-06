@@ -13,6 +13,11 @@ int main() {
     ImeSession learning;
     for (int repeat = 0; repeat < 100; ++repeat) {
         for (const char value : std::string("ai")) learning.append_ascii(value);
+        assert(learning.begin_conversion());
+        const auto preferred = std::find_if(learning.candidates().begin(), learning.candidates().end(),
+            [](const auto &candidate) { return candidate.text == "愛"; });
+        assert(preferred != learning.candidates().end());
+        assert(learning.select_candidate(static_cast<std::size_t>(preferred - learning.candidates().begin())));
         assert(learning.selected_text() == "愛");
         learning.learn_selected();
         learning.clear();
@@ -28,7 +33,8 @@ int main() {
     learning.learn_selected();
     learning.clear();
     for (const char value : std::string("ai")) learning.append_ascii(value);
-    assert(learning.selected_text() == "藍");
+    assert(std::any_of(learning.candidates().begin(), learning.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "藍"; }));
     learning.insert_zenzai_candidate("愛");
     assert(learning.selected_text() == "愛");
 
@@ -47,7 +53,8 @@ int main() {
     recalled.learn_selected();
     recalled.clear();
     for (const char value : std::string("kiinako")) recalled.append_ascii(value);
-    assert(recalled.selected_text() == "Keynako");
+    assert(std::any_of(recalled.candidates().begin(), recalled.candidates().end(),
+        [](const auto &candidate) { return candidate.text == "Keynako"; }));
     recalled.clear();
     for (const char value : std::string("kii")) recalled.append_ascii(value);
     assert(recalled.display_text() == "きい");
@@ -85,8 +92,9 @@ int main() {
     });
     for (const char value : std::string("henkan")) session.append_ascii(value);
     assert(session.reading() == "へんかん");
-    assert(session.candidates().front().text == "共有変換");
-    assert(session.candidates()[1].text == "低い共有変換");
+    assert(session.candidates().front().text == "変換");
+    assert(session.candidates()[1].text == "共有変換");
+    assert(session.candidates()[2].text == "低い共有変換");
     assert(!session.is_converting());
 
     ImeSession prefix_prediction;
@@ -97,8 +105,9 @@ int main() {
     for (const char value : std::string("niho")) prefix_prediction.append_ascii(value);
     assert(prefix_prediction.display_text() == "にほ");
     assert(prefix_prediction.candidates().size() >= 4);
-    assert(prefix_prediction.candidates().front().text == "日本");
-    assert(prefix_prediction.candidates().front().source == "shared-prediction");
+    assert(prefix_prediction.candidates().front().source == "dictionary-prediction");
+    assert(prefix_prediction.candidates()[2].text == "日本");
+    assert(prefix_prediction.candidates()[2].source == "shared-prediction");
     ImeSession rider_prediction;
     rider_prediction.set_user_dictionary({{"かめんらいだー", "仮面ライダー", 3}});
     for (const auto &raw : {"kame", "kamen"}) {

@@ -20,7 +20,7 @@ void main() {
     });
   });
 
-  test('prioritizes matching user dictionary entries', () {
+  test('keeps exact dictionary entries after standard conversions', () {
     final values = converter.candidates(
       input: 'nihongo',
       romanInput: true,
@@ -31,7 +31,8 @@ void main() {
       ),
     );
 
-    expect(values.first.text, '日本語入力');
+    expect(values.first.text, '日本語');
+    expect(values.map((value) => value.text), contains('日本語入力'));
     expect(values.map((value) => value.text), contains('日本語'));
     expect(values.map((value) => value.text), contains('ニホンゴ'));
   });
@@ -181,7 +182,7 @@ void main() {
         learning: {'にほんご\t学習語': 32, 'にほんごか\t学習補完': 32},
       );
       final values = converter.candidates(input: 'にほんご', options: options);
-      expect(values.take(3).map((value) => value.text), ['登録語', '学習語', '日本語']);
+      expect(values.take(3).map((value) => value.text), ['日本語', '登録語', '学習語']);
       expect(
         values.indexWhere((value) => value.text == '登録補完'),
         greaterThan(values.indexWhere((value) => value.text == '日本語')),
@@ -209,8 +210,8 @@ void main() {
     );
 
     expect(candidates.take(2).map((candidate) => candidate.text), [
-      '日本語入力',
       '日本語',
+      '日本語入力',
     ]);
     expect(
       candidates.indexWhere((candidate) => candidate.text == 'にほんご'),
@@ -228,7 +229,7 @@ void main() {
     expect(candidates.map((candidate) => candidate.text), contains('今日'));
   });
 
-  test('puts registered prefix matches before other candidates', () {
+  test('puts complete standard matches before registered completions', () {
     final candidates = converter.candidates(
       input: 'にほ',
       options: const ConversionOptions(
@@ -242,14 +243,16 @@ void main() {
       ),
     );
 
-    expect(candidates.first.text, '日本語入力');
+    expect(candidates.first.text, '日本');
     expect(
       candidates.indexWhere((candidate) => candidate.text == 'にほ'),
       greaterThan(0),
     );
     expect(candidates.map((candidate) => candidate.text), contains('日本'));
-    expect(candidates.first.source, 'user-prediction');
-    expect(candidates.first.reading, 'にほんご');
+    expect(candidates.firstWhere((candidate) => candidate.text == '日本語入力').source,
+        'user-prediction');
+    expect(candidates.firstWhere((candidate) => candidate.text == '日本語入力').reading,
+        'にほんご');
   });
 
   test('shows a registered long word for both short reading prefixes', () {
@@ -430,13 +433,13 @@ void main() {
     },
   );
 
-  test('puts learned kana before unlearned kana', () {
+  test('keeps learned kana after standard conversions', () {
     final values = converter.candidates(
       input: 'にほんご',
       options: const ConversionOptions(learning: {'にほんご\tニホンゴ': 5}),
     );
 
-    expect(values.take(2).map((candidate) => candidate.text), ['ニホンゴ', '日本語']);
+    expect(values.take(2).map((candidate) => candidate.text), ['日本語', 'ニホンゴ']);
     expect(
       values.indexWhere((candidate) => candidate.text == 'にほんご'),
       greaterThan(1),
