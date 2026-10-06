@@ -169,11 +169,16 @@ internal fun rerankedJapaneseCandidates(
     val full = (exact.take(3) + novel + exact.drop(3)).distinct()
     val prominentPredictions = (baseCandidates.filter { it in predictionTexts } +
         learnedPrefixes.map { it.text }).distinct().take(4)
+    val registeredComplete = (dictionaryCandidates + learningCandidates)
+        .filter(::complete).toSet()
+    val predictionInsertion = maxOf(3, full.indexOfLast { it in registeredComplete } + 1)
+        .coerceAtMost(full.size)
     val otherPredictions = (ranked + dictionaryCandidates + learningCandidates + baseCandidates)
         .filter { it in predictionTexts && it !in prominentPredictions }.distinct()
     val partial = (ranked + dictionaryCandidates + learningCandidates + baseCandidates)
         .filter { it in partialCandidates && it !in predictionTexts }.distinct()
-    val ordered = (full.take(1) + prominentPredictions + full.drop(1) +
+    val ordered = (full.take(predictionInsertion) + prominentPredictions +
+        full.drop(predictionInsertion) +
         otherPredictions + partial + baseCandidates.filter { it in fallback } +
         ranked.filter { it in fallback }).filter(String::isNotBlank).distinct()
     val exactRegistration = dictionaryCandidates.any { complete(it) } ||

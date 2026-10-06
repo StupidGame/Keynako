@@ -22,22 +22,22 @@ jobs:
 
     steps:
       - name: Check out source and submodules
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
       - name: Validate the Gradle Wrapper
-        uses: gradle/actions/wrapper-validation@v6
+        uses: gradle/actions/wrapper-validation@v6.4.0
 
       - name: Set up Java
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v6.0.1
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
@@ -52,7 +52,7 @@ jobs:
           (cd android && ./gradlew :app:testDebugUnitTest)
 
       - name: Restore the stable CI signing key
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: .ci/keynako-ci-release.jks
           key: keynako-ci-release-signing-v1
@@ -95,7 +95,7 @@ jobs:
           "$apksigner_path" verify --verbose --print-certs "$apk_path" | tee build/app/outputs/flutter-apk/signature-report.txt
 
       - name: Upload Android files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-android-signed-apk-${{ github.run_number }}
           if-no-files-found: error
@@ -106,17 +106,17 @@ jobs:
 
   ios:
     name: Unsigned iOS files
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 90
 
     steps:
       - name: Check out source and submodules
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
@@ -166,7 +166,7 @@ jobs:
           } > build/ios/ARTIFACTS.txt
 
       - name: Upload iOS files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-ios-files-${{ github.run_number }}
           if-no-files-found: error
@@ -183,12 +183,12 @@ jobs:
 
     steps:
       - name: Check out source and submodules
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
@@ -209,17 +209,17 @@ jobs:
 
   desktop-windows:
     name: Windows desktop IME
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 120
 
     steps:
       - name: Check out source and submodules
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
@@ -278,7 +278,7 @@ jobs:
           Copy-Item -Recurse -Force 'assets/zenz-v3.2-xsmall-gguf' (Join-Path $imeRoot 'zenzai')
 
       - name: Restore the stable CI Windows signing certificate
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: .ci/keynako-ci-windows-signing.pfx
           key: keynako-ci-windows-signing-v1
@@ -388,7 +388,7 @@ jobs:
             Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
 
       - name: Upload the signed Windows desktop app
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-windows-installer-${{ steps.windows-signing.outputs.kind }}-signed-${{ github.run_number }}
           if-no-files-found: error
@@ -409,7 +409,7 @@ jobs:
 
     steps:
       - name: Check out source and submodules
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
@@ -417,7 +417,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev python3-gi gir1.2-gtk-3.0 gir1.2-ibus-1.0 ibus
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
@@ -471,7 +471,7 @@ jobs:
           tar -C "$RUNNER_TEMP" -czf build/Keynako-linux-x64.tar.gz Keynako
 
       - name: Upload the Linux desktop app
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-linux-x64-${{ github.run_number }}
           if-no-files-found: error
@@ -480,17 +480,17 @@ jobs:
 
   desktop-macos:
     name: macOS desktop IME
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 120
 
     steps:
       - name: Check out source and submodules
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
@@ -555,7 +555,7 @@ jobs:
             "$package_root" build/Keynako-macos.zip
 
       - name: Upload the macOS desktop app
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-macos-${{ github.run_number }}
           if-no-files-found: error
