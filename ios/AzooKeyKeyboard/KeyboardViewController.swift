@@ -2820,11 +2820,25 @@ final class KeyboardViewController: UIInputViewController {
         prioritized.append(contentsOf: result)
         let dictionaryPriority = exactUserTexts + conversionDictionaryEntries.filter {
             katakanaToHiragana($0.ruby) == reading
-        }.map(\.word) + combinedTexts + rankedRegistered.map(\.text)
+        }.map(\.word) + combinedTexts
         let learnedPriority = exactLearning.map(\.text) + learnedCombinationTexts
-            + learnedPrefixes.map(\.text)
+        let predictedTexts = Set(candidatePredictionReadings.keys).union(unknownPredictionTexts)
+        let fallbackTexts = Set([composing, hiragana, fullKatakana, rawRoman])
+        let partialTexts = Set(conversionDictionaryEntries.compactMap { entry -> String? in
+            let ruby = katakanaToHiragana(entry.ruby)
+            guard !ruby.isEmpty, reading.count > ruby.count, reading.hasPrefix(ruby) else { return nil }
+            return entry.word + String(reading.dropFirst(ruby.count))
+        })
+        let completeCandidates = prioritized.filter {
+            !predictedTexts.contains($0) && !fallbackTexts.contains($0)
+                && !partialTexts.contains($0)
+        }
+        let prefixCandidates = prioritized.filter { partialTexts.contains($0) }
+            + rankedRegistered.map(\.text) + learnedPrefixes.map(\.text)
+            + prioritized.filter { predictedTexts.contains($0) }
         var seen = Set<String>()
-        return (dictionaryPriority + learnedPriority + prioritized).filter {
+        return (dictionaryPriority + learnedPriority + completeCandidates + prefixCandidates
+            + prioritized.filter { fallbackTexts.contains($0) }).filter {
             !$0.isEmpty && seen.insert($0).inserted
         }
     }

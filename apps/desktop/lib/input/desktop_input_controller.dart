@@ -547,15 +547,15 @@ class DesktopInputController extends ChangeNotifier {
       final learned = CandidateLearning.exactScores(_learning, reading);
       final ranked = _candidates.indexed.toList()
         ..sort((left, right) {
+          final leftPhase = _candidatePhase(left.$2);
+          final rightPhase = _candidatePhase(right.$2);
+          if (leftPhase != rightPhase) {
+            return leftPhase.compareTo(rightPhase);
+          }
           final leftPriority = _candidatePriority(left.$2);
           final rightPriority = _candidatePriority(right.$2);
           if (leftPriority != rightPriority) {
             return leftPriority.compareTo(rightPriority);
-          }
-          final leftPrediction = left.$2.source.contains('prediction');
-          final rightPrediction = right.$2.source.contains('prediction');
-          if (leftPrediction != rightPrediction) {
-            return leftPrediction ? 1 : -1;
           }
           final score = (learned[right.$2.text] ?? 0).compareTo(
             learned[left.$2.text] ?? 0,
@@ -585,6 +585,22 @@ class DesktopInputController extends ChangeNotifier {
     if (candidate.source.startsWith('user')) return 0;
     if (candidate.source.startsWith('learned')) return 1;
     return 2;
+  }
+
+  static int _candidatePhase(ConversionCandidate candidate) {
+    if (const {
+      'hiragana',
+      'katakana',
+      'half-kana',
+      'full-width',
+      'english',
+    }.contains(candidate.source)) {
+      return 2;
+    }
+    return candidate.source == 'user-prefix' ||
+            candidate.source.contains('prediction')
+        ? 1
+        : 0;
   }
 
   @override

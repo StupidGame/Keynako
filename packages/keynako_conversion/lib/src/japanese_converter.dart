@@ -385,7 +385,12 @@ class JapaneseConverter {
     final sourceReading = romanInput ? romanToHiragana(input) : input;
     final reading = katakanaToHiragana(sourceReading);
     final values = <ConversionCandidate>[
-      ConversionCandidate(text: reading, reading: reading, score: 100),
+      ConversionCandidate(
+        text: reading,
+        reading: reading,
+        source: 'hiragana',
+        score: 100,
+      ),
     ];
     final prefixPredictions = <ConversionCandidate>[];
     final exactLearning = <String, int>{};
@@ -740,7 +745,16 @@ class JapaneseConverter {
         (candidate) => !conversionTexts.contains(candidate.text),
       ),
     ];
-    return _priorityOrder(ordered);
+    final prioritized = _priorityOrder(ordered);
+    if (!options.liveConversion || sourceReading != reading) {
+      return [
+        ...pinned,
+        ...prioritized.where(
+          (candidate) => !pinnedTexts.contains(candidate.text),
+        ),
+      ];
+    }
+    return prioritized;
   }
 
   List<ConversionCandidate> _priorityOrder(
@@ -757,11 +771,18 @@ class JapaneseConverter {
 
   int _candidatePriority(ConversionCandidate candidate) =>
       switch (candidate.source) {
-        'user' || 'user-prefix' || 'user-combination' => 0,
-        'user-prediction' => 1,
-        'learned' || 'learned-combination' => 2,
-        'learned-prediction' => 3,
-        _ => 4,
+        'user' || 'user-combination' => 0,
+        'learned' || 'learned-combination' => 1,
+        'user-prefix' => 3,
+        'user-prediction' => 4,
+        'learned-prediction' => 5,
+        _ when candidate.source.contains('prediction') => 6,
+        'hiragana' ||
+        'katakana' ||
+        'half-kana' ||
+        'full-width' ||
+        'english' => 7,
+        _ => 2,
       };
 
   List<ConversionCandidate> _rank(Iterable<ConversionCandidate> candidates) {

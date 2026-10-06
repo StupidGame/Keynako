@@ -74,6 +74,44 @@ void main() {
   );
 
   test(
+    'a complete model result leads dictionary and learning completions',
+    () async {
+      final engine = _FakeZenzaiEngine()..result = '学習補完';
+      final repository = _FakeSharedDictionaryRepository()
+        ..snapshot = const SharedDictionarySnapshot(
+          revision: 'prefix',
+          version: '1.1',
+          lastUpdate: 'today',
+          entries: [
+            ConversionDictionaryEntry(reading: 'にほんごか', value: '登録補完'),
+            ConversionDictionaryEntry(reading: 'にほん', value: '登録'),
+          ],
+        );
+      final controller = DesktopInputController(
+        sharedDictionaryRepository: repository,
+        zenzaiEngineFactory: (_) async => engine,
+      );
+      await controller.setZenzaiModel(ZenzaiModel.xsmall);
+      controller.updateRawInput('nihongoka');
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      controller.commitSelected();
+      await controller.importSharedDictionary();
+      engine.result = '一致モデル';
+      controller.updateRawInput('nihongo');
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+
+      final texts = controller.candidates
+          .map((candidate) => candidate.text)
+          .toList();
+      expect(texts.first, '一致モデル');
+      expect(texts.indexOf('登録補完'), greaterThan(texts.indexOf('日本語')));
+      expect(texts.indexOf('学習補完'), greaterThan(texts.indexOf('登録補完')));
+      expect(texts.indexOf('登録ご'), greaterThan(texts.indexOf('一致モデル')));
+      controller.dispose();
+    },
+  );
+
+  test(
     'a pending Zenzai result preserves the manual selection and commit',
     () async {
       final engine = _DelayedZenzaiEngine();
@@ -327,6 +365,7 @@ void main() {
 
 class _FakeZenzaiEngine implements ZenzaiEngine {
   ZenzaiRequest? lastRequest;
+  String result = '日本語入力';
 
   @override
   Future<void> initialize() async {}
@@ -334,7 +373,7 @@ class _FakeZenzaiEngine implements ZenzaiEngine {
   @override
   Future<String?> generate(ZenzaiRequest request) async {
     lastRequest = request;
-    return '日本語入力';
+    return result;
   }
 
   @override

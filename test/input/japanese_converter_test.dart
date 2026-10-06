@@ -18,32 +18,26 @@ void main() {
     });
   });
 
-  test(
-    'puts a live conversion before hiragana, katakana, and dictionaries',
-    () {
-      final data = AppData.defaults();
-      data.userDictionary.add(
-        const UserDictionaryEntry(id: 10, ruby: 'にほんご', word: '日本語入力'),
-      );
+  test('puts complete conversions before raw kana', () {
+    final data = AppData.defaults();
+    data.userDictionary.add(
+      const UserDictionaryEntry(id: 10, ruby: 'にほんご', word: '日本語入力'),
+    );
 
-      final values = converter.candidates(
-        input: 'nihongo',
-        data: data,
-        romanInput: true,
-      );
+    final values = converter.candidates(
+      input: 'nihongo',
+      data: data,
+      romanInput: true,
+    );
 
-      expect(values.take(3).map((value) => value.text), [
-        '日本語入力',
-        'にほんご',
-        'ニホンゴ',
-      ]);
-      expect(values.map((value) => value.text), contains('日本語'));
-      expect(
-        values.indexWhere((value) => value.text == '日本語入力'),
-        lessThan(values.indexWhere((value) => value.text == '日本語')),
-      );
-    },
-  );
+    expect(values.take(2).map((value) => value.text), ['日本語入力', '日本語']);
+    expect(values.indexWhere((value) => value.text == 'にほんご'), greaterThan(1));
+    expect(values.map((value) => value.text), contains('日本語'));
+    expect(
+      values.indexWhere((value) => value.text == '日本語入力'),
+      lessThan(values.indexWhere((value) => value.text == '日本語')),
+    );
+  });
 
   test('orders matching user words by conversion importance', () {
     final data = AppData.defaults();

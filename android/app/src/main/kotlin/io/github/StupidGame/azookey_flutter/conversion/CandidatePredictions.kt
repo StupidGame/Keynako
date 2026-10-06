@@ -137,6 +137,7 @@ internal fun rerankedJapaneseCandidates(
     learning: Map<String, Int>,
     dictionaryCandidates: List<String> = emptyList(),
     learningCandidates: List<String> = emptyList(),
+    partialCandidates: Set<String> = emptySet(),
 ): List<String> {
     val learned = exactLearnedJapaneseCandidates(reading, learning)
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
@@ -159,18 +160,32 @@ internal fun rerankedJapaneseCandidates(
     return prioritizeJapaneseCandidateGroups(
         pinned, dictionaryCandidates,
         learningCandidates + learned + learnedPrefixes.map { it.text },
+        predictionTexts,
+        setOf(reading, hiraganaToKatakana(katakanaToHiragana(reading))),
+        partialCandidates,
     )
 }
 
-/** Registered words always precede learned words, regardless of their learning score. */
+/** Complete readings lead; source priority decides ties before completions. */
 internal fun prioritizeJapaneseCandidateGroups(
     candidates: Iterable<String>,
     dictionaryCandidates: Iterable<String>,
     learnedCandidates: Iterable<String>,
+    predictionTexts: Set<String> = emptySet(),
+    fallbackTexts: Set<String> = emptySet(),
+    partialTexts: Set<String> = emptySet(),
 ): List<String> = linkedSetOf<String>().apply {
-    addAll(dictionaryCandidates.filter(String::isNotBlank))
-    addAll(learnedCandidates.filter(String::isNotBlank))
-    addAll(candidates.filter(String::isNotBlank))
+    val dictionary = dictionaryCandidates.filter(String::isNotBlank)
+    val learned = learnedCandidates.filter(String::isNotBlank)
+    val other = candidates.filter(String::isNotBlank)
+    addAll(dictionary.filter { it !in predictionTexts })
+    addAll(learned.filter { it !in predictionTexts })
+    addAll(other.filter { it !in predictionTexts && it !in fallbackTexts && it !in partialTexts })
+    addAll(other.filter { it in partialTexts && it !in predictionTexts })
+    addAll(dictionary.filter { it in predictionTexts })
+    addAll(learned.filter { it in predictionTexts })
+    addAll(other.filter { it in predictionTexts })
+    addAll(other.filter { it in fallbackTexts })
 }.toList()
 
 internal fun firstCompleteJapaneseCandidateIndex(

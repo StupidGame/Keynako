@@ -63,12 +63,20 @@ int main() {
     for (const char value : std::string("tesuto")) fixed_priority.append_ascii(value);
     assert(fixed_priority.candidates()[0].text == "登録語");
     assert(fixed_priority.candidates()[1].text == "学習語");
+    fixed_priority.insert_zenzai_candidate("一致モデル");
+    assert(fixed_priority.candidates()[0].text == "登録語");
+    assert(fixed_priority.candidates()[1].text == "学習語");
+    assert(fixed_priority.candidates()[2].text == "一致モデル");
     fixed_priority.clear();
     for (const char value : std::string("tesu")) fixed_priority.append_ascii(value);
     assert(fixed_priority.candidates()[0].text == "登録語");
     assert(fixed_priority.candidates()[0].source == "shared-prediction");
     assert(fixed_priority.candidates()[1].text == "学習語");
     assert(fixed_priority.display_text() == "てす");
+    fixed_priority.insert_zenzai_candidate("一致モデル");
+    assert(fixed_priority.candidates()[0].text == "一致モデル");
+    assert(fixed_priority.candidates()[1].text == "登録語");
+    assert(fixed_priority.candidates()[2].text == "学習語");
 
     ImeSession session;
     session.set_user_dictionary({

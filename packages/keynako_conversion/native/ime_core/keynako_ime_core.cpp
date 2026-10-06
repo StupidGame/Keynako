@@ -661,10 +661,16 @@ void ImeSession::prioritize_learning() {
         return 2;
     };
     std::stable_sort(candidates_.begin(), candidates_.end(), [&](const auto &left, const auto &right) {
-        if (priority(left) != priority(right)) return priority(left) < priority(right);
         const bool left_prediction = left.source.find("prediction") != std::string::npos;
         const bool right_prediction = right.source.find("prediction") != std::string::npos;
-        if (left_prediction != right_prediction) return !left_prediction;
+        const auto fallback = [](const Candidate &candidate) {
+            return candidate.source == "reading" || candidate.source == "katakana" ||
+                candidate.source == "latin";
+        };
+        const int left_phase = fallback(left) ? 2 : left_prediction ? 1 : 0;
+        const int right_phase = fallback(right) ? 2 : right_prediction ? 1 : 0;
+        if (left_phase != right_phase) return left_phase < right_phase;
+        if (priority(left) != priority(right)) return priority(left) < priority(right);
         return priority(left) == 1 && score(left) > score(right);
     });
 }

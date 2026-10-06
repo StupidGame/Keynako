@@ -154,6 +154,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidatePredictionReadings = emptyMap<String, String>()
     private var candidateDictionaryPriority = emptyList<String>()
     private var candidateLearningPriority = emptyList<String>()
+    private var candidatePartialTexts = emptySet<String>()
     private var candidateExpanded = false
     private var dictionaryMode = DictionaryMode.CLOSED
     private var dictionaryEditingId: Int? = null
@@ -2722,6 +2723,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val predictionReadings = candidatePredictionReadings
         val dictionaryPriority = candidateDictionaryPriority
         val learningPriority = candidateLearningPriority
+        val partialTexts = candidatePartialTexts
         zenzaiRuntime.rank(
             modelSize = size,
             reading = modelInput,
@@ -2740,6 +2742,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 learning = learningScores(),
                 dictionaryCandidates = dictionaryPriority,
                 learningCandidates = learningPriority,
+                partialCandidates = partialTexts,
             ).toMutableList()
             if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
             selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
@@ -2763,6 +2766,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidatePredictionReadings = emptyMap()
         candidateDictionaryPriority = emptyList()
         candidateLearningPriority = emptyList()
+        candidatePartialTexts = emptySet()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
@@ -2833,6 +2837,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         val registeredCombinationEntries =
             hotfixDictionaryEntries.map { DictionaryCombinationEntry(it.ruby, it.word) } +
                 personalEntries.map { DictionaryCombinationEntry(it.ruby, it.word) }
+        candidatePartialTexts = registeredCombinationEntries.mapNotNull { entry ->
+            val ruby = katakanaToHiragana(entry.reading)
+            if (ruby.isEmpty() || ruby.length >= reading.length || !reading.startsWith(ruby)) null
+            else entry.value + reading.substring(ruby.length)
+        }.toSet()
         val registeredCombinations = dictionaryCombinationCandidates(
             reading, registeredCombinationEntries, 32,
         )
@@ -2954,6 +2963,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         return prioritizeJapaneseCandidateGroups(
             pinned, candidateDictionaryPriority,
             candidateLearningPriority,
+            candidatePredictionReadings.keys,
+            setOf(reading, katakana, katakanaToHalfWidth(katakana), rawRoman, asciiToFullWidth(rawRoman)),
+            candidatePartialTexts,
         )
     }
 

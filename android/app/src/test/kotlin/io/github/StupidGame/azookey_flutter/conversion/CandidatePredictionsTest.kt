@@ -223,8 +223,8 @@ class CandidatePredictionsTest {
                 predictionReadings = mapOf("仮面ライダー" to "かめんらいだー"),
                 learning = learning,
             )
-            assertEquals(listOf("仮面ライダー", conversion), ranked.take(2))
-            assertEquals(1, firstCompleteJapaneseCandidateIndex(
+            assertEquals(listOf(conversion, "仮面ライダー"), ranked.take(2))
+            assertEquals(0, firstCompleteJapaneseCandidateIndex(
                 ranked, mapOf("仮面ライダー" to "かめんらいだー"),
             ))
         }
@@ -241,19 +241,36 @@ class CandidatePredictionsTest {
     }
 
     @Test
-    fun registeredWordsStayAheadOfStrongerLearningAndModelResults() {
+    fun completeReadingsLeadPredictionsWithSourcePriorityForTies() {
         val dictionary = listOf("登録語", "登録補完")
         val learned = listOf("学習語", "学習補完")
         val ordered = prioritizeJapaneseCandidateGroups(
             listOf("学習語", "モデル候補", "登録語", "学習補完", "登録補完", "かめ"),
             dictionary, learned,
+            setOf("登録補完", "学習補完"), setOf("かめ"),
         )
-        assertEquals(listOf("登録語", "登録補完", "学習語", "学習補完", "モデル候補", "かめ"), ordered)
+        assertEquals(listOf("登録語", "学習語", "モデル候補", "登録補完", "学習補完", "かめ"), ordered)
         assertEquals(0, firstCompleteJapaneseCandidateIndex(ordered, mapOf("登録補完" to "かめん")))
+
+        val modelBeforeCompletions = prioritizeJapaneseCandidateGroups(
+            listOf("登録補完", "学習補完", "モデル候補", "かめ"),
+            listOf("登録補完"), listOf("学習補完"),
+            setOf("登録補完", "学習補完"), setOf("かめ"),
+        )
+        assertEquals(listOf("モデル候補", "登録補完", "学習補完", "かめ"), modelBeforeCompletions)
+
+        assertEquals(
+            listOf("モデル候補", "登録ご"),
+            prioritizeJapaneseCandidateGroups(
+                listOf("登録ご", "モデル候補"), emptyList(), emptyList(),
+                partialTexts = setOf("登録ご"),
+            ),
+        )
 
         val onlyPredictions = prioritizeJapaneseCandidateGroups(
             listOf("かめ", "学習補完", "登録補完"),
             listOf("登録補完"), listOf("学習補完"),
+            setOf("登録補完", "学習補完"), setOf("かめ"),
         )
         assertEquals(listOf("登録補完", "学習補完", "かめ"), onlyPredictions)
         assertEquals(2, firstCompleteJapaneseCandidateIndex(

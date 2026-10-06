@@ -69,6 +69,25 @@ void main() {
     expect(values.first.source, 'user-prefix');
   });
 
+  test(
+    'puts a complete conversion before a partial dictionary replacement',
+    () {
+      final values = converter.candidates(
+        input: 'にほんご',
+        options: const ConversionOptions(
+          userDictionary: [
+            ConversionDictionaryEntry(reading: 'にほん', value: '登録'),
+          ],
+        ),
+      );
+      expect(values.first.text, '日本語');
+      expect(
+        values.firstWhere((candidate) => candidate.text == '登録ご').source,
+        'user-prefix',
+      );
+    },
+  );
+
   test('combines personal and shared dictionary words across a particle', () {
     final candidates = converter.candidates(
       input: 'まきなとれいな',
@@ -152,7 +171,7 @@ void main() {
   });
 
   test(
-    'always orders registered words before learning and other conversions',
+    'orders complete matches before dictionary and learning completions',
     () {
       const options = ConversionOptions(
         userDictionary: [
@@ -162,17 +181,19 @@ void main() {
         learning: {'にほんご\t学習語': 32, 'にほんごか\t学習補完': 32},
       );
       final values = converter.candidates(input: 'にほんご', options: options);
-      expect(values.take(4).map((value) => value.text), [
-        '登録語',
-        '登録補完',
-        '学習語',
-        '学習補完',
-      ]);
-      expect(values.indexWhere((value) => value.text == '日本語'), greaterThan(3));
+      expect(values.take(3).map((value) => value.text), ['登録語', '学習語', '日本語']);
+      expect(
+        values.indexWhere((value) => value.text == '登録補完'),
+        greaterThan(values.indexWhere((value) => value.text == '日本語')),
+      );
+      expect(
+        values.indexWhere((value) => value.text == '学習補完'),
+        greaterThan(values.indexWhere((value) => value.text == '登録補完')),
+      );
     },
   );
 
-  test('pins live conversion, hiragana, and katakana in that order', () {
+  test('puts complete conversions ahead of raw kana', () {
     final candidates = converter.candidates(
       input: 'nihongo',
       romanInput: true,
@@ -187,11 +208,14 @@ void main() {
       ),
     );
 
-    expect(candidates.take(3).map((candidate) => candidate.text), [
+    expect(candidates.take(2).map((candidate) => candidate.text), [
       '日本語入力',
-      'にほんご',
-      'ニホンゴ',
+      '日本語',
     ]);
+    expect(
+      candidates.indexWhere((candidate) => candidate.text == 'にほんご'),
+      greaterThan(1),
+    );
   });
 
   test('normalizes katakana before looking up candidates', () {
@@ -219,8 +243,10 @@ void main() {
     );
 
     expect(candidates.first.text, '日本語入力');
-    expect(candidates[1].text, 'にほ');
-    expect(candidates[2].text, 'ニホ');
+    expect(
+      candidates.indexWhere((candidate) => candidate.text == 'にほ'),
+      greaterThan(0),
+    );
     expect(candidates.map((candidate) => candidate.text), contains('日本'));
     expect(candidates.first.source, 'user-prediction');
     expect(candidates.first.reading, 'にほんご');
@@ -312,7 +338,8 @@ void main() {
             )
             .map((value) => value.text)
             .toList();
-        expect(texts.first, '挨拶');
+        expect(texts.first, live ? '愛' : 'あい');
+        expect(texts.indexOf('挨拶'), greaterThan(texts.indexOf('藍')));
       }
     },
   );
@@ -409,7 +436,11 @@ void main() {
       options: const ConversionOptions(learning: {'にほんご\tニホンゴ': 5}),
     );
 
-    expect(values.take(2).map((candidate) => candidate.text), ['ニホンゴ', 'にほんご']);
+    expect(values.take(2).map((candidate) => candidate.text), ['ニホンゴ', '日本語']);
+    expect(
+      values.indexWhere((candidate) => candidate.text == 'にほんご'),
+      greaterThan(1),
+    );
   });
 
   test('provides optional half-width, full-width and Unicode candidates', () {
