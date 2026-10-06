@@ -189,7 +189,8 @@ internal fun rerankedJapaneseCandidates(
     } || learnedCandidates(learning).any {
         it.reading == katakanaToHiragana(reading) && it.score >= 4
     }
-    if (baseCandidates.firstOrNull() == reading && reading.length <= 2 && !exactRegistration) {
+    if (baseCandidates.firstOrNull() == reading && reading.length <= 2 &&
+        !exactRegistration && prominentPredictions.isEmpty()) {
         return listOf(reading) + ordered.filter { it != reading }
     }
     return preferSingleKanaReading(reading, ordered, exactRegistration)

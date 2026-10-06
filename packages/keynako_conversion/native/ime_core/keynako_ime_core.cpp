@@ -80,6 +80,16 @@ std::size_t utf8_character_count(const std::string &value) {
         [](unsigned char byte) { return (byte & 0xc0) != 0x80; }));
 }
 
+bool is_single_hiragana_kana(const std::string &value) {
+    if (value.size() != 3) return false;
+    const auto first = static_cast<unsigned char>(value[0]);
+    const auto second = static_cast<unsigned char>(value[1]);
+    const auto third = static_cast<unsigned char>(value[2]);
+    if (first != 0xe3 || (second & 0xc0) != 0x80 || (third & 0xc0) != 0x80) return false;
+    const char32_t code = ((first & 0x0f) << 12) | ((second & 0x3f) << 6) | (third & 0x3f);
+    return code >= 0x3041 && code <= 0x3096;
+}
+
 bool unusual_model_text(const std::string &value, const std::string &reading) {
     const bool input_has_kana_mark = reading.find(u8"\u3099") != std::string::npos ||
         reading.find(u8"\u309A") != std::string::npos;
@@ -711,7 +721,7 @@ void ImeSession::prioritize_learning() {
             return entry.second >= 4;
         });
     const auto count = utf8_character_count(reading_);
-    const bool single_kana = reading_.size() == 3 && reading_ >= u8"ぁ" && reading_ <= u8"ゖ";
+    const bool single_kana = is_single_hiragana_kana(reading_);
     const bool katakana_only = count == 2 && !candidates_.empty() &&
         candidates_.front().text == hiragana_to_katakana(reading_);
     if (!exact_registration && !strong_learning && (single_kana || katakana_only)) {
@@ -805,7 +815,7 @@ void ImeSession::select_previous() { if (!candidates_.empty()) selected_index_ =
 
 void ImeSession::insert_zenzai_candidate(std::string value) {
     if (value.empty()) return;
-    if (reading_.size() == 3 && reading_ >= u8"ぁ" && reading_ <= u8"ゖ") return;
+    if (is_single_hiragana_kana(reading_)) return;
     const auto learned = learning_.find(learning_key());
     const bool strong_learning = learned != learning_.end() &&
         std::any_of(learned->second.begin(), learned->second.end(), [](const auto &entry) {
