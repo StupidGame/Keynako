@@ -17,7 +17,7 @@ concurrency:
 jobs:
   android:
     name: Signed Android APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
 
     steps:
@@ -178,7 +178,7 @@ jobs:
 
   desktop-tests:
     name: Desktop conversion tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
 
     steps:
@@ -404,7 +404,7 @@ jobs:
 
   desktop-linux:
     name: Linux desktop IME
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
 
     steps:
