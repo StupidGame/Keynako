@@ -250,6 +250,15 @@ class CandidatePredictionsTest {
             setOf("登録補完", "学習補完"), setOf("かめ"),
         )
         assertEquals(listOf("登録語", "学習語", "モデル候補", "登録補完", "学習補完", "かめ"), ordered)
+        assertEquals(
+            listOf("モデル候補", "登録語", "学習語", "登録補完", "学習補完", "かめ"),
+            prioritizeJapaneseCandidateGroups(
+                listOf("学習語", "モデル候補", "登録語", "学習補完", "登録補完", "かめ"),
+                dictionary, learned,
+                setOf("登録補完", "学習補完"), setOf("かめ"),
+                preferredZenzaiCandidate = "モデル候補",
+            ),
+        )
         assertEquals(0, firstCompleteJapaneseCandidateIndex(ordered, mapOf("登録補完" to "かめん")))
 
         val modelBeforeCompletions = prioritizeJapaneseCandidateGroups(
@@ -273,9 +282,47 @@ class CandidatePredictionsTest {
             setOf("登録補完", "学習補完"), setOf("かめ"),
         )
         assertEquals(listOf("登録補完", "学習補完", "かめ"), onlyPredictions)
+        assertEquals(
+            onlyPredictions,
+            prioritizeJapaneseCandidateGroups(
+                listOf("かめ", "学習補完", "登録補完"),
+                listOf("登録補完"), listOf("学習補完"),
+                setOf("登録補完", "学習補完"), setOf("かめ"),
+                preferredZenzaiCandidate = "学習補完",
+            ),
+        )
         assertEquals(2, firstCompleteJapaneseCandidateIndex(
             onlyPredictions, mapOf("登録補完" to "かめん", "学習補完" to "かめんらいだー"),
         ))
+    }
+
+    @Test
+    fun zenzaiResultLeadsExactWordsButNeverAnUnfinishedCompletion() {
+        assertEquals(
+            listOf("モデル候補", "登録語", "学習語", "登録補完"),
+            rerankedJapaneseCandidates(
+                reading = "にほんご",
+                ranked = listOf("登録補完", "モデル候補", "学習語", "登録語", "にほんご"),
+                baseCandidates = listOf("登録語", "学習語", "登録補完", "にほんご"),
+                predictionReadings = mapOf("登録補完" to "にほんごか"),
+                learning = emptyMap(),
+                dictionaryCandidates = listOf("登録語", "登録補完"),
+                learningCandidates = listOf("学習語"),
+                preferredZenzaiCandidate = "モデル候補",
+            ).take(4),
+        )
+        assertEquals(
+            "登録語",
+            rerankedJapaneseCandidates(
+                reading = "にほんご",
+                ranked = listOf("登録補完", "登録語", "にほんご"),
+                baseCandidates = listOf("登録語", "登録補完", "にほんご"),
+                predictionReadings = mapOf("登録補完" to "にほんごか"),
+                learning = emptyMap(),
+                dictionaryCandidates = listOf("登録語", "登録補完"),
+                preferredZenzaiCandidate = "登録補完",
+            ).first(),
+        )
     }
 
     @Test

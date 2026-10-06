@@ -653,6 +653,7 @@ void ImeSession::prioritize_learning() {
         return entry == found->second.end() ? 0 : entry->second;
     };
     const auto priority = [](const Candidate &candidate) {
+        if (candidate.source == "zenzai") return -1;
         if (candidate.source == "personal" || candidate.source == "shared" ||
             candidate.source == "dictionary-combination" ||
             candidate.source == "personal-prediction" || candidate.source == "shared-prediction") return 0;

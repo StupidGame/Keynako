@@ -44,7 +44,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
         rightContext: String,
         baseCandidates: List<String>,
         maxTokens: Int,
-        callback: (List<String>) -> Unit,
+        callback: (List<String>, String?) -> Unit,
     ) {
         if (closed) return
         val request = requestSequence.incrementAndGet()
@@ -53,8 +53,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
             if (closed || request != requestSequence.get()) return@execute
             val startedAt = System.nanoTime()
             val result = runCatching {
-                if (!ensureModel(modelSize)) return@runCatching emptyList()
-                if (request != requestSequence.get()) return@runCatching emptyList()
+                if (!ensureModel(modelSize)) return@runCatching emptyList<String>() to null
+                if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
 
                 val generated = if (shouldGenerateZenzaiCandidate(reading.length, maxTokens)) {
                     ZenzEngine.generateWithContextAndConditionsV32(
@@ -70,12 +70,12 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 } else {
                     ""
                 }
-                if (request != requestSequence.get()) return@runCatching emptyList()
+                if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
 
                 val values = linkedSetOf<String>()
                 if (generated.isNotEmpty()) values.add(generated)
                 values.addAll(baseCandidates.filter { it.isNotBlank() })
-                if (values.isEmpty()) return@runCatching emptyList()
+                if (values.isEmpty()) return@runCatching emptyList<String>() to null
 
                 // Scoring every entry in the large dictionary makes inference lag behind typing.
                 // Zenzai reranks the strongest entries and preserves the remaining dictionary order.
@@ -98,23 +98,24 @@ internal class AndroidZenzaiRuntime(context: Context) {
                             ?: Float.NEGATIVE_INFINITY
                     }.thenBy { it.index },
                 ).map { it.value } + candidates.drop(rerankedCandidates.size)
-                placeNovelGeneratedCandidate(ranked, generated, baseCandidates.toSet())
+                placeNovelGeneratedCandidate(ranked, generated, baseCandidates.toSet()) to
+                    generated.takeIf { it.isNotEmpty() }
             }.getOrElse { error ->
                 Log.e(LOG_TAG, "Candidate ranking failed", error)
-                emptyList()
+                emptyList<String>() to null
             }
 
-            if (result.isEmpty() || closed || request != requestSequence.get()) {
+            if (result.first.isEmpty() || closed || request != requestSequence.get()) {
                 if (request == requestSequence.get()) Log.w(LOG_TAG, "Candidate ranking returned no result")
                 return@execute
             }
             Log.i(
                 LOG_TAG,
-                "Ranked ${result.size} candidates with $modelSize in " +
+                "Ranked ${result.first.size} candidates with $modelSize in " +
                     "${(System.nanoTime() - startedAt) / 1_000_000} ms",
             )
             mainHandler.post {
-                if (!closed && request == requestSequence.get()) callback(result)
+                if (!closed && request == requestSequence.get()) callback(result.first, result.second)
             }
         }
     }

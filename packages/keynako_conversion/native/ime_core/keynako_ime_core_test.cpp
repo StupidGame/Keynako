@@ -30,7 +30,7 @@ int main() {
     for (const char value : std::string("ai")) learning.append_ascii(value);
     assert(learning.selected_text() == "藍");
     learning.insert_zenzai_candidate("愛");
-    assert(learning.selected_text() == "藍");
+    assert(learning.selected_text() == "愛");
 
     // A learned unconverted reading must still support the reading shortcut.
     assert(learning.select_reading());
@@ -64,9 +64,9 @@ int main() {
     assert(fixed_priority.candidates()[0].text == "登録語");
     assert(fixed_priority.candidates()[1].text == "学習語");
     fixed_priority.insert_zenzai_candidate("一致モデル");
-    assert(fixed_priority.candidates()[0].text == "登録語");
-    assert(fixed_priority.candidates()[1].text == "学習語");
-    assert(fixed_priority.candidates()[2].text == "一致モデル");
+    assert(fixed_priority.candidates()[0].text == "一致モデル");
+    assert(fixed_priority.candidates()[1].text == "登録語");
+    assert(fixed_priority.candidates()[2].text == "学習語");
     fixed_priority.clear();
     for (const char value : std::string("tesu")) fixed_priority.append_ascii(value);
     assert(fixed_priority.candidates()[0].text == "登録語");

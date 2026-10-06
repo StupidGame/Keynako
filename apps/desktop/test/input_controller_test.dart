@@ -22,7 +22,7 @@ void main() {
     controller.dispose();
   });
 
-  test('Zenzai cannot override a learned correction', () async {
+  test('Zenzai leads a learned correction for a complete reading', () async {
     final controller = DesktopInputController(
       zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),
     );
@@ -34,12 +34,13 @@ void main() {
     await controller.setZenzaiModel(ZenzaiModel.xsmall);
     controller.updateRawInput('nihongo');
     await Future<void>.delayed(const Duration(milliseconds: 180));
-    expect(controller.candidates.first.text, '日本語');
+    expect(controller.candidates.first.text, '日本語入力');
+    expect(controller.candidates[1].text, '日本語');
     controller.dispose();
   });
 
   test(
-    'model reranking keeps dictionary, learning, then other candidates',
+    'model result leads complete dictionary and learned candidates',
     () async {
       final repository = _FakeSharedDictionaryRepository()
         ..snapshot = const SharedDictionarySnapshot(
@@ -48,9 +49,10 @@ void main() {
           lastUpdate: 'today',
           entries: [ConversionDictionaryEntry(reading: 'にほんご', value: '登録語')],
         );
+      final engine = _FakeZenzaiEngine();
       final controller = DesktopInputController(
         sharedDictionaryRepository: repository,
-        zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),
+        zenzaiEngineFactory: (_) async => engine,
       );
       controller.updateRawInput('nihongo');
       controller.selectCandidate(
@@ -65,10 +67,16 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 180));
 
       expect(controller.candidates.take(3).map((candidate) => candidate.text), [
+        '日本語入力',
         '登録語',
         '日本語',
-        '日本語入力',
       ]);
+      engine.result = '登録語';
+      controller.updateRawInput('');
+      controller.updateRawInput('nihongo');
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      expect(controller.candidates.first.text, '登録語');
+      expect(controller.candidates.first.source, 'zenzai');
       controller.dispose();
     },
   );

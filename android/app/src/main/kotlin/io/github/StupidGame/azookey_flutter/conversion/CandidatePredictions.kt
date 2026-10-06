@@ -138,6 +138,7 @@ internal fun rerankedJapaneseCandidates(
     dictionaryCandidates: List<String> = emptyList(),
     learningCandidates: List<String> = emptyList(),
     partialCandidates: Set<String> = emptySet(),
+    preferredZenzaiCandidate: String? = null,
 ): List<String> {
     val learned = exactLearnedJapaneseCandidates(reading, learning)
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
@@ -163,10 +164,14 @@ internal fun rerankedJapaneseCandidates(
         predictionTexts,
         setOf(reading, hiraganaToKatakana(katakanaToHiragana(reading))),
         partialCandidates,
+        (listOfNotNull(preferredZenzaiCandidate) + ranked).firstOrNull {
+            it !in predictionTexts && it !in partialCandidates &&
+                it != reading && it != hiraganaToKatakana(katakanaToHiragana(reading))
+        },
     )
 }
 
-/** Complete readings lead; source priority decides ties before completions. */
+/** Complete model results lead, followed by other complete readings and then completions. */
 internal fun prioritizeJapaneseCandidateGroups(
     candidates: Iterable<String>,
     dictionaryCandidates: Iterable<String>,
@@ -174,14 +179,22 @@ internal fun prioritizeJapaneseCandidateGroups(
     predictionTexts: Set<String> = emptySet(),
     fallbackTexts: Set<String> = emptySet(),
     partialTexts: Set<String> = emptySet(),
+    preferredZenzaiCandidate: String? = null,
 ): List<String> = linkedSetOf<String>().apply {
     val dictionary = dictionaryCandidates.filter(String::isNotBlank)
     val learned = learnedCandidates.filter(String::isNotBlank)
     val other = candidates.filter(String::isNotBlank)
-    addAll(dictionary.filter { it !in predictionTexts })
-    addAll(learned.filter { it !in predictionTexts })
+    if (preferredZenzaiCandidate != null && preferredZenzaiCandidate in other &&
+        preferredZenzaiCandidate !in predictionTexts && preferredZenzaiCandidate !in fallbackTexts &&
+        preferredZenzaiCandidate !in partialTexts) {
+        add(preferredZenzaiCandidate)
+    }
+    addAll(dictionary.filter { it !in predictionTexts && it !in partialTexts })
+    addAll(learned.filter { it !in predictionTexts && it !in partialTexts })
     addAll(other.filter { it !in predictionTexts && it !in fallbackTexts && it !in partialTexts })
     addAll(other.filter { it in partialTexts && it !in predictionTexts })
+    addAll(dictionary.filter { it in partialTexts && it !in predictionTexts })
+    addAll(learned.filter { it in partialTexts && it !in predictionTexts })
     addAll(dictionary.filter { it in predictionTexts })
     addAll(learned.filter { it in predictionTexts })
     addAll(other.filter { it in predictionTexts })

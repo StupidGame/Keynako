@@ -2731,7 +2731,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             rightContext = rightContext,
             baseCandidates = baseCandidates,
             maxTokens = maxTokens,
-        ) { ranked ->
+        ) { ranked, generated ->
             if (displayReading() != reading || ranked.isEmpty()) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
             candidates = rerankedJapaneseCandidates(
@@ -2743,6 +2743,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 dictionaryCandidates = dictionaryPriority,
                 learningCandidates = learningPriority,
                 partialCandidates = partialTexts,
+                preferredZenzaiCandidate = generated,
             ).toMutableList()
             if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
             selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)

@@ -533,7 +533,10 @@ class DesktopInputController extends ChangeNotifier {
       final selectedText = _converting && _candidates.isNotEmpty
           ? _candidates[_selectedIndex].text
           : null;
-      if (!_candidates.any((candidate) => candidate.text == generated)) {
+      final existingIndex = _candidates.indexWhere(
+        (candidate) => candidate.text == generated,
+      );
+      if (existingIndex < 0) {
         _candidates = [
           ConversionCandidate(
             text: generated,
@@ -543,6 +546,14 @@ class DesktopInputController extends ChangeNotifier {
           ),
           ..._candidates,
         ];
+      } else if (_candidatePhase(_candidates[existingIndex]) == 0) {
+        // The model may select a word already present in a dictionary or learning.
+        _candidates[existingIndex] = ConversionCandidate(
+          text: generated,
+          reading: reading,
+          source: 'zenzai',
+          score: 1000,
+        );
       }
       final learned = CandidateLearning.exactScores(_learning, reading);
       final ranked = _candidates.indexed.toList()
@@ -582,6 +593,7 @@ class DesktopInputController extends ChangeNotifier {
   }
 
   static int _candidatePriority(ConversionCandidate candidate) {
+    if (candidate.source == 'zenzai') return -1;
     if (candidate.source.startsWith('user')) return 0;
     if (candidate.source.startsWith('learned')) return 1;
     return 2;

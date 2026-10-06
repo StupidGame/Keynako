@@ -2833,11 +2833,21 @@ final class KeyboardViewController: UIInputViewController {
             !predictedTexts.contains($0) && !fallbackTexts.contains($0)
                 && !partialTexts.contains($0)
         }
+        let zenzaiPriority = zenzai == nil ? [] : Array(engineCandidates.filter {
+            completeCandidates.contains($0) && !knownPrefixTexts.contains($0)
+        }.prefix(1))
+        let exactDictionaryPriority = dictionaryPriority.filter {
+            !predictedTexts.contains($0) && (!partialTexts.contains($0) || exactUserTexts.contains($0))
+        }
+        let exactLearnedPriority = learnedPriority.filter {
+            !predictedTexts.contains($0) && !partialTexts.contains($0)
+        }
         let prefixCandidates = prioritized.filter { partialTexts.contains($0) }
             + rankedRegistered.map(\.text) + learnedPrefixes.map(\.text)
             + prioritized.filter { predictedTexts.contains($0) }
         var seen = Set<String>()
-        return (dictionaryPriority + learnedPriority + completeCandidates + prefixCandidates
+        return (zenzaiPriority + exactDictionaryPriority + exactLearnedPriority
+            + completeCandidates + prefixCandidates
             + prioritized.filter { fallbackTexts.contains($0) }).filter {
             !$0.isEmpty && seen.insert($0).inserted
         }
