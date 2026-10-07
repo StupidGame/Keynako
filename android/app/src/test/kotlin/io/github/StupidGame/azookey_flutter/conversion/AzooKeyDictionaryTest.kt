@@ -118,6 +118,17 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun commonJapaneseSpellingsLeadAmbiguousReadings() {
+        assertEquals("クロスウォーズ", dictionary.candidates("くろすうぉーず", 0).conversions.first())
+        assertEquals("サプライ", dictionary.candidates("さぷらい", 0).conversions.first())
+        assertEquals("無いか", dictionary.candidates("ないか", 0).conversions.first())
+        assertEquals("iPhone", dictionary.candidates("あいふぉん", 0).conversions.first())
+        assertEquals("CROSS", dictionary.candidates(
+            "くろす", 0, additionalEntries = listOf(entry("CROSS", "くろす", 1285)),
+        ).conversions.first())
+    }
+
+    @Test
     fun longSentenceStartsWithTheCommonCompleteConversion() {
         val candidates = dictionary.candidates(
             "わたしはきょうとうきょうのえきでともだちとあいました",

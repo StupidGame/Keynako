@@ -437,6 +437,24 @@ int main() {
         "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた", 5);
     assert(!reference_long_sentence.empty() && reference_long_sentence.front() ==
         "幼少期からテニス水泳野球少林寺拳法など様々なスポーツを経験しながら育ち小学校時代はロサンゼルス近郊に滞在しておりゴルフやテニスを習っていた");
+    assert(dictionary.candidates("くろすうぉーず", 1).front() == "クロスウォーズ");
+    assert(dictionary.candidates("さぷらい", 1).front() == "サプライ");
+    assert(dictionary.candidates("ないか", 1).front() == "無いか");
+    assert(dictionary.candidates("あいふぉん", 1).front() == "iPhone");
+    assert(dictionary.candidates("くろす", 1,
+        {{"CROSS", "くろす", 1285, 1285, 0.0f}}).front() == "CROSS");
+    ImeSession negative_question;
+    assert(negative_question.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("naika")) negative_question.append_ascii(value);
+    assert(negative_question.candidates().front().text == "無いか");
+    negative_question.insert_zenzai_candidate("内科");
+    assert(negative_question.candidates().front().text == "無いか");
+    ImeSession katakana_word;
+    assert(katakana_word.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("sapurai")) katakana_word.append_ascii(value);
+    assert(katakana_word.candidates().front().text == "サプライ");
+    katakana_word.insert_zenzai_candidate("さプライ");
+    assert(katakana_word.candidates().front().text == "サプライ");
     ImeSession short_reading;
     assert(short_reading.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("te")) short_reading.append_ascii(value);

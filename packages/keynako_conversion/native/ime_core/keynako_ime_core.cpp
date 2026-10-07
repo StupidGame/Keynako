@@ -92,6 +92,23 @@ bool is_single_hiragana_kana(const std::string &value) {
     return code >= 0x3041 && code <= 0x3096;
 }
 
+bool mixes_hiragana_and_katakana(const std::string &value) {
+    bool hiragana = false;
+    bool katakana = false;
+    for (std::size_t index = 0; index + 2 < value.size(); ++index) {
+        const auto first = static_cast<unsigned char>(value[index]);
+        if (first != 0xe3) continue;
+        const auto second = static_cast<unsigned char>(value[index + 1]);
+        const auto third = static_cast<unsigned char>(value[index + 2]);
+        if ((second & 0xc0) != 0x80 || (third & 0xc0) != 0x80) continue;
+        const char32_t code = ((first & 0x0f) << 12) | ((second & 0x3f) << 6) | (third & 0x3f);
+        hiragana = hiragana || (code >= 0x3041 && code <= 0x3096);
+        katakana = katakana || (code >= 0x30a1 && code <= 0x30f6);
+        index += 2;
+    }
+    return hiragana && katakana;
+}
+
 bool unusual_model_text(const std::string &value, const std::string &reading) {
     const bool input_has_kana_mark = reading.find(u8"\u3099") != std::string::npos ||
         reading.find(u8"\u309A") != std::string::npos;
@@ -915,14 +932,23 @@ void ImeSession::insert_zenzai_candidate(std::string value) {
         return;
     }
     const bool novel = existing == candidates_.end();
+    const bool ordinary_spelling_first = !candidates_.empty() &&
+        !strong_learning && !exact_registration && value != candidates_.front().text &&
+        ((reading_ == "ないか" && candidates_.front().text == "無いか") ||
+         (candidates_.front().text == hiragana_to_katakana(reading_) &&
+          (mixes_hiragana_and_katakana(value) ||
+           std::any_of(value.begin(), value.end(), [](unsigned char character) {
+               return character >= 'A' && character <= 'Z';
+           }))));
     const bool preserve_selection = converting_ || selected_index_ != 0;
     const auto selected = selected_text();
     candidates_.erase(std::remove_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
         return candidate.text == value;
     }), candidates_.end());
-    const auto insertion_index = novel ? std::min<std::size_t>(3, candidates_.size()) : 0;
+    const auto insertion_index = novel ? std::min<std::size_t>(3, candidates_.size()) :
+        ordinary_spelling_first ? std::min<std::size_t>(1, candidates_.size()) : 0;
     candidates_.insert(candidates_.begin() + static_cast<std::ptrdiff_t>(insertion_index),
-        {std::move(value), novel ? "zenzai-suggestion" : "zenzai"});
+        {std::move(value), novel || ordinary_spelling_first ? "zenzai-suggestion" : "zenzai"});
     prioritize_learning();
     selected_index_ = 0;
     if (preserve_selection) {
@@ -1160,7 +1186,9 @@ void ImeSession::rebuild_candidates() {
             const auto found = learning_.find(entry.reading);
             if (found == learning_.end()) continue;
             const auto score = found->second.find(entry.value);
-            if (score == found->second.end()) continue;
+            // Automatically accepted text is only weak evidence. It stays
+            // visible as a learned candidate without changing lattice paths.
+            if (score == found->second.end() || score->second < 4) continue;
             const auto count = std::clamp(score->second * 8, 0, 255);
             const auto fraction = 1.0 - static_cast<double>(count) / 255.0;
             const auto length = std::max<std::size_t>(1, utf8_character_count(entry.reading));

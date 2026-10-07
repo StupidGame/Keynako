@@ -164,6 +164,7 @@ struct Entry {
     int mid = kUnknownMid;
     float score = 0;
     int additional_mask = 0;
+    bool is_user_entry = false;
 };
 
 struct DynamicEntry {
@@ -439,12 +440,22 @@ struct AzooKeyDictionary::Impl {
     void append_paths(std::unordered_map<int, std::vector<BeamPath>> &destination,
                       const std::vector<BeamPath> &previous,
                       const std::vector<Entry> &entries) {
+        const bool has_katakana_spelling = std::any_of(entries.begin(), entries.end(),
+            [](const Entry &entry) { return entry.word == entry.ruby; });
         for (const auto &entry : entries) {
+            const bool uppercase_alias = entry.word.size() >= 3 &&
+                std::all_of(entry.word.begin(), entry.word.end(), [](unsigned char value) {
+                    return value >= 'A' && value <= 'Z';
+                });
+            const float spelling_adjustment = entry.is_user_entry ? 0.0f :
+                has_katakana_spelling && uppercase_alias ? -2.0f :
+                entry.ruby == "ナイカ" && entry.word == "無いか" ? 5.5f : 0.0f;
             std::array<int, 1 << kMaxTrackedAdditionalEntries> touched_contexts{};
             std::size_t touched_count = 0;
             for (const auto &path : previous) {
                 BeamPath next{path.text + entry.word,
-                    path.score + entry.score + connection_score(path.last_rcid, entry.lcid),
+                    path.score + entry.score + spelling_adjustment +
+                        connection_score(path.last_rcid, entry.lcid),
                     entry.rcid, path.clause_mids, path.additional_mask | entry.additional_mask};
                 if (next.clause_mids.empty() || begins_clause(path.last_rcid, entry.lcid)) {
                     next.clause_mids.push_back(contributes_mid(entry) ? entry.mid : kUnknownMid);
@@ -520,7 +531,7 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         auto ruby = to_katakana(utf8_to_u32(value.ruby));
         if (ruby.empty() || value.word.empty()) continue;
         dynamic_entries.push_back({std::move(ruby),
-            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score}});
+            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score, 0, true}});
     }
     const bool same_prefix = !impl_->cached_lattice.empty() &&
         reading.size() >= impl_->cached_reading.size() &&

@@ -78,6 +78,40 @@ class CandidatePredictionsTest {
     }
 
     @Test
+    fun modelDoesNotReintroduceUnwantedSpellingsOverCommonCompleteForms() {
+        val negativeQuestion = listOf("無いか", "ないか", "内科")
+        assertEquals("無いか", rerankedJapaneseCandidates(
+            reading = "ないか",
+            ranked = listOf("内科", "無いか", "ないか"),
+            baseCandidates = negativeQuestion,
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+        ).first())
+        assertEquals("内科", rerankedJapaneseCandidates(
+            reading = "ないか",
+            ranked = listOf("内科", "無いか", "ないか"),
+            baseCandidates = negativeQuestion,
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+            exactRegistrationTexts = setOf("内科"),
+        ).first())
+        assertEquals("クロスウォーズ", rerankedJapaneseCandidates(
+            reading = "くろすうぉーず",
+            ranked = listOf("CROSSウォーズ", "クロスウォーズ"),
+            baseCandidates = listOf("クロスウォーズ", "CROSSウォーズ"),
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+        ).first())
+        assertEquals("サプライ", rerankedJapaneseCandidates(
+            reading = "さぷらい",
+            ranked = listOf("さプライ", "サプライ"),
+            baseCandidates = listOf("サプライ", "さプライ"),
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+        ).first())
+    }
+
+    @Test
     fun novelModelTextFollowsEstablishedCompleteConversions() {
         val base = listOf("今日は晴れる", "今日は晴れ", "きょうははれる")
         val ranked = placeNovelGeneratedCandidate(

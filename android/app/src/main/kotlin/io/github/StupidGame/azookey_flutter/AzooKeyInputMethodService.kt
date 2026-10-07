@@ -2888,6 +2888,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 learningCandidates = learningPriority,
                 partialCandidates = partialTexts,
                 preferredZenzaiCandidate = generated,
+                exactRegistrationTexts = exactRegistrationTexts,
             ).filter {
                 isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
                     blockedCombinationValues, exactRegistrationTexts)
@@ -3023,7 +3024,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val learning = learningScores()
         val learnedEntries = learnedCandidates(learning)
         val learnedDictionaryEntries = learnedEntries.filter {
-            reading.contains(it.reading) || it.reading.startsWith(reading)
+            it.score >= 4 && (reading.contains(it.reading) || it.reading.startsWith(reading))
         }.map { entry ->
             val count = (entry.score * 8).coerceIn(0, 255)
             val remaining = 1.0 - count / 255.0

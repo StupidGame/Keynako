@@ -40,6 +40,7 @@ internal class AzooKeyDictionary(
         val mid: Int,
         val score: Float,
         val additionalMask: Int = 0,
+        val isUserEntry: Boolean = false,
     )
 
     private data class Path(
@@ -116,6 +117,7 @@ internal class AzooKeyDictionary(
                 rcid = it.rcid,
                 mid = it.mid,
                 score = it.wordWeight.toFloat(),
+                isUserEntry = true,
             )
         }
         val crossingKanaThreshold = cachedLatticeReading.length < KANA_VARIANT_MIN_READING_LENGTH &&
@@ -314,7 +316,18 @@ internal class AzooKeyDictionary(
         val kanaScore = if (kana.isNotEmpty()) entries.asSequence()
             .filter { it.word == kana }
             .maxOfOrNull(Entry::score) else null
+        val hasKatakanaSpelling = entries.any { it.word == it.ruby }
         for (entry in entries) {
+            // The dictionary contains some all-capitals aliases with a slightly
+            // higher cost than their ordinary katakana spelling. In a sentence
+            // that small difference can put an English fragment ahead of the
+            // natural Japanese form even though both have the same reading.
+            val spellingAdjustment = when {
+                !entry.isUserEntry && hasKatakanaSpelling &&
+                    entry.word.length >= 3 && entry.word.all { it in 'A'..'Z' } -> -2f
+                !entry.isUserEntry && entry.ruby == "ナイカ" && entry.word == "無いか" -> 5.5f
+                else -> 0f
+            }
             val canOfferKana = kanaScore != null && entry.word != kana &&
                 entry.word.any { it in '\u3400'..'\u9fff' } &&
                 kana.length in 2..6 && entry.word.length <= 4
@@ -335,7 +348,8 @@ internal class AzooKeyDictionary(
                 context.add(
                     Path(
                         text = path.text + entry.word,
-                        score = path.score + entry.score + connectionScore(path.lastRcid, entry.lcid),
+                        score = path.score + entry.score + spellingAdjustment +
+                            connectionScore(path.lastRcid, entry.lcid),
                         lastRcid = entry.rcid,
                         clauseMids = clauseMids,
                         additionalMask = mask,

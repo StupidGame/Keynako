@@ -2849,6 +2849,16 @@ final class KeyboardViewController: UIInputViewController {
         if !hasExactRegistration, shortRawReading, ordered.contains(hiragana) {
             return [hiragana] + ordered.filter { $0 != hiragana }
         }
+        if !hasExactRegistration, reading == "ないか", ordered.contains("無いか") {
+            return ["無いか"] + ordered.filter { $0 != "無いか" }
+        }
+        if !hasExactRegistration, let first = ordered.first,
+           (first.unicodeScalars.contains(where: { $0.value >= 65 && $0.value <= 90 }) ||
+            (first.unicodeScalars.contains(where: { $0.value >= 0x3041 && $0.value <= 0x3096 }) &&
+             first.unicodeScalars.contains(where: { $0.value >= 0x30A1 && $0.value <= 0x30F6 }))),
+           officialComplete.contains(fullKatakana) {
+            return [fullKatakana] + ordered.filter { $0 != fullKatakana }
+        }
         return ordered
     }
 

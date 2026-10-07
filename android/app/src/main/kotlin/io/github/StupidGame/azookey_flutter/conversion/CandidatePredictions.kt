@@ -150,6 +150,7 @@ internal fun rerankedJapaneseCandidates(
     learningCandidates: List<String> = emptyList(),
     partialCandidates: Set<String> = emptySet(),
     preferredZenzaiCandidate: String? = null,
+    exactRegistrationTexts: Set<String> = emptySet(),
 ): List<String> {
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
     val predictionTexts = predictionReadings.keys + learnedPrefixes.map { it.text }
@@ -189,7 +190,28 @@ internal fun rerankedJapaneseCandidates(
         !exactRegistration && prominentPredictions.isEmpty()) {
         return listOf(reading) + ordered.filter { it != reading }
     }
-    return preferSingleKanaReading(reading, ordered, exactRegistration)
+    val strongLearnedWords = learnedCandidates(learning).filter {
+        it.reading == katakanaToHiragana(reading) && it.score >= 4
+    }.mapTo(mutableSetOf()) { it.text }
+    val explicitlyPreferred = exactRegistrationTexts + strongLearnedWords
+    val leading = ordered.firstOrNull()
+    val ordinarySpelling = when {
+        // A bare negative question is more useful than a medical department
+        // when the composition has no surrounding words. Keep a deliberate
+        // user choice ahead of this default.
+        reading == "ないか" && "無いか" in ordered -> "無いか"
+        // The model sometimes promotes a mixed-script fragment or an uppercase
+        // alias over the ordinary katakana spelling of the same complete reading.
+        baseCandidates.firstOrNull() == katakana && katakana in ordered &&
+            leading != null && (leading.any { it in 'A'..'Z' } ||
+                (leading.any { it in '\u3041'..'\u3096' } &&
+                    leading.any { it in '\u30a1'..'\u30f6' })) -> katakana
+        else -> null
+    }
+    val stable = if (ordinarySpelling != null && leading !in explicitlyPreferred) {
+        listOf(ordinarySpelling) + ordered.filter { it != ordinarySpelling }
+    } else ordered
+    return preferSingleKanaReading(reading, stable, exactRegistration)
 }
 
 /** Complete model and standard conversions lead; personal results follow other complete readings. */
