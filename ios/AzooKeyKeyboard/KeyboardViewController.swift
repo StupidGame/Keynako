@@ -813,7 +813,7 @@ final class KeyboardViewController: UIInputViewController {
         let next = (current + 1) % candidates.count
         selectedCandidateText = candidates[next]
         replaceDisplayed(with: candidates[next], commit: false)
-        renderCandidates(showTabs: false)
+        renderCandidates(showTabs: false, refreshCandidates: false)
     }
 
     private func custardLabel(
@@ -1033,7 +1033,7 @@ final class KeyboardViewController: UIInputViewController {
         return button
     }
 
-    private func renderCandidates(showTabs: Bool? = nil) {
+    private func renderCandidates(showTabs: Bool? = nil, refreshCandidates: Bool = true) {
         if dictionaryMode != .closed { return }
         let tabsVisible = showTabs ?? (composing.isEmpty && rawRoman.isEmpty)
         if tabsVisible != candidateBarShowsTabs {
@@ -1061,14 +1061,24 @@ final class KeyboardViewController: UIInputViewController {
             }
             return
         }
-        candidates = buildCandidates()
+        if refreshCandidates { candidates = buildCandidates() }
         let dictionaryShortcut = makeCandidateButton("＋辞書") { [weak self] in
             guard let self else { return }
             let word = self.selectedCandidateText ?? self.candidates.first ?? ""
             self.showDictionaryEditor(reading: self.candidatePredictionReadings[word] ?? self.composing, word: word)
         }
         candidateStack.addArrangedSubview(dictionaryShortcut)
-        for (index, candidate) in candidates.enumerated() {
+        // The expanded grid keeps the full list. The horizontal bar only
+        // needs the leading results and the explicitly selected candidate.
+        var visibleIndices = Array(candidates.indices.prefix(12))
+        if let selectedCandidateText,
+           let selectedIndex = candidates.firstIndex(of: selectedCandidateText),
+           !visibleIndices.contains(selectedIndex) {
+            visibleIndices.append(selectedIndex)
+        }
+        let visibleCandidateIndices = visibleIndices
+        for index in visibleCandidateIndices {
+            let candidate = candidates[index]
             let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
             button.longPressAction = { [weak self] in self?.showCandidatePreview(candidate, index: index) }
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
@@ -1079,9 +1089,10 @@ final class KeyboardViewController: UIInputViewController {
                   self.candidateStack.arrangedSubviews.first === dictionaryShortcut,
                   !self.candidates.isEmpty else { return }
             let index = self.selectedCandidateText.flatMap { self.candidates.firstIndex(of: $0) } ?? 0
-            guard self.candidateStack.arrangedSubviews.count > index + 1 else { return }
+            guard let visibleIndex = visibleCandidateIndices.firstIndex(of: index),
+                  self.candidateStack.arrangedSubviews.count > visibleIndex + 1 else { return }
             self.candidateScroll.layoutIfNeeded()
-            let selectedView = self.candidateStack.arrangedSubviews[index + 1]
+            let selectedView = self.candidateStack.arrangedSubviews[visibleIndex + 1]
             let frame = self.candidateStack.convert(selectedView.frame, to: self.candidateScroll)
             self.candidateScroll.scrollRectToVisible(frame, animated: false)
         }
@@ -1540,7 +1551,7 @@ final class KeyboardViewController: UIInputViewController {
             displayed = composing
         }
         replaceDisplayed(with: displayed, commit: false)
-        renderCandidates(showTabs: false)
+        renderCandidates(showTabs: false, refreshCandidates: false)
     }
 
     private func completeStableFirstClauseIfNeeded() -> Bool {

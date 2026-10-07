@@ -123,6 +123,31 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun extendingReadingMatchesFreshSearch() {
+        val entries = listOf(
+            entry("拙者", "わたし", 1285),
+            entry("友達", "ともだち", 1285),
+        )
+        val incremental = AzooKeyDictionary(
+            DictionaryAssetSource { path -> resolveExactCase(dictionaryRoot, path).readBytes() },
+        )
+        for (reading in listOf(
+            "わたし", "わたしはきょう", "わたしはきょうとうきょうのえきで",
+            "わたしはきょうとうきょうのえきでともだち",
+            "わたしはきょうとうきょうのえきでともだちとあいました",
+        )) {
+            val fresh = AzooKeyDictionary(
+                DictionaryAssetSource { path -> resolveExactCase(dictionaryRoot, path).readBytes() },
+            )
+            assertEquals(
+                "incremental conversion differs for $reading",
+                fresh.candidates(reading, 0, additionalEntries = entries).conversions,
+                incremental.candidates(reading, 0, additionalEntries = entries).conversions,
+            )
+        }
+    }
+
+    @Test
     fun matchesAzooKeysLongSentenceReference() {
         val candidates = dictionary.candidates(
             "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた",

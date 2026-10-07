@@ -28,8 +28,9 @@ constexpr int kLocalMask = (1 << kShardShift) - 1;
 constexpr std::size_t kMaxWordLength = 20;
 constexpr std::size_t kMaxPredictionDepth = 8;
 constexpr std::size_t kMaxPredictionNodes = 192;
-constexpr std::size_t kPathsPerContext = 20;
-constexpr std::size_t kContextTrimThreshold = 64;
+constexpr std::size_t kPathsPerContext = 4;
+constexpr std::size_t kAdditionalPathsPerContext = 1;
+constexpr std::size_t kContextTrimThreshold = 16;
 constexpr int kMaxTrackedAdditionalEntries = 4;
 constexpr float kDictionaryThreshold = -17.0f;
 constexpr float kDefaultConnectionScore = -25.0f;
@@ -163,6 +164,11 @@ struct Entry {
     int mid = kUnknownMid;
     float score = 0;
     int additional_mask = 0;
+};
+
+struct DynamicEntry {
+    std::u32string ruby;
+    Entry entry;
 };
 
 struct BeamPath {
@@ -457,15 +463,17 @@ struct AzooKeyDictionary::Impl {
             for (std::size_t index = 0; index < touched_count; ++index) {
                 const int context_key = touched_contexts[index];
                 auto &context_paths = destination[context_key];
-                if (context_paths.size() > kContextTrimThreshold) trim_context(context_paths);
+                if (context_paths.size() > kContextTrimThreshold) trim_context(context_paths, context_key);
             }
         }
     }
 
-    static void trim_context(std::vector<BeamPath> &paths) {
+    static void trim_context(std::vector<BeamPath> &paths, int context_key) {
         std::stable_sort(paths.begin(), paths.end(),
             [](const BeamPath &left, const BeamPath &right) { return left.score > right.score; });
-        if (paths.size() > kPathsPerContext) paths.resize(kPathsPerContext);
+        const auto limit = context_key >= kCidCount
+            ? kAdditionalPathsPerContext : kPathsPerContext;
+        if (paths.size() > limit) paths.resize(limit);
     }
 
     float semantic_score(const BeamPath &path) const {
@@ -487,6 +495,9 @@ struct AzooKeyDictionary::Impl {
     std::unordered_map<char32_t, std::unique_ptr<LoudsShard>> shards;
     std::unordered_map<int, ConnectionLine> connection_lines;
     std::vector<std::uint8_t> mm_bytes;
+    std::u32string cached_reading;
+    std::vector<DynamicEntry> cached_dynamic_entries;
+    std::vector<std::unordered_map<int, std::vector<BeamPath>>> cached_lattice;
 };
 
 AzooKeyDictionary::AzooKeyDictionary(std::filesystem::path root)
@@ -503,31 +514,76 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
     if (!available() || hiragana_reading.empty() || limit == 0) return {};
     const auto reading = to_katakana(utf8_to_u32(hiragana_reading));
     if (reading.empty()) return {};
-    struct DynamicEntry {
-        std::u32string ruby;
-        Entry entry;
-    };
     std::vector<DynamicEntry> dynamic_entries;
     dynamic_entries.reserve(additional_entries.size());
-    int tracked_entries = 0;
     for (const auto &value : additional_entries) {
         auto ruby = to_katakana(utf8_to_u32(value.ruby));
         if (ruby.empty() || value.word.empty()) continue;
-        int mask = 0;
-        if (tracked_entries < kMaxTrackedAdditionalEntries &&
-            std::search(reading.begin(), reading.end(), ruby.begin(), ruby.end()) != reading.end()) {
-            mask = 1 << tracked_entries++;
-        }
         dynamic_entries.push_back({std::move(ruby),
-            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score, mask}});
+            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score}});
     }
-    std::vector<std::unordered_map<int, std::vector<BeamPath>>> lattice(reading.size() + 1);
-    lattice.front()[kBosCid].push_back({"", 0, kBosCid, {}});
+    const bool same_prefix = !impl_->cached_lattice.empty() &&
+        reading.size() >= impl_->cached_reading.size() &&
+        std::equal(impl_->cached_reading.begin(), impl_->cached_reading.end(), reading.begin());
+    const auto same_entries = [&] {
+        if (dynamic_entries.size() != impl_->cached_dynamic_entries.size()) return false;
+        for (std::size_t i = 0; i < dynamic_entries.size(); ++i) {
+            const auto &left = dynamic_entries[i];
+            const auto &right = impl_->cached_dynamic_entries[i];
+            if (left.ruby != right.ruby || left.entry.word != right.entry.word ||
+                left.entry.lcid != right.entry.lcid || left.entry.rcid != right.entry.rcid ||
+                left.entry.mid != right.entry.mid || left.entry.score != right.entry.score ||
+                left.entry.ruby != right.entry.ruby) return false;
+        }
+        return true;
+    }();
+    // Keep old bit assignments as more registered words become visible. A new
+    // word could not have contributed to paths for the shorter reading.
+    int used_mask = 0;
+    if (same_prefix && same_entries) {
+        for (std::size_t i = 0; i < dynamic_entries.size(); ++i) {
+            const int mask = impl_->cached_dynamic_entries[i].entry.additional_mask;
+            dynamic_entries[i].entry.additional_mask = mask;
+            used_mask |= mask;
+        }
+    }
+    for (auto &dynamic : dynamic_entries) {
+        if (dynamic.entry.additional_mask != 0 ||
+            std::search(reading.begin(), reading.end(), dynamic.ruby.begin(), dynamic.ruby.end()) == reading.end()) {
+            continue;
+        }
+        for (int bit = 0; bit < kMaxTrackedAdditionalEntries; ++bit) {
+            if ((used_mask & (1 << bit)) != 0) continue;
+            dynamic.entry.additional_mask = 1 << bit;
+            used_mask |= 1 << bit;
+            break;
+        }
+    }
+    // A new keystroke only adds paths that end after the previous reading.
+    // Keep the earlier lattice positions, including their registered-word masks.
+    const bool extends_cache = same_prefix && same_entries;
+    const std::size_t previous_end = extends_cache ? impl_->cached_reading.size() : 0;
+    auto &lattice = impl_->cached_lattice;
+    if (!extends_cache) {
+        lattice.clear();
+        lattice.resize(reading.size() + 1);
+        lattice.front()[kBosCid].push_back({"", 0, kBosCid, {}});
+    } else {
+        lattice.resize(reading.size() + 1);
+    }
+    std::size_t longest_entry = kMaxWordLength;
+    for (const auto &dynamic : dynamic_entries) {
+        longest_entry = std::max(longest_entry, dynamic.ruby.size());
+    }
+    const std::size_t first_start = previous_end == reading.size() && extends_cache
+        ? reading.size() : previous_end > longest_entry
+            ? previous_end - longest_entry + 1 : 0;
 
-    for (std::size_t start = 0; start < reading.size(); ++start) {
+    for (std::size_t start = first_start; start < reading.size(); ++start) {
         std::vector<BeamPath> previous;
         for (auto &[cid, paths] : lattice[start]) {
-            if (paths.size() > kPathsPerContext) Impl::trim_context(paths);
+            const auto limit = cid >= kCidCount ? kAdditionalPathsPerContext : kPathsPerContext;
+            if (paths.size() > limit) Impl::trim_context(paths, cid);
             previous.insert(previous.end(), paths.begin(), paths.end());
         }
         if (previous.empty()) continue;
@@ -536,6 +592,7 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         if (auto *dictionary_shard = impl_->shard(reading[start])) {
             for (auto &[end, entries] :
                  dictionary_shard->matching_entries(reading, start, kMaxWordLength)) {
+                if (end <= previous_end) continue;
                 auto &destination = matches_by_end[end];
                 destination.insert(destination.end(),
                                    std::make_move_iterator(entries.begin()),
@@ -544,7 +601,7 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         }
         for (const auto &dynamic : dynamic_entries) {
             const auto end = start + dynamic.ruby.size();
-            if (end <= reading.size() &&
+            if (end > previous_end && end <= reading.size() &&
                 std::equal(dynamic.ruby.begin(), dynamic.ruby.end(), reading.begin() + start)) {
                 matches_by_end[end].push_back(dynamic.entry);
             }
@@ -557,19 +614,24 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         // azooKey supplies hiragana and katakana one-character nodes even
         // when the dictionary also contains a homophone at this position.
         const auto ruby = u32_to_utf8({reading[start]});
-        impl_->append_paths(lattice[start + 1], previous, {
-            {to_hiragana(reading[start]), ruby, kProperNounCid, kProperNounCid,
-             kGeneralMid, -13.0f},
-            {ruby, ruby, kProperNounCid, kProperNounCid, kGeneralMid, -14.0f},
-        });
+        if (start + 1 > previous_end) {
+            impl_->append_paths(lattice[start + 1], previous, {
+                {to_hiragana(reading[start]), ruby, kProperNounCid, kProperNounCid,
+                 kGeneralMid, -13.0f},
+                {ruby, ruby, kProperNounCid, kProperNounCid, kGeneralMid, -14.0f},
+            });
+        }
     }
+    impl_->cached_reading = reading;
+    impl_->cached_dynamic_entries = dynamic_entries;
 
     std::vector<BeamPath> complete;
     for (auto &[cid, paths] : lattice.back()) {
-        for (auto &path : paths) {
-            path.score += impl_->connection_score(path.last_rcid, kEosCid) +
-                          impl_->semantic_score(path);
-            complete.push_back(std::move(path));
+        for (const auto &path : paths) {
+            auto scored = path;
+            scored.score += impl_->connection_score(path.last_rcid, kEosCid) +
+                            impl_->semantic_score(path);
+            complete.push_back(std::move(scored));
         }
     }
     std::stable_sort(complete.begin(), complete.end(),
@@ -587,9 +649,12 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
     if (limit > leading) {
         // Keep a complete path for each registered spelling when a long
         // suffix would otherwise fill every candidate slot with near-duplicates.
-        for (int bit = 0; bit < tracked_entries && result.size() < limit; ++bit) {
-            const auto found = std::find_if(complete.begin(), complete.end(), [bit](const BeamPath &path) {
-                return (path.additional_mask & (1 << bit)) != 0;
+        for (const auto &dynamic : dynamic_entries) {
+            if (result.size() >= limit) break;
+            const int mask = dynamic.entry.additional_mask;
+            if (mask == 0) continue;
+            const auto found = std::find_if(complete.begin(), complete.end(), [mask](const BeamPath &path) {
+                return (path.additional_mask & mask) != 0;
             });
             if (found != complete.end()) add(*found);
         }

@@ -484,6 +484,20 @@ int main() {
         [](const std::string &candidate) {
             return candidate.rfind("拙者は今日東京の駅で友達と会いました", 0) == 0;
         }));
+    // Appending kana must produce the same ranked paths as a fresh search,
+    // including after a new registered-word mask becomes active.
+    keynako::AzooKeyDictionary incremental_dictionary(dictionary_path);
+    const std::vector<keynako::AzooKeyAdditionalEntry> incremental_entries = {
+        {"拙者", "わたし", 1285, 1285, -9.0f},
+        {"友達", "ともだち", 1285, 1285, -9.0f},
+    };
+    for (const auto &prefix : {"わたし", "わたしはきょう", "わたしはきょうとうきょうのえきで",
+                               "わたしはきょうとうきょうのえきでともだち",
+                               "わたしはきょうとうきょうのえきでともだちとあいました"}) {
+        const auto incremental = incremental_dictionary.candidates(prefix, 48, incremental_entries);
+        keynako::AzooKeyDictionary fresh_dictionary(dictionary_path);
+        assert(incremental == fresh_dictionary.candidates(prefix, 48, incremental_entries));
+    }
     ImeSession registered_long_path;
     assert(registered_long_path.set_bundled_dictionary_path(dictionary_path));
     registered_long_path.set_user_dictionary({

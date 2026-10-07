@@ -75,6 +75,9 @@ internal class AzooKeyDictionary(
         val additionalDictionaryVersion: String,
     )
     private var cachedAdditionalEntries: List<Entry> = emptyList()
+    private var cachedLatticeReading = ""
+    private var cachedLatticeEntries: List<Entry> = emptyList()
+    private var cachedLattice: Array<MutableMap<Int, MutableList<Path>>> = emptyArray()
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, List<String>>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, List<String>>): Boolean =
@@ -91,12 +94,8 @@ internal class AzooKeyDictionary(
     ): DictionaryCandidates {
         if (reading.isBlank()) return DictionaryCandidates(emptyList(), emptyList())
         val katakana = reading.toKatakana()
-        var trackedEntries = 0
-        val dynamicEntries = additionalEntries.map {
+        val untrackedEntries = additionalEntries.map {
             val ruby = it.ruby.toKatakana()
-            val mask = if (trackedEntries < MAX_TRACKED_ADDITIONAL_ENTRIES &&
-                ruby.isNotEmpty() && katakana.contains(ruby)
-            ) 1 shl trackedEntries++ else 0
             Entry(
                 word = it.word,
                 ruby = ruby,
@@ -104,8 +103,26 @@ internal class AzooKeyDictionary(
                 rcid = it.rcid,
                 mid = it.mid,
                 score = it.wordWeight.toFloat(),
-                additionalMask = mask,
             )
+        }
+        val canKeepMasks = cachedLattice.isNotEmpty() &&
+            katakana.startsWith(cachedLatticeReading) &&
+            cachedLatticeEntries.map { it.copy(additionalMask = 0) } == untrackedEntries
+        var usedMask = 0
+        val dynamicEntries = untrackedEntries.mapIndexed { index, entry ->
+            val previousMask = if (canKeepMasks) cachedLatticeEntries[index].additionalMask else 0
+            if (previousMask != 0) {
+                usedMask = usedMask or previousMask
+                entry.copy(additionalMask = previousMask)
+            } else if (entry.ruby.isNotEmpty() && katakana.contains(entry.ruby)) {
+                val bit = (0 until MAX_TRACKED_ADDITIONAL_ENTRIES)
+                    .firstOrNull { usedMask and (1 shl it) == 0 }
+                if (bit == null) entry else {
+                    val mask = 1 shl bit
+                    usedMask = usedMask or mask
+                    entry.copy(additionalMask = mask)
+                }
+            } else entry
         }
         // Callers may update entries without supplying a version. Never reuse
         // a result from a different dynamic dictionary or candidate limit.
@@ -138,12 +155,28 @@ internal class AzooKeyDictionary(
         limit: Int,
         additionalEntries: List<Entry>,
     ): List<String> {
-        val lattice = Array(reading.length + 1) { mutableMapOf<Int, MutableList<Path>>() }
-        lattice[0][BOS_CID] = mutableListOf(Path("", 0f, BOS_CID, emptyList()))
+        val extendsCache = cachedLattice.isNotEmpty() &&
+            reading.startsWith(cachedLatticeReading) && cachedLatticeEntries == additionalEntries
+        val previousEnd = if (extendsCache) cachedLatticeReading.length else 0
+        val lattice = if (extendsCache) {
+            Array(reading.length + 1) { index ->
+                cachedLattice.getOrNull(index) ?: mutableMapOf()
+            }
+        } else {
+            Array(reading.length + 1) { mutableMapOf() }
+        }
+        if (!extendsCache) lattice[0][BOS_CID] = mutableListOf(Path("", 0f, BOS_CID, emptyList()))
+        val longestEntry = maxOf(MAX_WORD_LENGTH, additionalEntries.maxOfOrNull { it.ruby.length } ?: 0)
+        val firstStart = when {
+            extendsCache && previousEnd == reading.length -> reading.length
+            previousEnd >= longestEntry -> previousEnd - longestEntry + 1
+            else -> 0
+        }
 
-        for (start in reading.indices) {
-            val previous = lattice[start].values.flatMap { context ->
-                if (context.size > PATHS_PER_CONTEXT) trimContext(context)
+        for (start in firstStart until reading.length) {
+            val previous = lattice[start].flatMap { (contextKey, context) ->
+                val limit = if (contextKey >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
+                if (context.size > limit) trimContext(context, contextKey)
                 context
             }
             if (previous.isEmpty()) continue
@@ -151,11 +184,12 @@ internal class AzooKeyDictionary(
             val shard = shard(reading[start])
             val matchesByEnd = linkedMapOf<Int, MutableList<Entry>>()
             for ((end, entries) in shard?.matchingEntries(reading, start, MAX_WORD_LENGTH).orEmpty()) {
+                if (end <= previousEnd) continue
                 matchesByEnd.getOrPut(end) { mutableListOf() }.addAll(entries)
             }
             for (entry in additionalEntries) {
                 val end = start + entry.ruby.length
-                if (entry.ruby.isNotEmpty() &&
+                if (entry.ruby.isNotEmpty() && end > previousEnd &&
                     end <= reading.length &&
                     reading.regionMatches(start, entry.ruby, 0, entry.ruby.length)
                 ) {
@@ -170,11 +204,16 @@ internal class AzooKeyDictionary(
                 )
             }
             val ruby = reading[start].toString()
-            appendPaths(lattice[start + 1], previous, listOf(
-                Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
-                Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
-            ))
+            if (start + 1 > previousEnd) {
+                appendPaths(lattice[start + 1], previous, listOf(
+                    Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
+                    Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
+                ))
+            }
         }
+        cachedLatticeReading = reading
+        cachedLatticeEntries = additionalEntries
+        cachedLattice = lattice
 
         val ranked = lattice.last().values.flatten().sortedByDescending {
             it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
@@ -188,8 +227,10 @@ internal class AzooKeyDictionary(
         if (limit > leading) {
             // Preserve one complete spelling for each registered word. A long
             // suffix can otherwise fill the list with near-identical variants.
-            for (bit in 0 until additionalEntries.count { it.additionalMask != 0 }) {
-                ranked.firstOrNull { it.additionalMask and (1 shl bit) != 0 }
+            for (entry in additionalEntries) {
+                val mask = entry.additionalMask
+                if (mask == 0) continue
+                ranked.firstOrNull { it.additionalMask and mask != 0 }
                     ?.let { if (it.text.isNotBlank()) result.add(it.text) }
                 if (result.size >= limit) break
             }
@@ -242,13 +283,14 @@ internal class AzooKeyDictionary(
             for (index in 0 until touchedCount) {
                 val contextKey = touchedContexts[index]
                 val context = destination.getValue(contextKey)
-                if (context.size > CONTEXT_TRIM_THRESHOLD) trimContext(context)
+                if (context.size > CONTEXT_TRIM_THRESHOLD) trimContext(context, contextKey)
             }
         }
     }
 
-    private fun trimContext(context: MutableList<Path>) {
-        val best = context.sortedByDescending(Path::score).take(PATHS_PER_CONTEXT)
+    private fun trimContext(context: MutableList<Path>, contextKey: Int) {
+        val limit = if (contextKey >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
+        val best = context.sortedByDescending(Path::score).take(limit)
         context.clear()
         context.addAll(best)
     }
@@ -521,8 +563,9 @@ internal class AzooKeyDictionary(
         private const val MAX_WORD_LENGTH = 20
         private const val MAX_PREDICTION_DEPTH = 8
         private const val MAX_PREDICTION_NODES = 192
-        private const val PATHS_PER_CONTEXT = 20
-        private const val CONTEXT_TRIM_THRESHOLD = 64
+        private const val PATHS_PER_CONTEXT = 4
+        private const val ADDITIONAL_PATHS_PER_CONTEXT = 1
+        private const val CONTEXT_TRIM_THRESHOLD = 16
         private const val MAX_TRACKED_ADDITIONAL_ENTRIES = 4
         private const val DICTIONARY_THRESHOLD = -17f
         private const val DEFAULT_CONNECTION_SCORE = -25f

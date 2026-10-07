@@ -2056,7 +2056,14 @@ class AzooKeyInputMethodService : InputMethodService() {
             showDictionaryEditor(candidatePredictionReadings[word] ?: displayReading(), word)
         }
         val candidateSize = settings.optDouble("result_view_font_size", -1.0)
-        for ((index, candidate) in candidates.withIndex()) {
+        // The expanded panel retains every result. Recreating dozens of row
+        // views on each keystroke blocks the input method's UI thread.
+        val visibleIndices = (0 until minOf(candidates.size, 12)).toMutableList()
+        if (selectedCandidate !in visibleIndices && selectedCandidate in candidates.indices) {
+            visibleIndices.add(selectedCandidate)
+        }
+        for (index in visibleIndices) {
+            val candidate = candidates[index]
             candidateRow.addView(TextView(this).apply {
                 text = candidate
                 textLocale = Locale.JAPAN
@@ -2072,7 +2079,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
             }, candidateButtonLayoutParams())
         }
-        val selectedView = candidateRow.getChildAt(selectedCandidate + 1)
+        val selectedView = candidateRow.getChildAt(visibleIndices.indexOf(selectedCandidate) + 1)
         candidateScroll.post {
             if (dictionaryMode != DictionaryMode.CLOSED || selectedView?.parent !== candidateRow ||
                 candidateScroll.width <= 0) return@post
