@@ -2802,6 +2802,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
+        val activeHotfixEntries = hotfixDictionaryEntries.filter { entry ->
+            val ruby = katakanaToHiragana(entry.ruby)
+            ruby.isNotEmpty() && (reading.contains(ruby) || ruby.startsWith(reading))
+        }
         val specialCandidates = AzooKeySpecialCandidates.complete(reading)
         if (shouldDirectCommitJapaneseInput(reading) && specialCandidates.isEmpty()) return listOf(reading)
         val values = linkedSetOf<String>()
@@ -2837,7 +2841,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val registeredPredictions = rankUserPrefixPredictions(
             reading,
-            userPredictions + hotfixDictionaryEntries.mapNotNull { entry ->
+            userPredictions + activeHotfixEntries.mapNotNull { entry ->
                 val ruby = katakanaToHiragana(entry.ruby)
                 if (ruby.length <= reading.length || !ruby.startsWith(reading)) null
                 else ReadingPrediction(
@@ -2867,7 +2871,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             )
         }
         val registeredCombinationEntries =
-            hotfixDictionaryEntries.map { DictionaryCombinationEntry(it.ruby, it.word) } +
+            activeHotfixEntries.map { DictionaryCombinationEntry(it.ruby, it.word) } +
                 personalEntries.map { DictionaryCombinationEntry(it.ruby, it.word) }
         candidatePartialTexts = registeredCombinationEntries.mapNotNull { entry ->
             val ruby = katakanaToHiragana(entry.reading)
@@ -2879,12 +2883,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         )
         val combinedWords = registeredCombinations.take(8)
         candidateDictionaryPriority = (
-            registeredExact + hotfixDictionaryEntries.filter {
+            registeredExact + activeHotfixEntries.filter {
                 katakanaToHiragana(it.ruby) == reading
             }.map { it.word } + combinedWords + registeredPredictions.map(ReadingPrediction::text)
         ).filter(String::isNotBlank).distinct()
         val learning = learningScores()
-        val learnedDictionaryEntries = learnedCandidates(learning).filter {
+        val learnedEntries = learnedCandidates(learning)
+        val learnedDictionaryEntries = learnedEntries.filter {
             reading.contains(it.reading) || it.reading.startsWith(reading)
         }.map { entry ->
             val count = (entry.score * 8).coerceIn(0, 255)
@@ -2903,7 +2908,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             azooKeyDictionary.candidates(
                 reading,
                 predictionLimit,
-                additionalEntries = hotfixDictionaryEntries + personalEntries + learnedDictionaryEntries,
+                additionalEntries = activeHotfixEntries + personalEntries + learnedDictionaryEntries,
                 additionalDictionaryVersion = hotfixDictionaryVersion,
             )
         }.onFailure {
@@ -2911,7 +2916,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }.getOrElse {
             DictionaryCandidates(emptyList(), emptyList())
         }
-        val explicitWords = (personalEntries + hotfixDictionaryEntries + learnedDictionaryEntries)
+        val explicitWords = (personalEntries + activeHotfixEntries + learnedDictionaryEntries)
             .mapTo(mutableSetOf()) { it.word }
         val allowedOfficialConversions = officialCandidates.conversions.filter {
             it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
@@ -2966,7 +2971,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("kaomoji_dictionary_enabled", false)) kaomojiDictionary[reading]?.let(values::addAll)
         if (layout == "qwerty" && settings.optBoolean("roman_english_candidate", true)) values.add(rawRoman)
         val learned = exactLearnedJapaneseCandidates(reading, learning)
-        val learnedCombinationEntries = learnedCandidates(learning).filter {
+        val learnedCombinationEntries = learnedEntries.filter {
             reading.contains(it.reading)
         }.map {
             DictionaryCombinationEntry(it.reading, it.text, (3 + it.score / 16).coerceAtMost(5))
@@ -2983,7 +2988,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateTrustedCompleteTexts = if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
-        val explicitExactTexts = (personalEntries + hotfixDictionaryEntries).filter {
+        val explicitExactTexts = (personalEntries + activeHotfixEntries).filter {
             katakanaToHiragana(it.ruby) == reading
         }.map { it.word }.toSet() + learned
         candidateExactRegistrationTexts = explicitExactTexts
@@ -3027,11 +3032,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                     candidateBlockedCombinationValues, candidateExactRegistrationTexts,
                 )
             }.distinct()
-        val strongLearning = learnedCandidates(learning).any {
+        val strongLearning = learnedEntries.any {
             it.reading == reading && it.score >= 4
         }
         val exactRegistration = registeredExact.isNotEmpty() || strongLearning ||
-            hotfixDictionaryEntries.any { katakanaToHiragana(it.ruby) == reading }
+            activeHotfixEntries.any { katakanaToHiragana(it.ruby) == reading }
         val shortKanaDefault = reading.length <= 2 &&
             allowedOfficialConversions.take(2).contains(reading) &&
             allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))

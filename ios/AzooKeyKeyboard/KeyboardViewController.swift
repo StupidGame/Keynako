@@ -2589,6 +2589,10 @@ final class KeyboardViewController: UIInputViewController {
         guard !composing.isEmpty else { return [] }
         if mode == "english" { return buildEnglishCandidates(composing) }
         let reading = katakanaToHiragana(composing)
+        let activeConversionEntries = conversionDictionaryEntries.filter { entry in
+            let ruby = katakanaToHiragana(entry.ruby)
+            return !ruby.isEmpty && (reading.contains(ruby) || ruby.hasPrefix(reading))
+        }
         var result: [String] = []
         var exactUserTexts: [String] = []
         let allLearned = learnedCandidateEntries(learningScores(), english: false)
@@ -2641,7 +2645,7 @@ final class KeyboardViewController: UIInputViewController {
                 }
             }
         }
-        let sharedPrefixEntries = conversionDictionaryEntries.filter {
+        let sharedPrefixEntries = activeConversionEntries.filter {
             let ruby = katakanaToHiragana($0.ruby)
             return ruby.count > reading.count && ruby.hasPrefix(reading) && !$0.word.isEmpty
         }.sorted {
@@ -2685,7 +2689,7 @@ final class KeyboardViewController: UIInputViewController {
         ) ?? []).filter { !blockedEmoji.contains(Self.normalizedEmoji($0)) || exactUserTexts.contains($0) }
         let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
         result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
-        let registeredCombinationEntries = conversionDictionaryEntries.map {
+        let registeredCombinationEntries = activeConversionEntries.map {
             (ruby: $0.ruby, word: $0.word, importance: 3)
         }
         let registeredCombinations = dictionaryCombinations(
@@ -2800,7 +2804,7 @@ final class KeyboardViewController: UIInputViewController {
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
         let predictedTexts = Set(candidatePredictionReadings.keys).union(unknownPredictionTexts)
-        let partialTexts = Set(conversionDictionaryEntries.compactMap { entry -> String? in
+        let partialTexts = Set(activeConversionEntries.compactMap { entry -> String? in
             let ruby = katakanaToHiragana(entry.ruby)
             guard !ruby.isEmpty, reading.count > ruby.count, reading.hasPrefix(ruby) else { return nil }
             return entry.word + String(reading.dropFirst(ruby.count))
@@ -2836,7 +2840,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
         let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
-            conversionDictionaryEntries.contains { katakanaToHiragana($0.ruby) == reading }
+            activeConversionEntries.contains { katakanaToHiragana($0.ruby) == reading }
         let baselineLeadingTexts = conversionEngine.map {
             Array($0.baselineTexts.prefix(2))
         } ?? []
