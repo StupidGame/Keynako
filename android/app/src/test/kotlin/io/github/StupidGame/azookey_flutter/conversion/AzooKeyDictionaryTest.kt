@@ -62,6 +62,25 @@ class AzooKeyDictionaryTest {
         )
     }
 
+    @Test
+    fun longSentenceOffersKanaInsideTheBestConversion() {
+        val dictionary = syntheticDictionary()
+        val reading = "あ" + "かんじ".repeat(6) + "い"
+        val candidates = dictionary.candidates(
+            reading,
+            predictionLimit = 0,
+            additionalEntries = listOf(
+                AzooKeyHotfixDictionaryEntry("漢字", "かんじ", 0.0, 200, 200, 501),
+                AzooKeyHotfixDictionaryEntry("かんじ", "かんじ", -4.0, 200, 200, 501),
+            ),
+        ).conversions
+
+        assertEquals("あ" + "漢字".repeat(6) + "い", candidates.first())
+        assertTrue("middle kana spelling is missing: $candidates", candidates.contains(
+            "あ" + "漢字".repeat(2) + "かんじ" + "漢字".repeat(3) + "い",
+        ))
+    }
+
     private val dictionaryRoot: File by lazy {
         val workingDirectory = requireNotNull(System.getProperty("user.dir"))
         generateSequence(File(workingDirectory).absoluteFile) { it.parentFile }
@@ -105,6 +124,8 @@ class AzooKeyDictionaryTest {
             predictionLimit = 0,
         ).conversions
         assertEquals("私は今日東京の駅で友達と会いました", candidates.first())
+        assertTrue("middle hiragana spelling is buried: $candidates",
+            "私はきょう東京の駅で友達と会いました" in candidates.take(8))
     }
 
     @Test

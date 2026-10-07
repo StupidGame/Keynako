@@ -48,6 +48,19 @@ internal class AzooKeyDictionary(
         val lastRcid: Int,
         val clauseMids: List<Int>,
         val additionalMask: Int = 0,
+        val kanaAlternatives: KanaAlternativeNode? = null,
+    )
+
+    private data class KanaAlternative(
+        val start: Int,
+        val end: Int,
+        val kana: String,
+        val scoreLoss: Float,
+    )
+
+    private class KanaAlternativeNode(
+        val alternative: KanaAlternative,
+        val previous: KanaAlternativeNode?,
     )
 
     private data class ConnectionLine(
@@ -201,6 +214,7 @@ internal class AzooKeyDictionary(
                     lattice[end],
                     previous,
                     entries.sortedByDescending(Entry::score),
+                    offerKanaAlternatives = reading.length >= 10,
                 )
             }
             val ruby = reading[start].toString()
@@ -219,10 +233,24 @@ internal class AzooKeyDictionary(
             it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
         }
         val result = LinkedHashSet<String>()
-        val leading = minOf(limit, 5)
+        val leading = minOf(limit, if (reading.length >= 10) 2 else 5)
         for (path in ranked) {
             if (path.text.isNotBlank()) result.add(path.text)
             if (result.size >= leading) break
+        }
+        if (reading.length >= 10 && result.size < limit) {
+            // Beam pruning keeps the highest scoring spelling at each context.
+            // Rebuild local kana spellings from those complete paths so a long
+            // sentence can still offer hiragana in its middle.
+            val plainHiragana = reading.toHiragana()
+            val variants = ranked.asSequence().distinctBy(Path::text).take(3)
+                .flatMap { path -> kanaVariants(path).asSequence() }
+                .filter { it.first !in result && it.first != plainHiragana }
+                .distinctBy { it.first }
+                .sortedByDescending { it.second }
+                .take(minOf(8, limit - result.size))
+                .map { it.first }
+            result.addAll(variants.toList())
         }
         if (limit > leading) {
             // Preserve one complete spelling for each registered word. A long
@@ -242,12 +270,49 @@ internal class AzooKeyDictionary(
         return result.toList()
     }
 
+    private fun kanaVariants(path: Path): List<Pair<String, Float>> {
+        val alternatives = generateSequence(path.kanaAlternatives) { it.previous }
+            .map(KanaAlternativeNode::alternative)
+            .sortedBy(KanaAlternative::scoreLoss)
+            .take(8)
+            .toList()
+        val result = mutableListOf<Pair<String, Float>>()
+        for (alternative in alternatives) {
+            result.add(
+                path.text.replaceRange(alternative.start, alternative.end, alternative.kana) to
+                    (path.score - alternative.scoreLoss),
+            )
+        }
+        for (leftIndex in alternatives.indices) {
+            for (rightIndex in leftIndex + 1 until alternatives.size) {
+                val left = alternatives[leftIndex]
+                val right = alternatives[rightIndex]
+                val (first, second) = if (left.start < right.start) left to right else right to left
+                result.add(
+                    (path.text.substring(0, first.start) + first.kana +
+                        path.text.substring(first.end, second.start) + second.kana +
+                        path.text.substring(second.end)) to
+                        (path.score - first.scoreLoss - second.scoreLoss),
+                )
+            }
+        }
+        return result
+    }
+
     private fun appendPaths(
         destination: MutableMap<Int, MutableList<Path>>,
         previous: List<Path>,
         entries: List<Entry>,
+        offerKanaAlternatives: Boolean = false,
     ) {
+        val kana = if (offerKanaAlternatives) entries.firstOrNull()?.ruby?.toHiragana().orEmpty() else ""
+        val kanaScore = if (kana.isNotEmpty()) entries.asSequence()
+            .filter { it.word == kana }
+            .maxOfOrNull(Entry::score) else null
         for (entry in entries) {
+            val canOfferKana = kanaScore != null && entry.word != kana &&
+                entry.word.any { it in '\u3400'..'\u9fff' } &&
+                kana.length in 2..6 && entry.word.length <= 4
             val touchedContexts = IntArray(1 shl MAX_TRACKED_ADDITIONAL_ENTRIES)
             var touchedCount = 0
             for (path in previous) {
@@ -269,6 +334,15 @@ internal class AzooKeyDictionary(
                         lastRcid = entry.rcid,
                         clauseMids = clauseMids,
                         additionalMask = mask,
+                        kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
+                            KanaAlternative(
+                                path.text.length,
+                                path.text.length + entry.word.length,
+                                kana,
+                                (entry.score - checkNotNull(kanaScore)).coerceAtLeast(0f),
+                            ),
+                            path.kanaAlternatives,
+                        ) else path.kanaAlternatives,
                     ),
                 )
                 var touched = false

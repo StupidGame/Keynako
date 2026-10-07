@@ -65,24 +65,6 @@ class CandidatePredictionsTest {
     }
 
     @Test
-    fun hiraganaReadingStaysBesideTheBestCompleteSentence() {
-        assertEquals(
-            listOf("私は今日行きます", "わたしはきょういきます", "私は今日いきます", "明日行きます"),
-            surfaceHiraganaReading(
-                "わたしはきょういきます",
-                listOf("私は今日行きます", "私は今日いきます", "明日行きます", "わたしはきょういきます"),
-                emptyMap(),
-            ),
-        )
-        assertEquals(
-            listOf("きょう", "今日の予測"),
-            surfaceHiraganaReading(
-                "きょう", listOf("今日の予測"), mapOf("今日の予測" to "きょうの"),
-            ),
-        )
-    }
-
-    @Test
     fun shortKanaGrammarBeatsRareCompleteModelMatches() {
         val base = listOf("して", "シテ", "仕手", "子手")
         assertEquals("して", rerankedJapaneseCandidates(

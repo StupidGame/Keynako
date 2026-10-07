@@ -76,7 +76,6 @@ import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
-import io.github.StupidGame.azookey_flutter.conversion.surfaceHiraganaReading
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.conversion.zenzaiGenerationTokenBudget
@@ -134,7 +133,6 @@ class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
     private lateinit var candidateScroll: HorizontalScrollView
-    private lateinit var hiraganaCommitButton: TextView
     private lateinit var candidateExpandButton: TextView
     private lateinit var candidatePanel: ScrollView
     private lateinit var candidatePanelContent: LinearLayout
@@ -318,20 +316,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         val candidateHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(candidateScroll, LinearLayout.LayoutParams(0, dp(43), 1f))
-            hiraganaCommitButton = TextView(context).apply {
-                text = "ひら"
-                contentDescription = "ひらがなで確定"
-                gravity = Gravity.CENTER
-                textSize = 14f
-                setOnClickListener {
-                    if (dictionaryMode == DictionaryMode.CLOSED && !cursorBarVisible &&
-                        (composing.isNotEmpty() || rawRoman.isNotEmpty())) {
-                        commitComposition(useCandidate = false)
-                    }
-                }
-                visibility = View.GONE
-            }
-            addView(hiraganaCommitButton, LinearLayout.LayoutParams(dp(43), dp(43)))
             candidateExpandButton = TextView(context).apply {
                 gravity = Gravity.CENTER
                 textSize = 20f
@@ -2093,7 +2077,6 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun renderCandidates(showTabs: Boolean = composing.isEmpty()) {
         if (!::candidateRow.isInitialized) return
         if (dictionaryMode != DictionaryMode.CLOSED) return
-        hiraganaCommitButton.visibility = View.GONE
         candidateRow.removeAllViews()
         candidateScroll.scrollTo(0, 0)
         if (showTabs) {
@@ -2134,10 +2117,6 @@ class AzooKeyInputMethodService : InputMethodService() {
             val word = candidates.getOrNull(selectedCandidate).orEmpty()
             showDictionaryEditor(candidatePredictionReadings[word] ?: displayReading(), word)
         }
-        hiraganaCommitButton.visibility = if (mode == "japanese" &&
-            displayReading().any { it in '\u3041'..'\u3096' }) View.VISIBLE else View.GONE
-        hiraganaCommitButton.background = roundedDrawable(palette.key, dp(6).toFloat())
-        hiraganaCommitButton.setTextColor(palette.text)
         val candidateSize = settings.optDouble("result_view_font_size", -1.0)
         // The expanded panel retains every result. Recreating dozens of row
         // views on each keystroke blocks the input method's UI thread.
@@ -2263,7 +2242,6 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun showDictionaryList() {
         dictionaryMode = DictionaryMode.LIST
-        hiraganaCommitButton.visibility = View.GONE
         dictionaryReadingField = null
         dictionaryWordField = null
         dictionaryActiveField = null
@@ -2315,7 +2293,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         reading: String = "", word: String = "", id: Int? = null, importance: Int = 3,
     ) {
         dictionaryMode = DictionaryMode.EDIT
-        hiraganaCommitButton.visibility = View.GONE
         dictionaryEditingId = id
         dictionaryImportance = importance.coerceIn(1, 5)
         dictionaryEnglishReading = mode == "english" || (id != null && reading.all { it.code < 128 })
@@ -2477,7 +2454,6 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderCursorBar() {
-        hiraganaCommitButton.visibility = View.GONE
         if (!::candidateRow.isInitialized) return
         candidateRow.removeAllViews()
         val bar = CursorBarView()
@@ -2916,9 +2892,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
                     blockedCombinationValues, exactRegistrationTexts)
             }
-            candidates = surfaceHiraganaReading(
-                reading, reranked, predictionReadings,
-            ).toMutableList()
+            candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
                     normalizedIncompleteTexts, blockedCombinationValues, exactRegistrationTexts)) {
@@ -3202,14 +3176,9 @@ class AzooKeyInputMethodService : InputMethodService() {
             allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))
         if (shortKanaDefault &&
             !exactRegistration) {
-            return surfaceHiraganaReading(
-                reading, listOf(reading) + ordered.filter { it != reading }, candidatePredictionReadings,
-            )
+            return listOf(reading) + ordered.filter { it != reading }
         }
-        return surfaceHiraganaReading(
-            reading, preferSingleKanaReading(reading, ordered, exactRegistration),
-            candidatePredictionReadings,
-        )
+        return preferSingleKanaReading(reading, ordered, exactRegistration)
     }
 
     private fun buildEnglishCandidates(input: String): List<String> {

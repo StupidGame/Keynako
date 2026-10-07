@@ -100,24 +100,6 @@ internal fun preferSingleKanaReading(
     return listOf(reading) + candidates.filter { it != reading }
 }
 
-/** Keep the typed hiragana beside the best complete conversion. */
-internal fun surfaceHiraganaReading(
-    reading: String,
-    candidates: List<String>,
-    predictionReadings: Map<String, String>,
-): List<String> {
-    val literal = katakanaToHiragana(reading)
-    if (literal.isBlank() || literal.none { it in '\u3041'..'\u3096' } ||
-        candidates.firstOrNull() == literal) return candidates
-    val bestComplete = candidates.firstOrNull { it != literal && it !in predictionReadings }
-    val remaining = candidates.filter { it != literal && it != bestComplete }
-    return if (bestComplete == null) {
-        listOf(literal) + remaining
-    } else {
-        listOf(bestComplete, literal) + remaining
-    }
-}
-
 /** Keep a new model suggestion visible without letting it displace common dictionary results. */
 internal fun placeNovelGeneratedCandidate(
     ranked: List<String>,
