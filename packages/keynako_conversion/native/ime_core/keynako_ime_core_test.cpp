@@ -477,6 +477,25 @@ int main() {
         "わたしはきょうとうきょうのえきでともだちとあいました", 1);
     assert(!long_sentence.empty() &&
            long_sentence.front() == "私は今日東京の駅で友達と会いました");
+    const auto registered_long_sentence = dictionary.candidates(
+        "わたしはきょうとうきょうのえきでともだちとあいましたそしてあしたもとうきょうにいきます",
+        48, {{"拙者", "わたし", 1285, 1285, -9.0f}});
+    assert(std::any_of(registered_long_sentence.begin(), registered_long_sentence.end(),
+        [](const std::string &candidate) {
+            return candidate.rfind("拙者は今日東京の駅で友達と会いました", 0) == 0;
+        }));
+    ImeSession registered_long_path;
+    assert(registered_long_path.set_bundled_dictionary_path(dictionary_path));
+    registered_long_path.set_user_dictionary({
+        {"わたし", "私", 3}, {"ともだち", "友達", 3},
+    });
+    for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
+        registered_long_path.append_ascii(value);
+    }
+    assert(std::any_of(registered_long_path.candidates().begin(),
+        registered_long_path.candidates().end(), [](const auto &candidate) {
+            return candidate.text == "私は今日東京の駅で友達と会いました";
+        }));
     ImeSession stable_clause;
     assert(stable_clause.set_bundled_dictionary_path(dictionary_path));
     std::string committed_prefix;

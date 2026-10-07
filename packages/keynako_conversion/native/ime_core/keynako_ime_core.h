@@ -93,8 +93,10 @@ private:
     std::vector<Candidate> candidates_;
     std::vector<DictionaryEntry> user_dictionary_;
     std::unordered_set<std::string> incomplete_combination_texts_;
+    std::unordered_set<std::string> normalized_incomplete_combination_texts_;
     std::unordered_set<std::string> exact_registered_texts_;
     std::vector<std::string> blocked_combination_values_;
+    bool allow_trusted_complete_combination_ = false;
     std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;
     std::size_t selected_index_ = 0;
     // Session-local preferences are bounded and never include surrounding text.

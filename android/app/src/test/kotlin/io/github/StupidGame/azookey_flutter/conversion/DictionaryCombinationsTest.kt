@@ -41,6 +41,24 @@ class DictionaryCombinationsTest {
         assertTrue(!usesMultipleRegisteredValues(
             "マキナとレイナピョ", entries.map { it.value }, setOf("マキナとレイナピョ"),
         ))
+        assertTrue(isAllowedCombinationCandidate(
+            "私は今日東京の駅で友達と会いました",
+            setOf("私は今日東京の駅で友達と会いました"), emptySet(),
+            listOf("私", "友達"), emptySet(),
+        ))
+        assertTrue(!isAllowedCombinationCandidate(
+            "マキナとレイナピョ", setOf("マキナとレイナピョ"), setOf("まきなとれいなぴょ"),
+            entries.map { it.value }, emptySet(),
+        ))
+        assertTrue(!hasLongOrdinaryGapBetweenRegisteredWords("まきなぴょれいな", entries))
+        assertTrue(!hasLongOrdinaryGapBetweenRegisteredWords("まきなとれいなぴょ", entries))
+        assertTrue(hasLongOrdinaryGapBetweenRegisteredWords(
+            "わたしはきょうとうきょうのえきでともだちとあいました",
+            listOf(
+                DictionaryCombinationEntry("わたし", "私"),
+                DictionaryCombinationEntry("ともだち", "友達"),
+            ),
+        ))
     }
 
     @Test

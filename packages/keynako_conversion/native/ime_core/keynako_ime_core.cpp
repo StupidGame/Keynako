@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <tuple>
 #include <unordered_map>
@@ -241,6 +242,36 @@ bool is_combination_connector(const std::string &value) {
         }
     }
     return reachable.back();
+}
+
+bool has_long_ordinary_gap_between_registered_words(
+    const std::string &reading, const std::vector<DictionaryEntry> &entries) {
+    struct Span { std::size_t start; std::size_t end; };
+    std::vector<Span> spans;
+    for (const auto &entry : entries) {
+        const auto ruby = convert_kana(entry.reading, false);
+        if (ruby.empty() || entry.value.empty()) continue;
+        for (auto start = reading.find(ruby); start != std::string::npos;
+             start = reading.find(ruby, start + 1)) {
+            spans.push_back({start, start + ruby.size()});
+        }
+    }
+    const auto valid_gap = [](const std::string &gap) {
+        return is_combination_connector(gap) || utf8_character_count(gap) >= 3;
+    };
+    for (const auto &first : spans) for (const auto &second : spans) {
+        if (second.start < first.end) continue;
+        const std::vector<std::string> gaps = {
+            reading.substr(0, first.start),
+            reading.substr(first.end, second.start - first.end),
+            reading.substr(second.end),
+        };
+        if (std::all_of(gaps.begin(), gaps.end(), valid_gap) &&
+            std::any_of(gaps.begin(), gaps.end(), [](const auto &gap) {
+                return utf8_character_count(gap) >= 3 && !is_combination_connector(gap);
+            })) return true;
+    }
+    return false;
 }
 
 std::vector<std::string> dictionary_combinations(
@@ -974,10 +1005,18 @@ void ImeSession::rebuild_candidates() {
     literal_suffix = display_literal_suffix(literal_suffix, mode_);
     reading_ = conversion_reading + literal_suffix;
     incomplete_combination_texts_.clear();
+    normalized_incomplete_combination_texts_.clear();
     exact_registered_texts_.clear();
     blocked_combination_values_.clear();
+    allow_trusted_complete_combination_ = false;
     const auto append_converted = [&](std::string text, const char *source) {
-        if (is_incomplete_combination_candidate(text)) return;
+        // Keep full lattice paths through ordinary words, while rejecting the
+        // literal kana variants of an incomplete registered combination.
+        if (std::strcmp(source, "azookey") == 0 && allow_trusted_complete_combination_) {
+            if (normalized_incomplete_combination_texts_.find(convert_kana(text, false)) !=
+                normalized_incomplete_combination_texts_.end() &&
+                exact_registered_texts_.find(text) == exact_registered_texts_.end()) return;
+        } else if (is_incomplete_combination_candidate(text)) return;
         text += literal_suffix;
         append_unique(candidates_, seen, std::move(text), source);
     };
@@ -1057,6 +1096,8 @@ void ImeSession::rebuild_candidates() {
     std::vector<DictionaryEntry> all_combination_entries = user_dictionary_;
     all_combination_entries.insert(all_combination_entries.end(),
         learned_combination_entries.begin(), learned_combination_entries.end());
+    allow_trusted_complete_combination_ = has_long_ordinary_gap_between_registered_words(
+        conversion_reading, all_combination_entries);
     if (dictionary_combinations(conversion_reading, all_combination_entries, 1, true, 2).empty()) {
         std::unordered_set<std::string> seen_values;
         for (const auto &entry : all_combination_entries) {
@@ -1076,6 +1117,7 @@ void ImeSession::rebuild_candidates() {
     for (const auto &value : all_combinations) {
         if (exact_combination_texts.find(value) == exact_combination_texts.end()) {
             incomplete_combination_texts_.insert(value);
+            normalized_incomplete_combination_texts_.insert(convert_kana(value, false));
         }
     }
     for (const auto &entry : user_dictionary_) {

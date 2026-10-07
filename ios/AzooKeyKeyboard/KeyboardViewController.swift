@@ -2691,6 +2691,9 @@ final class KeyboardViewController: UIInputViewController {
         let exactRegisteredTexts = Set(exactUserTexts + allLearned.filter {
             $0.reading == reading
         }.map(\.text))
+        let trustedCompleteTexts: Set<String> = hasLongOrdinaryGapBetweenRegisteredWords(
+            reading, entries: activeCombinationEntries
+        ) ? Set(conversionEngine?.baselineTexts ?? []) : []
         let hasExactPair = activeCombinationEntries.count >= 2 && !dictionaryCombinations(
             reading, entries: activeCombinationEntries, limit: 1, minimumRegisteredWords: 2
         ).isEmpty
@@ -2704,6 +2707,9 @@ final class KeyboardViewController: UIInputViewController {
                 reading, entries: activeCombinationEntries, limit: 128,
                 minimumRegisteredWords: 2
             )).subtracting(exactRegisteredTexts)
+        let normalizedIncompleteCombinationTexts = Set(
+            incompleteCombinationTexts.map(katakanaToHiragana)
+        )
         let registeredTexts = Set(registeredCombinations)
         var learnedCombinationTexts = dictionaryCombinations(
             reading, entries: learnedCombinationEntries
@@ -2805,10 +2811,17 @@ final class KeyboardViewController: UIInputViewController {
         let ordered = (officialComplete + exactUserTexts + exactLearning.map(\.text)
             + combinedTexts + learnedCombinationTexts + localComplete
             + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter { candidate in
-            !candidate.isEmpty && !incompleteCombinationTexts.contains(candidate) &&
-                (exactRegisteredTexts.contains(candidate) || blockedCombinedValues.filter {
-                    candidate.contains($0)
-                }.count < 2) && seen.insert(candidate).inserted
+            guard !candidate.isEmpty else { return false }
+            if !exactRegisteredTexts.contains(candidate) {
+                if normalizedIncompleteCombinationTexts.contains(katakanaToHiragana(candidate)) {
+                    return false
+                }
+                if !trustedCompleteTexts.contains(candidate) &&
+                    blockedCombinedValues.filter({ candidate.contains($0) }).count >= 2 {
+                    return false
+                }
+            }
+            return seen.insert(candidate).inserted
         }
         let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
         let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
@@ -2856,6 +2869,35 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
         return reachable[characters.count]
+    }
+
+    private func hasLongOrdinaryGapBetweenRegisteredWords(
+        _ reading: String, entries: [(ruby: String, word: String, importance: Int)]
+    ) -> Bool {
+        let characters = Array(reading)
+        var spans: [(start: Int, end: Int)] = []
+        for entry in entries where !entry.word.isEmpty {
+            let ruby = Array(katakanaToHiragana(entry.ruby))
+            guard !ruby.isEmpty, ruby.count <= characters.count else { continue }
+            for start in 0...(characters.count - ruby.count) where
+                characters[start..<(start + ruby.count)].elementsEqual(ruby) {
+                spans.append((start, start + ruby.count))
+            }
+        }
+        for first in spans {
+            for second in spans where second.start >= first.end {
+                let gaps = [
+                    String(characters[0..<first.start]),
+                    String(characters[first.end..<second.start]),
+                    String(characters[second.end..<characters.count])
+                ]
+                if gaps.allSatisfy({ isCombinationConnector($0) || $0.count >= 3 }) &&
+                    gaps.contains(where: { $0.count >= 3 && !isCombinationConnector($0) }) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private func dictionaryCombinations(

@@ -25,6 +25,37 @@ private fun isCombinationConnector(value: String): Boolean {
     return reachable.last()
 }
 
+/** Allow a verified full conversion to join registered words across ordinary words. */
+internal fun hasLongOrdinaryGapBetweenRegisteredWords(
+    reading: String,
+    entries: List<DictionaryCombinationEntry>,
+): Boolean {
+    data class Span(val start: Int, val end: Int)
+    val spans = mutableListOf<Span>()
+    for (entry in entries) {
+        val ruby = katakanaToHiragana(entry.reading)
+        if (ruby.isEmpty() || entry.value.isEmpty()) continue
+        var start = reading.indexOf(ruby)
+        while (start >= 0) {
+            spans.add(Span(start, start + ruby.length))
+            start = reading.indexOf(ruby, start + 1)
+        }
+    }
+    fun validGap(gap: String) = isCombinationConnector(gap) || gap.length >= 3
+    for (first in spans) for (second in spans) {
+        if (second.start < first.end) continue
+        val gaps = listOf(
+            reading.substring(0, first.start),
+            reading.substring(first.end, second.start),
+            reading.substring(second.end),
+        )
+        if (gaps.all(::validGap) && gaps.any { it.length >= 3 && !isCombinationConnector(it) }) {
+            return true
+        }
+    }
+    return false
+}
+
 /** Compose complete registered words with grammatical kana between or after them. */
 internal fun dictionaryCombinationCandidates(
     reading: String,
@@ -117,3 +148,17 @@ internal fun usesMultipleRegisteredValues(
     explicitExactTexts: Set<String> = emptySet(),
 ): Boolean = text !in explicitExactTexts && registeredValues.asSequence()
     .filter(String::isNotBlank).distinct().count { text.contains(it) } >= 2
+
+/** A lattice conversion has consumed the whole reading, including ordinary words. */
+internal fun isAllowedCombinationCandidate(
+    text: String,
+    trustedCompleteTexts: Set<String>,
+    normalizedIncompleteTexts: Set<String>,
+    blockedCombinedValues: List<String>,
+    exactRegisteredTexts: Set<String>,
+): Boolean {
+    if (text in exactRegisteredTexts) return true
+    if (katakanaToHiragana(text) in normalizedIncompleteTexts) return false
+    return text in trustedCompleteTexts ||
+        !usesMultipleRegisteredValues(text, blockedCombinedValues, exactRegisteredTexts)
+}

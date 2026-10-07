@@ -58,7 +58,8 @@ import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
 import io.github.StupidGame.azookey_flutter.conversion.dictionaryCombinationCandidates
 import io.github.StupidGame.azookey_flutter.conversion.incompleteDictionaryCombinations
-import io.github.StupidGame.azookey_flutter.conversion.usesMultipleRegisteredValues
+import io.github.StupidGame.azookey_flutter.conversion.hasLongOrdinaryGapBetweenRegisteredWords
+import io.github.StupidGame.azookey_flutter.conversion.isAllowedCombinationCandidate
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandidates
@@ -154,9 +155,10 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateDictionaryPriority = emptyList<String>()
     private var candidateLearningPriority = emptyList<String>()
     private var candidatePartialTexts = emptySet<String>()
-    private var candidateIncompleteCombinationTexts = emptySet<String>()
+    private var candidateNormalizedIncompleteCombinationTexts = emptySet<String>()
     private var candidateBlockedCombinationValues = emptyList<String>()
     private var candidateExactRegistrationTexts = emptySet<String>()
+    private var candidateTrustedCompleteTexts = emptySet<String>()
     private var candidateExpanded = false
     private var dictionaryMode = DictionaryMode.CLOSED
     private var dictionaryEditingId: Int? = null
@@ -2731,9 +2733,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         val dictionaryPriority = candidateDictionaryPriority
         val learningPriority = candidateLearningPriority
         val partialTexts = candidatePartialTexts
-        val incompleteCombinationTexts = candidateIncompleteCombinationTexts
+        val normalizedIncompleteTexts = candidateNormalizedIncompleteCombinationTexts
         val blockedCombinationValues = candidateBlockedCombinationValues
         val exactRegistrationTexts = candidateExactRegistrationTexts
+        val trustedCompleteTexts = candidateTrustedCompleteTexts
         zenzaiRuntime.rank(
             modelSize = size,
             reading = modelInput,
@@ -2755,13 +2758,14 @@ class AzooKeyInputMethodService : InputMethodService() {
                 partialCandidates = partialTexts,
                 preferredZenzaiCandidate = generated,
             ).filter {
-                it !in incompleteCombinationTexts &&
-                    !usesMultipleRegisteredValues(it, blockedCombinationValues, exactRegistrationTexts)
+                isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
+                    blockedCombinationValues, exactRegistrationTexts)
             }.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
-                selectedText !in incompleteCombinationTexts &&
-                !usesMultipleRegisteredValues(selectedText, blockedCombinationValues,
-                    exactRegistrationTexts)) candidates.add(0, selectedText)
+                isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
+                    normalizedIncompleteTexts, blockedCombinationValues, exactRegistrationTexts)) {
+                candidates.add(0, selectedText)
+            }
             selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
                 ?: defaultCandidateIndex()
             if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
@@ -2784,9 +2788,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateDictionaryPriority = emptyList()
         candidateLearningPriority = emptyList()
         candidatePartialTexts = emptySet()
-        candidateIncompleteCombinationTexts = emptySet()
+        candidateNormalizedIncompleteCombinationTexts = emptySet()
         candidateBlockedCombinationValues = emptyList()
         candidateExactRegistrationTexts = emptySet()
+        candidateTrustedCompleteTexts = emptySet()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
@@ -2968,6 +2973,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         val learnedCombinations = (learnedOnlyCombinations + mixedCombinations).distinct().take(8)
         values.addAll(learnedCombinations)
         val allCombinationEntries = registeredCombinationEntries + learnedCombinationEntries
+        candidateTrustedCompleteTexts = if (hasLongOrdinaryGapBetweenRegisteredWords(
+            reading, allCombinationEntries,
+        )) allowedOfficialConversions.toSet() else emptySet()
         val explicitExactTexts = (personalEntries + hotfixDictionaryEntries).filter {
             katakanaToHiragana(it.ruby) == reading
         }.map { it.word }.toSet() + learned
@@ -2977,9 +2985,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         ).isEmpty()) allCombinationEntries.filter {
             it.reading.isNotBlank() && reading.contains(katakanaToHiragana(it.reading))
         }.map { it.value }.distinct() else emptyList()
-        candidateIncompleteCombinationTexts = incompleteDictionaryCombinations(
+        candidateNormalizedIncompleteCombinationTexts = incompleteDictionaryCombinations(
             reading, allCombinationEntries, explicitExactTexts,
-        )
+        ).mapTo(mutableSetOf(), ::katakanaToHiragana)
         val exactTexts = values.toSet() + learned
         val learnedPrefixes = learnedJapanesePrefixPredictions(
             reading, learning, exactTexts, predictionLimit,
@@ -3007,10 +3015,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             officialComplete.drop(5) + completions.drop(3) +
             values.filter { it in candidatePartialTexts } + values.filter { it in fallback })
             .filter {
-                it.isNotBlank() && it !in candidateIncompleteCombinationTexts &&
-                    !usesMultipleRegisteredValues(
-                        it, candidateBlockedCombinationValues, candidateExactRegistrationTexts,
-                    )
+                it.isNotBlank() && isAllowedCombinationCandidate(
+                    it, candidateTrustedCompleteTexts, candidateNormalizedIncompleteCombinationTexts,
+                    candidateBlockedCombinationValues, candidateExactRegistrationTexts,
+                )
             }.distinct()
         val strongLearning = learnedCandidates(learning).any {
             it.reading == reading && it.score >= 4

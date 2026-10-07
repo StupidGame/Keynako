@@ -39,6 +39,7 @@ internal class AzooKeyDictionary(
         val rcid: Int,
         val mid: Int,
         val score: Float,
+        val additionalMask: Int = 0,
     )
 
     private data class Path(
@@ -46,6 +47,7 @@ internal class AzooKeyDictionary(
         val score: Float,
         val lastRcid: Int,
         val clauseMids: List<Int>,
+        val additionalMask: Int = 0,
     )
 
     private data class ConnectionLine(
@@ -89,14 +91,20 @@ internal class AzooKeyDictionary(
     ): DictionaryCandidates {
         if (reading.isBlank()) return DictionaryCandidates(emptyList(), emptyList())
         val katakana = reading.toKatakana()
+        var trackedEntries = 0
         val dynamicEntries = additionalEntries.map {
+            val ruby = it.ruby.toKatakana()
+            val mask = if (trackedEntries < MAX_TRACKED_ADDITIONAL_ENTRIES &&
+                ruby.isNotEmpty() && katakana.contains(ruby)
+            ) 1 shl trackedEntries++ else 0
             Entry(
                 word = it.word,
-                ruby = it.ruby.toKatakana(),
+                ruby = ruby,
                 lcid = it.lcid,
                 rcid = it.rcid,
                 mid = it.mid,
                 score = it.wordWeight.toFloat(),
+                additionalMask = mask,
             )
         }
         // Callers may update entries without supplying a version. Never reuse
@@ -168,12 +176,27 @@ internal class AzooKeyDictionary(
             ))
         }
 
-        val result = LinkedHashSet<String>()
-        for (path in lattice.last().values.flatten().sortedByDescending {
+        val ranked = lattice.last().values.flatten().sortedByDescending {
             it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
-        }) {
+        }
+        val result = LinkedHashSet<String>()
+        val leading = minOf(limit, 5)
+        for (path in ranked) {
             if (path.text.isNotBlank()) result.add(path.text)
+            if (result.size >= leading) break
+        }
+        if (limit > leading) {
+            // Preserve one complete spelling for each registered word. A long
+            // suffix can otherwise fill the list with near-identical variants.
+            for (bit in 0 until additionalEntries.count { it.additionalMask != 0 }) {
+                ranked.firstOrNull { it.additionalMask and (1 shl bit) != 0 }
+                    ?.let { if (it.text.isNotBlank()) result.add(it.text) }
+                if (result.size >= limit) break
+            }
+        }
+        for (path in ranked) {
             if (result.size >= limit) break
+            if (path.text.isNotBlank()) result.add(path.text)
         }
         return result.toList()
     }
@@ -184,7 +207,8 @@ internal class AzooKeyDictionary(
         entries: List<Entry>,
     ) {
         for (entry in entries) {
-            val context = destination.getOrPut(entry.rcid) { mutableListOf() }
+            val touchedContexts = IntArray(1 shl MAX_TRACKED_ADDITIONAL_ENTRIES)
+            var touchedCount = 0
             for (path in previous) {
                 val mid = if (contributesMid(entry)) entry.mid else UNKNOWN_MID
                 val clauseMids = when {
@@ -194,16 +218,32 @@ internal class AzooKeyDictionary(
                         contributesMid(entry) -> path.clauseMids.dropLast(1) + entry.mid
                     else -> path.clauseMids
                 }
+                val mask = path.additionalMask or entry.additionalMask
+                val contextKey = entry.rcid + mask * CID_COUNT
+                val context = destination.getOrPut(contextKey) { mutableListOf() }
                 context.add(
                     Path(
                         text = path.text + entry.word,
                         score = path.score + entry.score + connectionScore(path.lastRcid, entry.lcid),
                         lastRcid = entry.rcid,
                         clauseMids = clauseMids,
+                        additionalMask = mask,
                     ),
                 )
+                var touched = false
+                for (index in 0 until touchedCount) {
+                    if (touchedContexts[index] == contextKey) {
+                        touched = true
+                        break
+                    }
+                }
+                if (!touched) touchedContexts[touchedCount++] = contextKey
             }
-            if (context.size > CONTEXT_TRIM_THRESHOLD) trimContext(context)
+            for (index in 0 until touchedCount) {
+                val contextKey = touchedContexts[index]
+                val context = destination.getValue(contextKey)
+                if (context.size > CONTEXT_TRIM_THRESHOLD) trimContext(context)
+            }
         }
     }
 
@@ -483,6 +523,7 @@ internal class AzooKeyDictionary(
         private const val MAX_PREDICTION_NODES = 192
         private const val PATHS_PER_CONTEXT = 20
         private const val CONTEXT_TRIM_THRESHOLD = 64
+        private const val MAX_TRACKED_ADDITIONAL_ENTRIES = 4
         private const val DICTIONARY_THRESHOLD = -17f
         private const val DEFAULT_CONNECTION_SCORE = -25f
 

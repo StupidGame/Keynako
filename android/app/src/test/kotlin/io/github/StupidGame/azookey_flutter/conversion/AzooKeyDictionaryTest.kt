@@ -108,6 +108,21 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun longSentenceKeepsAnAlternativeRegisteredWord() {
+        val candidates = dictionary.candidates(
+            "わたしはきょうとうきょうのえきでともだちとあいましたそしてあしたもとうきょうにいきます",
+            predictionLimit = 0,
+            additionalEntries = listOf(AzooKeyHotfixDictionaryEntry(
+                word = "拙者", ruby = "わたし", wordWeight = -9.0,
+                lcid = 1285, rcid = 1285, mid = 501,
+            )),
+        ).conversions
+        assertTrue("registered spelling disappeared: $candidates", candidates.any {
+            it.startsWith("拙者は今日東京の駅で友達と会いました")
+        })
+    }
+
+    @Test
     fun matchesAzooKeysLongSentenceReference() {
         val candidates = dictionary.candidates(
             "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた",

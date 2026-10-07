@@ -148,10 +148,11 @@ public final class AzooKeyConversionEngine {
         }
         func options(
             for mode: ConvertRequestOptions.ZenzaiMode,
-            predictiveInput: Bool
+            predictiveInput: Bool,
+            bestCount: Int = 20
         ) -> ConvertRequestOptions {
             ConvertRequestOptions(
-                N_best: 20,
+                N_best: bestCount,
                 requireJapanesePrediction: .autoMix,
                 requireEnglishPrediction: .disabled,
                 keyboardLanguage: .ja_JP,
@@ -173,7 +174,8 @@ public final class AzooKeyConversionEngine {
         // Keep a standard conversion available when model suggestions are unusual.
         let baseline = converter.requestCandidates(
             composingText,
-            options: options(for: .off, predictiveInput: false)
+            options: options(for: .off, predictiveInput: false,
+                bestCount: reading.count >= 16 ? 48 : 20)
         )
         let baselineLeadingTexts = baseline.mainResults.prefix(2).map(\.text)
         let keepShortReading = reading.count <= 2 && baselineLeadingTexts.contains(reading) &&

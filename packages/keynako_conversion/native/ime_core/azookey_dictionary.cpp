@@ -1,6 +1,7 @@
 #include "azookey_dictionary.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -29,6 +30,7 @@ constexpr std::size_t kMaxPredictionDepth = 8;
 constexpr std::size_t kMaxPredictionNodes = 192;
 constexpr std::size_t kPathsPerContext = 20;
 constexpr std::size_t kContextTrimThreshold = 64;
+constexpr int kMaxTrackedAdditionalEntries = 4;
 constexpr float kDictionaryThreshold = -17.0f;
 constexpr float kDefaultConnectionScore = -25.0f;
 constexpr int kProperNounCid = 1288;
@@ -160,6 +162,7 @@ struct Entry {
     int rcid = 0;
     int mid = kUnknownMid;
     float score = 0;
+    int additional_mask = 0;
 };
 
 struct BeamPath {
@@ -167,6 +170,7 @@ struct BeamPath {
     float score = 0;
     int last_rcid = 0;
     std::vector<int> clause_mids;
+    int additional_mask = 0;
 };
 
 struct ConnectionLine {
@@ -430,20 +434,31 @@ struct AzooKeyDictionary::Impl {
                       const std::vector<BeamPath> &previous,
                       const std::vector<Entry> &entries) {
         for (const auto &entry : entries) {
-            auto &context_paths = destination[entry.rcid];
+            std::array<int, 1 << kMaxTrackedAdditionalEntries> touched_contexts{};
+            std::size_t touched_count = 0;
             for (const auto &path : previous) {
                 BeamPath next{path.text + entry.word,
                     path.score + entry.score + connection_score(path.last_rcid, entry.lcid),
-                    entry.rcid, path.clause_mids};
+                    entry.rcid, path.clause_mids, path.additional_mask | entry.additional_mask};
                 if (next.clause_mids.empty() || begins_clause(path.last_rcid, entry.lcid)) {
                     next.clause_mids.push_back(contributes_mid(entry) ? entry.mid : kUnknownMid);
                 } else if ((next.clause_mids.back() == kUnknownMid && entry.mid != kUnknownMid) ||
                            contributes_mid(entry)) {
                     next.clause_mids.back() = entry.mid;
                 }
+                const int context_key = entry.rcid + next.additional_mask * kCidCount;
+                auto &context_paths = destination[context_key];
                 context_paths.push_back(std::move(next));
+                if (std::find(touched_contexts.begin(), touched_contexts.begin() + touched_count,
+                              context_key) == touched_contexts.begin() + touched_count) {
+                    touched_contexts[touched_count++] = context_key;
+                }
             }
-            if (context_paths.size() > kContextTrimThreshold) trim_context(context_paths);
+            for (std::size_t index = 0; index < touched_count; ++index) {
+                const int context_key = touched_contexts[index];
+                auto &context_paths = destination[context_key];
+                if (context_paths.size() > kContextTrimThreshold) trim_context(context_paths);
+            }
         }
     }
 
@@ -494,11 +509,17 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
     };
     std::vector<DynamicEntry> dynamic_entries;
     dynamic_entries.reserve(additional_entries.size());
+    int tracked_entries = 0;
     for (const auto &value : additional_entries) {
         auto ruby = to_katakana(utf8_to_u32(value.ruby));
         if (ruby.empty() || value.word.empty()) continue;
+        int mask = 0;
+        if (tracked_entries < kMaxTrackedAdditionalEntries &&
+            std::search(reading.begin(), reading.end(), ruby.begin(), ruby.end()) != reading.end()) {
+            mask = 1 << tracked_entries++;
+        }
         dynamic_entries.push_back({std::move(ruby),
-            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score}});
+            {value.word, value.ruby, value.lcid, value.rcid, value.mid, value.score, mask}});
     }
     std::vector<std::unordered_map<int, std::vector<BeamPath>>> lattice(reading.size() + 1);
     lattice.front()[kBosCid].push_back({"", 0, kBosCid, {}});
@@ -555,9 +576,27 @@ std::vector<std::string> AzooKeyDictionary::candidates(const std::string &hiraga
         [](const BeamPath &left, const BeamPath &right) { return left.score > right.score; });
     std::unordered_set<std::string> seen;
     std::vector<std::string> result;
-    for (const auto &path : complete) {
+    const auto add = [&](const BeamPath &path) {
         if (!path.text.empty() && seen.insert(path.text).second) result.push_back(path.text);
+    };
+    const auto leading = std::min<std::size_t>(limit, 5);
+    for (const auto &path : complete) {
+        add(path);
+        if (result.size() >= leading) break;
+    }
+    if (limit > leading) {
+        // Keep a complete path for each registered spelling when a long
+        // suffix would otherwise fill every candidate slot with near-duplicates.
+        for (int bit = 0; bit < tracked_entries && result.size() < limit; ++bit) {
+            const auto found = std::find_if(complete.begin(), complete.end(), [bit](const BeamPath &path) {
+                return (path.additional_mask & (1 << bit)) != 0;
+            });
+            if (found != complete.end()) add(*found);
+        }
+    }
+    for (const auto &path : complete) {
         if (result.size() >= limit) break;
+        add(path);
     }
     return result;
 }
