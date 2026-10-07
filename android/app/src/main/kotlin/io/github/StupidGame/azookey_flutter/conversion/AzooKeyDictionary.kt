@@ -118,8 +118,11 @@ internal class AzooKeyDictionary(
                 score = it.wordWeight.toFloat(),
             )
         }
+        val crossingKanaThreshold = cachedLatticeReading.length < KANA_VARIANT_MIN_READING_LENGTH &&
+            katakana.length >= KANA_VARIANT_MIN_READING_LENGTH
         val canKeepMasks = cachedLattice.isNotEmpty() &&
             katakana.startsWith(cachedLatticeReading) &&
+            !crossingKanaThreshold &&
             cachedLatticeEntries.map { it.copy(additionalMask = 0) } == untrackedEntries
         var usedMask = 0
         val dynamicEntries = untrackedEntries.mapIndexed { index, entry ->
@@ -169,7 +172,9 @@ internal class AzooKeyDictionary(
         additionalEntries: List<Entry>,
     ): List<String> {
         val extendsCache = cachedLattice.isNotEmpty() &&
-            reading.startsWith(cachedLatticeReading) && cachedLatticeEntries == additionalEntries
+            reading.startsWith(cachedLatticeReading) && cachedLatticeEntries == additionalEntries &&
+            (reading.length < KANA_VARIANT_MIN_READING_LENGTH ||
+                cachedLatticeReading.length >= KANA_VARIANT_MIN_READING_LENGTH)
         val previousEnd = if (extendsCache) cachedLatticeReading.length else 0
         val lattice = if (extendsCache) {
             Array(reading.length + 1) { index ->
@@ -214,7 +219,7 @@ internal class AzooKeyDictionary(
                     lattice[end],
                     previous,
                     entries.sortedByDescending(Entry::score),
-                    offerKanaAlternatives = reading.length >= 10,
+                    offerKanaAlternatives = reading.length >= KANA_VARIANT_MIN_READING_LENGTH,
                 )
             }
             val ruby = reading[start].toString()
@@ -233,12 +238,12 @@ internal class AzooKeyDictionary(
             it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
         }
         val result = LinkedHashSet<String>()
-        val leading = minOf(limit, if (reading.length >= 10) 2 else 5)
+        val leading = minOf(limit, if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH) 2 else 5)
         for (path in ranked) {
             if (path.text.isNotBlank()) result.add(path.text)
             if (result.size >= leading) break
         }
-        if (reading.length >= 10 && result.size < limit) {
+        if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH && result.size < limit) {
             // Beam pruning keeps the highest scoring spelling at each context.
             // Rebuild local kana spellings from those complete paths so a long
             // sentence can still offer hiragana in its middle.
@@ -635,6 +640,7 @@ internal class AzooKeyDictionary(
         private const val SHARD_SHIFT = 11
         private const val LOCAL_MASK = (1 shl SHARD_SHIFT) - 1
         private const val MAX_WORD_LENGTH = 20
+        private const val KANA_VARIANT_MIN_READING_LENGTH = 10
         private const val MAX_PREDICTION_DEPTH = 8
         private const val MAX_PREDICTION_NODES = 192
         private const val PATHS_PER_CONTEXT = 4
