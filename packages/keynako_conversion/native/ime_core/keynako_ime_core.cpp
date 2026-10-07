@@ -1085,7 +1085,7 @@ void ImeSession::rebuild_candidates() {
                 }
             }
         }
-        if (ruby == reading_) {
+        if (ruby == conversion_reading) {
             for (const auto &[word, score] : scores) {
                 if (score > 0) learned_exact.push_back(word);
             }
@@ -1224,7 +1224,7 @@ void ImeSession::rebuild_candidates() {
         append_converted(entry.text, entry.source.c_str());
     }
     for (const auto &word : learned_exact) {
-        append_unique(candidates_, seen, word, "learned");
+        append_unique(candidates_, seen, word + literal_suffix, "learned");
     }
     const auto dictionary = kDictionary.find(conversion_reading);
     if (dictionary != kDictionary.end()) {

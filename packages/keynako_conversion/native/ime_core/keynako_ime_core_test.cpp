@@ -82,6 +82,27 @@ int main() {
     assert(std::any_of(recalled.candidates().begin(), recalled.candidates().end(),
         [](const auto &candidate) { return candidate.text == "Keynako"; }));
 
+    ImeSession learned_suffix;
+    for (const auto &word : {"創作語一", "創作語二"}) {
+        learned_suffix.clear();
+        for (const char value : std::string("tesuto")) learned_suffix.append_ascii(value);
+        learned_suffix.insert_zenzai_candidate(word);
+        assert(learned_suffix.begin_conversion());
+        const auto chosen = std::find_if(learned_suffix.candidates().begin(), learned_suffix.candidates().end(),
+            [word](const auto &candidate) { return candidate.text == word; });
+        assert(chosen != learned_suffix.candidates().end());
+        assert(learned_suffix.select_candidate(
+            static_cast<std::size_t>(chosen - learned_suffix.candidates().begin())));
+        learned_suffix.learn_selected();
+    }
+    learned_suffix.clear();
+    for (const char value : std::string("tesuto")) learned_suffix.append_ascii(value);
+    learned_suffix.append_ascii('?');
+    for (const auto &word : {"創作語一？", "創作語二？"}) {
+        assert(std::any_of(learned_suffix.candidates().begin(), learned_suffix.candidates().end(),
+            [word](const auto &candidate) { return candidate.text == word; }));
+    }
+
     ImeSession fixed_priority;
     for (const char value : std::string("tesuto")) fixed_priority.append_ascii(value);
     fixed_priority.insert_zenzai_candidate("学習語");
