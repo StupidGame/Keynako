@@ -300,6 +300,25 @@ void main() {
     expect(candidates.map((candidate) => candidate.text), contains('今日'));
   });
 
+  test(
+    'keeps both kana spellings among the first candidates with many matches',
+    () {
+      final candidates = converter.candidates(
+        input: 'にほんご',
+        options: ConversionOptions(
+          userDictionary: List.generate(
+            20,
+            (index) =>
+                ConversionDictionaryEntry(reading: 'にほんご', value: '登録$index'),
+          ),
+        ),
+      );
+      final texts = candidates.map((candidate) => candidate.text).toList();
+      expect(texts.indexOf('にほんご'), inInclusiveRange(0, 3));
+      expect(texts.indexOf('ニホンゴ'), inInclusiveRange(0, 4));
+    },
+  );
+
   test('puts complete standard matches before registered completions', () {
     final candidates = converter.candidates(
       input: 'にほ',
@@ -346,11 +365,10 @@ void main() {
         (candidate) => candidate.text == '仮面ライダー',
       );
       expect(riderIndex, greaterThan(0));
+      expect(riderIndex, lessThan(9));
       expect(
-        riderIndex,
-        lessThan(
-          candidates.indexWhere((candidate) => candidate.text == reading),
-        ),
+        candidates.indexWhere((candidate) => candidate.text == reading),
+        lessThan(9),
       );
       expect(
         candidates

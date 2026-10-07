@@ -2826,11 +2826,12 @@ final class KeyboardViewController: UIInputViewController {
             + learnedPrefixes.map(\.text) + prefixPredictions
             + result.filter { partialTexts.contains($0) }
         var seen = Set<String>()
-        let ordered = (officialComplete + exactUserTexts + exactLearning.map(\.text)
+        let filtered = (officialComplete + exactUserTexts + exactLearning.map(\.text)
             + combinedTexts + learnedCombinationTexts + localComplete
             + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter { candidate in
             guard !candidate.isEmpty else { return false }
-            if !exactRegisteredTexts.contains(candidate) {
+            if candidate != hiragana && candidate != fullKatakana &&
+                !exactRegisteredTexts.contains(candidate) {
                 if normalizedIncompleteCombinationTexts.contains(katakanaToHiragana(candidate)) {
                     return false
                 }
@@ -2841,6 +2842,7 @@ final class KeyboardViewController: UIInputViewController {
             }
             return seen.insert(candidate).inserted
         }
+        let ordered = keepKanaCandidatesVisible(reading: reading, candidates: filtered)
         let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
         let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
             activeConversionEntries.contains { katakanaToHiragana($0.ruby) == reading }
@@ -4835,6 +4837,21 @@ private func katakanaToHiragana(_ value: String) -> String {
         }
         return Character(scalar)
     })
+}
+
+private func keepKanaCandidatesVisible(reading: String, candidates: [String]) -> [String] {
+    let hiragana = katakanaToHiragana(reading)
+    let katakana = hiraganaToKatakana(hiragana)
+    guard !hiragana.isEmpty, hiragana != katakana else { return candidates }
+    var visible = candidates
+    for (literal, latestIndex) in [(hiragana, 3), (katakana, 4)] {
+        if let currentIndex = visible.firstIndex(of: literal) {
+            if currentIndex <= latestIndex { continue }
+            visible.remove(at: currentIndex)
+        }
+        visible.insert(literal, at: min(latestIndex, visible.count))
+    }
+    return visible
 }
 
 private let romanMap: [String: String] = [

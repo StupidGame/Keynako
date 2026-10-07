@@ -8,6 +8,19 @@ import org.junit.Test
 class CandidatePredictionsTest {
 
     @Test
+    fun literalKanaRemainVisibleWithManyDictionaryAndModelCandidates() {
+        val alternatives = (1..20).map { "変換$it" }
+        val visible = keepKanaCandidatesVisible("ながいぶんしょう", alternatives)
+        assertEquals("変換1", visible.first())
+        assertTrue(visible.indexOf("ながいぶんしょう") in 0..3)
+        assertTrue(visible.indexOf("ナガイブンショウ") in 0..4)
+        assertEquals(1, visible.count { it == "ながいぶんしょう" })
+        assertEquals(1, visible.count { it == "ナガイブンショウ" })
+        assertEquals(listOf("して", "シテ", "仕手"),
+            keepKanaCandidatesVisible("して", listOf("して", "シテ", "仕手")))
+    }
+
+    @Test
     fun learnedWordsComposeAcrossUnchangedKana() {
         val learned = listOf(
             DictionaryCombinationEntry("わたし", "私"),

@@ -798,14 +798,38 @@ class JapaneseConverter {
     }
 
     if (!options.liveConversion || sourceReading != reading) {
-      return preferReading([
-        ...pinned,
-        ...prioritized.where(
-          (candidate) => !pinnedTexts.contains(candidate.text),
-        ),
-      ]);
+      return _keepKanaCandidatesVisible(
+        reading,
+        preferReading([
+          ...pinned,
+          ...prioritized.where(
+            (candidate) => !pinnedTexts.contains(candidate.text),
+          ),
+        ]),
+      );
     }
-    return preferReading(prioritized);
+    return _keepKanaCandidatesVisible(reading, preferReading(prioritized));
+  }
+
+  List<ConversionCandidate> _keepKanaCandidatesVisible(
+    String reading,
+    List<ConversionCandidate> candidates,
+  ) {
+    final katakana = hiraganaToKatakana(reading);
+    if (reading.isEmpty || reading == katakana) return candidates;
+    final visible = List<ConversionCandidate>.of(candidates);
+    for (final (text, source, latestIndex) in [
+      (reading, 'hiragana', 3),
+      (katakana, 'katakana', 4),
+    ]) {
+      final index = visible.indexWhere((candidate) => candidate.text == text);
+      if (index >= 0 && index <= latestIndex) continue;
+      final candidate = index >= 0
+          ? visible.removeAt(index)
+          : ConversionCandidate(text: text, reading: reading, source: source);
+      visible.insert(latestIndex.clamp(0, visible.length).toInt(), candidate);
+    }
+    return visible;
   }
 
   List<ConversionCandidate> _priorityOrder(

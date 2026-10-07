@@ -819,6 +819,19 @@ void ImeSession::prioritize_learning() {
             std::rotate(candidates_.begin(), literal, literal + 1);
         }
     }
+    const auto katakana = hiragana_to_katakana(reading_);
+    if (!reading_.empty() && katakana != reading_) {
+        const auto pin = [this](const std::string &text, std::size_t latest_index) {
+            const auto found = std::find_if(candidates_.begin(), candidates_.end(),
+                [&text](const auto &candidate) { return candidate.text == text; });
+            if (found == candidates_.end() ||
+                static_cast<std::size_t>(found - candidates_.begin()) <= latest_index) return;
+            std::rotate(candidates_.begin() + static_cast<std::ptrdiff_t>(latest_index),
+                found, found + 1);
+        };
+        pin(reading_, 3);
+        pin(katakana, 4);
+    }
 }
 bool ImeSession::begin_conversion() {
     if (raw_input_.empty() || candidates_.empty()) return false;
@@ -1245,7 +1258,8 @@ void ImeSession::rebuild_candidates() {
     }
     const auto conversion_count = candidates_.size();
     append_unique(candidates_, seen, reading_, "reading");
-    append_converted(hiragana_to_katakana(conversion_reading), "katakana");
+    append_unique(candidates_, seen,
+        hiragana_to_katakana(conversion_reading) + literal_suffix, "katakana");
     append_unique(candidates_, seen, raw_input_, "latin");
     auto insertion = candidates_.begin() +
         static_cast<std::ptrdiff_t>(std::min<std::size_t>(1, candidates_.size()));

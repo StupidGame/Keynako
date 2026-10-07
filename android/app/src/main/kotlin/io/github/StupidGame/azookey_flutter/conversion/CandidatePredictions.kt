@@ -100,6 +100,21 @@ internal fun preferSingleKanaReading(
     return listOf(reading) + candidates.filter { it != reading }
 }
 
+/** Keep both literal kana spellings in the visible candidate row. */
+internal fun keepKanaCandidatesVisible(reading: String, candidates: List<String>): List<String> {
+    val hiragana = katakanaToHiragana(reading)
+    val katakana = hiraganaToKatakana(hiragana)
+    if (hiragana.isBlank() || hiragana == katakana) return candidates
+    val visible = candidates.toMutableList()
+    for ((literal, latestIndex) in listOf(hiragana to 3, katakana to 4)) {
+        val currentIndex = visible.indexOf(literal)
+        if (currentIndex in 0..latestIndex) continue
+        if (currentIndex >= 0) visible.removeAt(currentIndex)
+        visible.add(minOf(latestIndex, visible.size), literal)
+    }
+    return visible
+}
+
 /** Keep a new model suggestion visible without letting it displace common dictionary results. */
 internal fun placeNovelGeneratedCandidate(
     ranked: List<String>,

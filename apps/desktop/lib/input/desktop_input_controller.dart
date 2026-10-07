@@ -602,7 +602,10 @@ class DesktopInputController extends ChangeNotifier {
               ? score
               : left.$1.compareTo(right.$1);
         });
-      _candidates = ranked.map((entry) => entry.$2).toList();
+      _candidates = _keepKanaCandidatesVisible(
+        reading,
+        ranked.map((entry) => entry.$2).toList(),
+      );
       _selectedIndex = selectedText == null
           ? 0
           : _candidates.indexWhere((value) => value.text == selectedText);
@@ -624,6 +627,28 @@ class DesktopInputController extends ChangeNotifier {
     if (candidate.source.startsWith('user')) return 1;
     if (candidate.source.startsWith('learned')) return 2;
     return 0;
+  }
+
+  List<ConversionCandidate> _keepKanaCandidatesVisible(
+    String reading,
+    List<ConversionCandidate> candidates,
+  ) {
+    final hiragana = _japaneseConverter.katakanaToHiragana(reading);
+    final katakana = _japaneseConverter.hiraganaToKatakana(hiragana);
+    if (hiragana.isEmpty || hiragana == katakana) return candidates;
+    final visible = List<ConversionCandidate>.of(candidates);
+    for (final (text, source, latestIndex) in [
+      (hiragana, 'hiragana', 3),
+      (katakana, 'katakana', 4),
+    ]) {
+      final index = visible.indexWhere((candidate) => candidate.text == text);
+      if (index >= 0 && index <= latestIndex) continue;
+      final candidate = index >= 0
+          ? visible.removeAt(index)
+          : ConversionCandidate(text: text, reading: hiragana, source: source);
+      visible.insert(latestIndex.clamp(0, visible.length).toInt(), candidate);
+    }
+    return visible;
   }
 
   static bool _unusualModelText(String value, String reading) {

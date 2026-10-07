@@ -65,6 +65,7 @@ import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidat
 import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.firstCompleteJapaneseCandidateIndex
 import io.github.StupidGame.azookey_flutter.conversion.hiraganaToKatakana
+import io.github.StupidGame.azookey_flutter.conversion.keepKanaCandidatesVisible
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHalfWidth
 import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
@@ -2882,7 +2883,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         ) { ranked, generated ->
             if (displayReading() != reading || ranked.isEmpty()) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
-            val reranked = rerankedJapaneseCandidates(
+            val katakana = hiraganaToKatakana(reading)
+            val rankedCandidates = rerankedJapaneseCandidates(
                 reading = reading,
                 ranked = ranked,
                 baseCandidates = baseCandidates,
@@ -2895,9 +2897,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                 exactRegistrationTexts = explicitDictionaryTexts,
                 dictionaryLedLiteral = officialLiteralReading,
             ).filter {
-                isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
-                    blockedCombinationValues, exactRegistrationTexts)
+                it == reading || it == katakana || isAllowedCombinationCandidate(
+                    it, trustedCompleteTexts, normalizedIncompleteTexts,
+                    blockedCombinationValues, exactRegistrationTexts,
+                )
             }
+            val reranked = keepKanaCandidatesVisible(reading, rankedCandidates)
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
@@ -3172,10 +3177,12 @@ class AzooKeyInputMethodService : InputMethodService() {
             officialComplete.drop(5) + completions.drop(3) +
             values.filter { it in candidatePartialTexts } + values.filter { it in fallback })
             .filter {
-                it.isNotBlank() && isAllowedCombinationCandidate(
-                    it, candidateTrustedCompleteTexts, candidateNormalizedIncompleteCombinationTexts,
-                    candidateBlockedCombinationValues, candidateExactRegistrationTexts,
-                )
+                it.isNotBlank() && (it == reading || it == katakana ||
+                    isAllowedCombinationCandidate(
+                        it, candidateTrustedCompleteTexts,
+                        candidateNormalizedIncompleteCombinationTexts,
+                        candidateBlockedCombinationValues, candidateExactRegistrationTexts,
+                    ))
             }.distinct()
         val strongLearning = learnedEntries.any {
             it.reading == reading && it.score >= 4
@@ -3187,9 +3194,11 @@ class AzooKeyInputMethodService : InputMethodService() {
             allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))
         if (shortKanaDefault &&
             !exactRegistration) {
-            return listOf(reading) + ordered.filter { it != reading }
+            return keepKanaCandidatesVisible(reading, listOf(reading) + ordered.filter { it != reading })
         }
-        return preferSingleKanaReading(reading, ordered, exactRegistration)
+        return keepKanaCandidatesVisible(
+            reading, preferSingleKanaReading(reading, ordered, exactRegistration),
+        )
     }
 
     private fun buildEnglishCandidates(input: String): List<String> {

@@ -10,6 +10,27 @@ int main() {
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
     assert(ImeSession::roman_to_hiragana("nani?") == "なに？");
     assert(ImeSession::roman_to_hiragana("nani!") == "なに！");
+    ImeSession visible_kana;
+    std::vector<keynako::DictionaryEntry> many_entries;
+    for (int index = 0; index < 20; ++index) {
+        many_entries.push_back({"にほんご", "登録" + std::to_string(index), 3});
+    }
+    visible_kana.set_user_dictionary(std::move(many_entries));
+    for (const char value : std::string("nihongo")) visible_kana.append_ascii(value);
+    const auto check_visible_kana = [&visible_kana] {
+        const auto &candidates = visible_kana.candidates();
+        const auto position = [&candidates](const std::string &text) {
+            const auto found = std::find_if(candidates.begin(), candidates.end(),
+                [&text](const auto &candidate) { return candidate.text == text; });
+            return found == candidates.end() ? candidates.size() :
+                static_cast<std::size_t>(found - candidates.begin());
+        };
+        assert(position("にほんご") <= 3);
+        assert(position("ニホンゴ") <= 4);
+    };
+    check_visible_kana();
+    visible_kana.insert_zenzai_candidate("日本語");
+    check_visible_kana();
     ImeSession learning;
     for (int repeat = 0; repeat < 100; ++repeat) {
         for (const char value : std::string("ai")) learning.append_ascii(value);
@@ -417,7 +438,8 @@ int main() {
         for (const char value : std::string(input)) exact_combination_session.append_ascii(value);
         assert(std::none_of(exact_combination_session.candidates().begin(),
             exact_combination_session.candidates().end(), [](const auto &candidate) {
-            return candidate.text.find("マキナ") != std::string::npos &&
+            return candidate.source != "katakana" &&
+                candidate.text.find("マキナ") != std::string::npos &&
                 candidate.text.find("レイナ") != std::string::npos;
         }));
     }

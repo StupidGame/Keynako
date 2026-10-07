@@ -6,6 +6,44 @@ import 'package:keynako_desktop/input/desktop_input_controller.dart';
 import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
+  test(
+    'kana remain on the first candidate page after model reranking',
+    () async {
+      final repository = _FakeSharedDictionaryRepository()
+        ..snapshot = SharedDictionarySnapshot(
+          revision: 'kana',
+          version: '1.1',
+          lastUpdate: 'today',
+          entries: List.generate(
+            20,
+            (index) =>
+                ConversionDictionaryEntry(reading: 'にほんご', value: '登録$index'),
+          ),
+        );
+      final engine = _FakeZenzaiEngine();
+      final controller = DesktopInputController(
+        sharedDictionaryRepository: repository,
+        zenzaiEngineFactory: (_) async => engine,
+      );
+      await controller.importSharedDictionary();
+      await controller.setZenzaiModel(ZenzaiModel.xsmall);
+      controller.updateRawInput('nihongo');
+      for (var attempt = 0; attempt < 60; attempt++) {
+        if (engine.lastRequest != null && !controller.zenzaiWorking) break;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(engine.lastRequest, isNotNull);
+      expect(controller.zenzaiWorking, isFalse);
+      final candidates = controller.candidates
+          .map((candidate) => candidate.text)
+          .toList();
+      expect(candidates.indexOf('にほんご'), inInclusiveRange(0, 3));
+      expect(candidates.indexOf('ニホンゴ'), inInclusiveRange(0, 4));
+      expect(candidates.first, isNot(anyOf('にほんご', 'ニホンゴ')));
+      controller.dispose();
+    },
+  );
+
   test('one kana stays literal and unusual model marks are ignored', () async {
     final engine = _FakeZenzaiEngine()..result = 'て゚';
     final controller = DesktopInputController(
