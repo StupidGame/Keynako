@@ -107,7 +107,14 @@ class CandidatePredictionsTest {
             ranked = listOf("さプライ", "サプライ"),
             baseCandidates = listOf("サプライ", "さプライ"),
             predictionReadings = emptyMap(),
-            learning = emptyMap(),
+            learning = mapOf("さぷらい\tさプライ" to 1),
+        ).first())
+        assertEquals("さプライ", rerankedJapaneseCandidates(
+            reading = "さぷらい",
+            ranked = listOf("さプライ", "サプライ"),
+            baseCandidates = listOf("サプライ", "さプライ"),
+            predictionReadings = emptyMap(),
+            learning = mapOf("さぷらい\tさプライ" to 4),
         ).first())
     }
 

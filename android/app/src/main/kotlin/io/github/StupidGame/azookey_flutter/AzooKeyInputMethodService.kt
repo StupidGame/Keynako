@@ -166,6 +166,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateNormalizedIncompleteCombinationTexts = emptySet<String>()
     private var candidateBlockedCombinationValues = emptyList<String>()
     private var candidateExactRegistrationTexts = emptySet<String>()
+    private var candidateExplicitDictionaryTexts = emptySet<String>()
     private var candidateTrustedCompleteTexts = emptySet<String>()
     private var candidateExpanded = false
     private data class OfficialLookupRequest(
@@ -2867,6 +2868,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val normalizedIncompleteTexts = candidateNormalizedIncompleteCombinationTexts
         val blockedCombinationValues = candidateBlockedCombinationValues
         val exactRegistrationTexts = candidateExactRegistrationTexts
+        val explicitDictionaryTexts = candidateExplicitDictionaryTexts
         val trustedCompleteTexts = candidateTrustedCompleteTexts
         zenzaiRuntime.rank(
             modelSize = size,
@@ -2888,7 +2890,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 learningCandidates = learningPriority,
                 partialCandidates = partialTexts,
                 preferredZenzaiCandidate = generated,
-                exactRegistrationTexts = exactRegistrationTexts,
+                exactRegistrationTexts = explicitDictionaryTexts,
             ).filter {
                 isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
                     blockedCombinationValues, exactRegistrationTexts)
@@ -2940,6 +2942,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateNormalizedIncompleteCombinationTexts = emptySet()
         candidateBlockedCombinationValues = emptyList()
         candidateExactRegistrationTexts = emptySet()
+        candidateExplicitDictionaryTexts = emptySet()
         candidateTrustedCompleteTexts = emptySet()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
@@ -3123,9 +3126,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateTrustedCompleteTexts = if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
-        val explicitExactTexts = (personalEntries + activeHotfixEntries).filter {
+        val explicitDictionaryTexts = (personalEntries + activeHotfixEntries).filter {
             katakanaToHiragana(it.ruby) == reading
-        }.map { it.word }.toSet() + learned
+        }.map { it.word }.toSet()
+        val explicitExactTexts = explicitDictionaryTexts + learned
+        candidateExplicitDictionaryTexts = explicitDictionaryTexts
         candidateExactRegistrationTexts = explicitExactTexts
         candidateBlockedCombinationValues = if (dictionaryCombinationCandidates(
             reading, allCombinationEntries, 1,
