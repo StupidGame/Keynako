@@ -1691,6 +1691,9 @@ final class KeyboardViewController: UIInputViewController {
         if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         let now = CACurrentMediaTime()
+        let intervalMilliseconds = min(1000, max(100,
+            intSetting("quick_word_delete_interval_ms", fallback: 350)))
+        let interval = Double(intervalMilliseconds) / 1000
         if let pending = pendingQuickWordDelete, now <= pending.deadline {
             let applied: Bool
             if pending.composition {
@@ -1734,7 +1737,7 @@ final class KeyboardViewController: UIInputViewController {
                 : (rawRomanPrefix(forComposition: targetComposing) ?? "")
             delete()
             pendingQuickWordDelete = PendingQuickWordDelete(
-                deadline: now + 0.35,
+                deadline: now + interval,
                 composition: true,
                 expectedComposing: composing,
                 expectedRawRoman: rawRoman,
@@ -1755,7 +1758,7 @@ final class KeyboardViewController: UIInputViewController {
         let count = backwardWordDeleteCount(in: originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(
-            deadline: now + 0.35,
+            deadline: now + interval,
             composition: false,
             expectedContext: String(originalContext.dropLast()),
             remainingContextCount: max(0, count - 1)

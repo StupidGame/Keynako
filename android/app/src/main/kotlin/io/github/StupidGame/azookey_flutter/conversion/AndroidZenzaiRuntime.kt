@@ -18,6 +18,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
         Thread(runnable, "KeynakoZenzai")
     }
     private val requestSequence = AtomicLong(0)
+    private var pendingRank: Runnable? = null
 
     @Volatile
     private var loadedModelPath: String? = null
@@ -49,8 +50,10 @@ internal class AndroidZenzaiRuntime(context: Context) {
         if (closed) return
         val request = requestSequence.incrementAndGet()
         runCatching { ZenzEngine.cancelCurrent() }
-        executor.execute {
-            if (closed || request != requestSequence.get()) return@execute
+        pendingRank?.let(mainHandler::removeCallbacks)
+        pendingRank = null
+        val work = Runnable {
+            if (closed || request != requestSequence.get()) return@Runnable
             val startedAt = System.nanoTime()
             val result = runCatching {
                 if (!ensureModel(modelSize)) return@runCatching emptyList<String>() to null
@@ -109,7 +112,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
 
             if (result.first.isEmpty() || closed || request != requestSequence.get()) {
                 if (request == requestSequence.get()) Log.w(LOG_TAG, "Candidate ranking returned no result")
-                return@execute
+                return@Runnable
             }
             Log.i(
                 LOG_TAG,
@@ -120,10 +123,25 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 if (!closed && request == requestSequence.get()) callback(result.first, result.second)
             }
         }
+        val submit = Runnable {
+            if (closed || request != requestSequence.get()) return@Runnable
+            pendingRank = null
+            executor.execute(work)
+        }
+        if (reading.length >= LONG_READING_THRESHOLD) {
+            // A model pass scores several whole sentences. Let fast typing
+            // settle before using CPU on a result that will be cancelled.
+            pendingRank = submit
+            mainHandler.postDelayed(submit, LONG_READING_IDLE_MILLIS)
+        } else {
+            submit.run()
+        }
     }
 
     fun cancel() {
         requestSequence.incrementAndGet()
+        pendingRank?.let(mainHandler::removeCallbacks)
+        pendingRank = null
         runCatching { ZenzEngine.cancelCurrent() }
     }
 
@@ -131,6 +149,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
         if (closed) return
         closed = true
         requestSequence.incrementAndGet()
+        pendingRank?.let(mainHandler::removeCallbacks)
+        pendingRank = null
         runCatching { ZenzEngine.cancelCurrent() }
         executor.execute {
             runCatching { ZenzEngine.closeModel() }
@@ -158,6 +178,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
     private companion object {
         const val LOG_TAG = "KeynakoZenzai"
         const val MAX_RERANKED_CANDIDATES = 16
+        const val LONG_READING_THRESHOLD = 24
+        const val LONG_READING_IDLE_MILLIS = 150L
     }
 }
 

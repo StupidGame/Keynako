@@ -3539,6 +3539,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         if (deleteSelectedText()) return
         val now = SystemClock.uptimeMillis()
+        val intervalMillis = settings.optInt(
+            "quick_word_delete_interval_ms", DEFAULT_QUICK_WORD_DELETE_INTERVAL_MILLIS,
+        ).coerceIn(100, 1000).toLong()
         pendingQuickWordDelete?.let { pending ->
             val applied = if (now <= pending.deadlineMillis && pending.composition) {
                 if (
@@ -3588,7 +3591,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             delete()
             pendingQuickWordDelete = PendingQuickWordDelete(
-                deadlineMillis = now + QUICK_WORD_DELETE_INTERVAL_MILLIS,
+                deadlineMillis = now + intervalMillis,
                 composition = true,
                 expectedComposing = composing,
                 expectedRawRoman = rawRoman,
@@ -3613,7 +3616,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val firstDeleteCount = backwardCharacterDeleteCount(originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(
-            deadlineMillis = now + QUICK_WORD_DELETE_INTERVAL_MILLIS,
+            deadlineMillis = now + intervalMillis,
             composition = false,
             expectedContext = originalContext.dropLast(firstDeleteCount),
             remainingContextCount = (count - firstDeleteCount).coerceAtLeast(0),
@@ -4593,7 +4596,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         private const val LEGACY_AZOOKEY_HOTFIX_LATEST_TAG_KEY =
             "azooKey_hotfix_dictionary_storage_latest_tag"
         private const val IME_LOG_TAG = "KeynakoIME"
-        private const val QUICK_WORD_DELETE_INTERVAL_MILLIS = 350L
+        private const val DEFAULT_QUICK_WORD_DELETE_INTERVAL_MILLIS = 350
         @Volatile
         var activeInstance: AzooKeyInputMethodService? = null
 

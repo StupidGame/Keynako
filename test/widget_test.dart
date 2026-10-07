@@ -77,6 +77,36 @@ void main() {
     );
   });
 
+  testWidgets('saves the word delete double-tap interval', (tester) async {
+    final storage = MemoryStorage();
+    final controller = AppController(storage: storage);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: KeyboardSettingsPage()),
+      ),
+    );
+
+    final slider = find.byKey(const ValueKey('quick-word-delete-interval'));
+    await tester.scrollUntilVisible(slider, 240);
+    await tester.ensureVisible(slider);
+    await tester.pumpAndSettle();
+    expect(find.text('350 ms'), findsOneWidget);
+    await tester.drag(slider, const Offset(100, 0));
+    await tester.pumpAndSettle();
+    await controller.flush();
+
+    final value = controller.data.settings['quick_word_delete_interval_ms'];
+    expect(value, isA<int>());
+    expect(value, greaterThan(350));
+    expect(
+      AppData.decode(storage.value!).settings['quick_word_delete_interval_ms'],
+      value,
+    );
+  });
+
   testWidgets('keyboard sandbox opens a real editable input field', (
     tester,
   ) async {

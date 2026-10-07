@@ -10,6 +10,11 @@ class KeyboardSettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
     final automatic = controller.setting('automatic_keyboard_switching', true);
+    final wordDeleteInterval = controller
+        .setting<num>('quick_word_delete_interval_ms', 350)
+        .toInt()
+        .clamp(100, 1000)
+        .toInt();
     final customOptions = _customLayoutOptions(controller.data);
     final japaneseOptions = [
       const _LayoutOption('flick', 'フリック入力', '標準配列'),
@@ -127,6 +132,31 @@ class KeyboardSettingsPage extends StatelessWidget {
                 subtitle: Text('「拡張」でカスタムタブを作るか、Custard配列を読み込むと選択肢に追加されます。'),
               ),
             ),
+          const _SectionHeader('削除'),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.backspace_outlined),
+                  title: const Text('単語削除の連打受付時間'),
+                  subtitle: const Text('削除キーを2回押して単語を消すまでの時間。長くするとゆっくり押せる。'),
+                  trailing: Text('$wordDeleteInterval ms'),
+                ),
+                Slider.adaptive(
+                  key: const ValueKey('quick-word-delete-interval'),
+                  min: 100,
+                  max: 1000,
+                  divisions: 18,
+                  value: wordDeleteInterval.toDouble(),
+                  label: '$wordDeleteInterval ms',
+                  onChanged: (value) => controller.setSetting(
+                    'quick_word_delete_interval_ms',
+                    value.round(),
+                  ),
+                ),
+              ],
+            ),
+          ),
           const _SectionHeader('切り替えの対応'),
           Card(
             child: Column(
