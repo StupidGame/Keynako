@@ -78,6 +78,39 @@ class CandidatePredictionsTest {
     }
 
     @Test
+    fun dictionaryLedKanaWordsStayVisibleAheadOfModelAlternatives() {
+        for ((reading, alternative) in listOf(
+            "ようこそ" to "葉こそ",
+            "とかも" to "渡河も",
+        )) {
+            assertEquals(reading, rerankedJapaneseCandidates(
+                reading = reading,
+                ranked = listOf(alternative, reading),
+                baseCandidates = listOf(reading, alternative),
+                predictionReadings = emptyMap(),
+                learning = emptyMap(),
+            ).first())
+        }
+        assertEquals("登録語", rerankedJapaneseCandidates(
+            reading = "ようこそ",
+            ranked = listOf("登録語", "ようこそ"),
+            baseCandidates = listOf("ようこそ", "登録語"),
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+            dictionaryCandidates = listOf("登録語"),
+            exactRegistrationTexts = setOf("登録語"),
+        ).first())
+        assertEquals("Keynako", rerankedJapaneseCandidates(
+            reading = "きいなこ",
+            ranked = listOf("Keynako", "きいなこ"),
+            baseCandidates = listOf("きいなこ", "Keynako"),
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+            dictionaryLedLiteral = false,
+        ).first())
+    }
+
+    @Test
     fun modelDoesNotReintroduceUnwantedSpellingsOverCommonCompleteForms() {
         val negativeQuestion = listOf("無いか", "ないか", "内科")
         assertEquals("無いか", rerankedJapaneseCandidates(

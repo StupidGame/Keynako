@@ -439,6 +439,8 @@ int main() {
         "幼少期からテニス水泳野球少林寺拳法など様々なスポーツを経験しながら育ち小学校時代はロサンゼルス近郊に滞在しておりゴルフやテニスを習っていた");
     assert(dictionary.candidates("くろすうぉーず", 1).front() == "クロスウォーズ");
     assert(dictionary.candidates("さぷらい", 1).front() == "サプライ");
+    assert(dictionary.candidates("ようこそ", 1).front() == "ようこそ");
+    assert(dictionary.candidates("とかも", 1).front() == "とかも");
     assert(dictionary.candidates("ないか", 1).front() == "無いか");
     assert(dictionary.candidates("あいふぉん", 1).front() == "iPhone");
     assert(dictionary.candidates("くろす", 1,
@@ -455,6 +457,18 @@ int main() {
     assert(katakana_word.candidates().front().text == "サプライ");
     katakana_word.insert_zenzai_candidate("さプライ");
     assert(katakana_word.candidates().front().text == "サプライ");
+    ImeSession kana_word;
+    assert(kana_word.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("youkoso")) kana_word.append_ascii(value);
+    assert(kana_word.candidates().front().text == "ようこそ");
+    kana_word.insert_zenzai_candidate("葉こそ");
+    assert(kana_word.candidates().front().text == "ようこそ");
+    ImeSession kana_phrase;
+    assert(kana_phrase.set_bundled_dictionary_path(dictionary_path));
+    for (const char value : std::string("tokamo")) kana_phrase.append_ascii(value);
+    assert(kana_phrase.candidates().front().text == "とかも");
+    kana_phrase.insert_zenzai_candidate("渡河も");
+    assert(kana_phrase.candidates().front().text == "とかも");
     ImeSession short_reading;
     assert(short_reading.set_bundled_dictionary_path(dictionary_path));
     for (const char value : std::string("te")) short_reading.append_ascii(value);

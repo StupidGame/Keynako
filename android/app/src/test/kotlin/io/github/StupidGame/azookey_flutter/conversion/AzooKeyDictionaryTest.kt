@@ -121,6 +121,8 @@ class AzooKeyDictionaryTest {
     fun commonJapaneseSpellingsLeadAmbiguousReadings() {
         assertEquals("クロスウォーズ", dictionary.candidates("くろすうぉーず", 0).conversions.first())
         assertEquals("サプライ", dictionary.candidates("さぷらい", 0).conversions.first())
+        assertEquals("ようこそ", dictionary.candidates("ようこそ", 0).conversions.first())
+        assertEquals("とかも", dictionary.candidates("とかも", 0).conversions.first())
         assertEquals("無いか", dictionary.candidates("ないか", 0).conversions.first())
         assertEquals("iPhone", dictionary.candidates("あいふぉん", 0).conversions.first())
         assertEquals("CROSS", dictionary.candidates(

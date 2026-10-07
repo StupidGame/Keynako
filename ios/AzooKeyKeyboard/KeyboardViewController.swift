@@ -2844,9 +2844,10 @@ final class KeyboardViewController: UIInputViewController {
         let baselineLeadingTexts = conversionEngine.map {
             Array($0.baselineTexts.prefix(2))
         } ?? []
-        let shortRawReading = reading.count <= 2 && baselineLeadingTexts.contains(hiragana) &&
-            (baselineLeadingTexts.first == hiragana || baselineLeadingTexts.first == fullKatakana)
-        if !hasExactRegistration, shortRawReading, ordered.contains(hiragana) {
+        let literalReadingFirst = baselineLeadingTexts.first == hiragana ||
+            (reading.count <= 2 && baselineLeadingTexts.first == fullKatakana &&
+             baselineLeadingTexts.contains(hiragana))
+        if !hasExactRegistration, literalReadingFirst, ordered.contains(hiragana) {
             return [hiragana] + ordered.filter { $0 != hiragana }
         }
         if !hasExactRegistration, reading == "ないか", ordered.contains("無いか") {

@@ -151,6 +151,7 @@ internal fun rerankedJapaneseCandidates(
     partialCandidates: Set<String> = emptySet(),
     preferredZenzaiCandidate: String? = null,
     exactRegistrationTexts: Set<String> = emptySet(),
+    dictionaryLedLiteral: Boolean = baseCandidates.firstOrNull() == reading,
 ): List<String> {
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
     val predictionTexts = predictionReadings.keys + learnedPrefixes.map { it.text }
@@ -182,18 +183,18 @@ internal fun rerankedJapaneseCandidates(
         full.drop(predictionInsertion) +
         otherPredictions + partial + baseCandidates.filter { it in fallback } +
         ranked.filter { it in fallback }).filter(String::isNotBlank).distinct()
-    val exactRegistration = dictionaryCandidates.any { complete(it) } ||
-        learnedCandidates(learning).any {
-            it.reading == katakanaToHiragana(reading) && it.score >= 4
-        }
-    if (baseCandidates.firstOrNull() == reading && reading.length <= 2 &&
-        !exactRegistration && prominentPredictions.isEmpty()) {
-        return listOf(reading) + ordered.filter { it != reading }
-    }
     val strongLearnedWords = learnedCandidates(learning).filter {
         it.reading == katakanaToHiragana(reading) && it.score >= 4
     }.mapTo(mutableSetOf()) { it.text }
     val explicitlyPreferred = exactRegistrationTexts + strongLearnedWords
+    val exactRegistration = dictionaryCandidates.any { complete(it) } ||
+        explicitlyPreferred.isNotEmpty()
+    // A kana-only word or phrase can be a complete conversion. If the
+    // dictionary itself puts it first, do not demote it as a raw fallback.
+    if (baseCandidates.firstOrNull() == reading &&
+        (reading.length <= 2 || dictionaryLedLiteral) && !exactRegistration) {
+        return listOf(reading) + ordered.filter { it != reading }
+    }
     val leading = ordered.firstOrNull()
     val ordinarySpelling = when {
         // A bare negative question is more useful than a medical department

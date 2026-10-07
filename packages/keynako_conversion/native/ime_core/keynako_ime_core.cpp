@@ -921,7 +921,8 @@ void ImeSession::insert_zenzai_candidate(std::string value) {
     const bool exact_registration = std::any_of(user_dictionary_.begin(), user_dictionary_.end(),
         [this](const auto &entry) { return entry.reading == reading_; });
     if (utf8_character_count(reading_) <= 2 && !candidates_.empty() &&
-        candidates_.front().text == reading_ && !strong_learning && !exact_registration) return;
+        candidates_.front().text == reading_ &&
+        !strong_learning && !exact_registration) return;
     const auto existing = std::find_if(candidates_.begin(), candidates_.end(), [&value](const Candidate &candidate) {
         return candidate.text == value;
     });
@@ -934,7 +935,8 @@ void ImeSession::insert_zenzai_candidate(std::string value) {
     const bool novel = existing == candidates_.end();
     const bool ordinary_spelling_first = !candidates_.empty() &&
         !strong_learning && !exact_registration && value != candidates_.front().text &&
-        ((reading_ == "ないか" && candidates_.front().text == "無いか") ||
+        ((candidates_.front().text == reading_ && candidates_.front().source == "azookey") ||
+         (reading_ == "ないか" && candidates_.front().text == "無いか") ||
          (candidates_.front().text == hiragana_to_katakana(reading_) &&
           (mixes_hiragana_and_katakana(value) ||
            std::any_of(value.begin(), value.end(), [](unsigned char character) {

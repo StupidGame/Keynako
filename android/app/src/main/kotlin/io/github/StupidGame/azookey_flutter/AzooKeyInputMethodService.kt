@@ -167,6 +167,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateBlockedCombinationValues = emptyList<String>()
     private var candidateExactRegistrationTexts = emptySet<String>()
     private var candidateExplicitDictionaryTexts = emptySet<String>()
+    private var candidateOfficialLiteralReading = false
     private var candidateTrustedCompleteTexts = emptySet<String>()
     private var candidateExpanded = false
     private data class OfficialLookupRequest(
@@ -2869,6 +2870,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val blockedCombinationValues = candidateBlockedCombinationValues
         val exactRegistrationTexts = candidateExactRegistrationTexts
         val explicitDictionaryTexts = candidateExplicitDictionaryTexts
+        val officialLiteralReading = candidateOfficialLiteralReading
         val trustedCompleteTexts = candidateTrustedCompleteTexts
         zenzaiRuntime.rank(
             modelSize = size,
@@ -2891,6 +2893,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 partialCandidates = partialTexts,
                 preferredZenzaiCandidate = generated,
                 exactRegistrationTexts = explicitDictionaryTexts,
+                dictionaryLedLiteral = officialLiteralReading,
             ).filter {
                 isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
                     blockedCombinationValues, exactRegistrationTexts)
@@ -2943,6 +2946,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateBlockedCombinationValues = emptyList()
         candidateExactRegistrationTexts = emptySet()
         candidateExplicitDictionaryTexts = emptySet()
+        candidateOfficialLiteralReading = false
         candidateTrustedCompleteTexts = emptySet()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
@@ -3054,6 +3058,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             else -> lookupOfficialCandidates(request)
         }
+        candidateOfficialLiteralReading = officialCandidates.conversions.firstOrNull() == reading
         val explicitWords = (personalEntries + activeHotfixEntries + learnedDictionaryEntries)
             .mapTo(mutableSetOf()) { it.word }
         val allowedOfficialConversions = officialCandidates.conversions.filter {
