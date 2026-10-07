@@ -76,6 +76,7 @@ import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
+import io.github.StupidGame.azookey_flutter.conversion.surfaceHiraganaReading
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.conversion.zenzaiGenerationTokenBudget
@@ -117,6 +118,10 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -129,12 +134,17 @@ class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var root: LinearLayout
     private lateinit var candidateRow: LinearLayout
     private lateinit var candidateScroll: HorizontalScrollView
+    private lateinit var hiraganaCommitButton: TextView
     private lateinit var candidateExpandButton: TextView
     private lateinit var candidatePanel: ScrollView
     private lateinit var candidatePanelContent: LinearLayout
     private lateinit var keyboardContainer: LinearLayout
     private var state = JSONObject()
     private var settings = JSONObject()
+    private var cachedLearningSource: JSONObject? = null
+    private var cachedLearningScores: Map<String, Int> = emptyMap()
+    private var cachedUserDictionarySource: JSONArray? = null
+    private var cachedSortedUserEntries: List<JSONObject> = emptyList()
     private var composing = ""
     private var rawRoman = ""
     private var mode = "japanese"
@@ -160,6 +170,21 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateExactRegistrationTexts = emptySet<String>()
     private var candidateTrustedCompleteTexts = emptySet<String>()
     private var candidateExpanded = false
+    private data class OfficialLookupRequest(
+        val reading: String,
+        val predictionLimit: Int,
+        val additionalEntries: List<AzooKeyHotfixDictionaryEntry>,
+        val dictionaryVersion: String,
+    )
+    private val candidateRevision = AtomicLong()
+    private val candidateHandler = Handler(Looper.getMainLooper())
+    private val candidateExecutor = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue(),
+    ) { task -> Thread({
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+        task.run()
+    }, "KeynakoDictionary") }
+    private var pendingOfficialLookup: Pair<Long, OfficialLookupRequest>? = null
     private var dictionaryMode = DictionaryMode.CLOSED
     private var dictionaryEditingId: Int? = null
     private var dictionaryImportance = 3
@@ -170,6 +195,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var dictionaryActiveField: EditText? = null
     private var pendingReport: WrongConversionReport? = null
     private var hotfixDictionaryEntries = emptyList<AzooKeyHotfixDictionaryEntry>()
+    private data class IndexedHotfixEntry(
+        val index: Int,
+        val ruby: String,
+        val entry: AzooKeyHotfixDictionaryEntry,
+    )
+    private var hotfixEntriesByFirstKana = emptyMap<Char, List<IndexedHotfixEntry>>()
     private var hotfixDictionaryVersion = "none"
     private var backgroundImageSignature: String? = null
     private var hasLoadedState = false
@@ -194,6 +225,8 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     override fun onDestroy() {
         dismissFlickGuide()
+        invalidateCandidateLookup()
+        candidateExecutor.shutdownNow()
         if (activeInstance === this) activeInstance = null
         if (this::root.isInitialized) zenzaiRuntime.close()
         super.onDestroy()
@@ -202,6 +235,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     /** Reload Flutter state while the IME is already open. */
     fun refreshFromApp() {
         if (!::root.isInitialized) return
+        invalidateCandidateLookup()
         reloadState()
         applyKeyboardBackground()
         renderCandidates()
@@ -284,6 +318,20 @@ class AzooKeyInputMethodService : InputMethodService() {
         val candidateHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(candidateScroll, LinearLayout.LayoutParams(0, dp(43), 1f))
+            hiraganaCommitButton = TextView(context).apply {
+                text = "ひら"
+                contentDescription = "ひらがなで確定"
+                gravity = Gravity.CENTER
+                textSize = 14f
+                setOnClickListener {
+                    if (dictionaryMode == DictionaryMode.CLOSED && !cursorBarVisible &&
+                        (composing.isNotEmpty() || rawRoman.isNotEmpty())) {
+                        commitComposition(useCandidate = false)
+                    }
+                }
+                visibility = View.GONE
+            }
+            addView(hiraganaCommitButton, LinearLayout.LayoutParams(dp(43), dp(43)))
             candidateExpandButton = TextView(context).apply {
                 gravity = Gravity.CENTER
                 textSize = 20f
@@ -319,6 +367,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        invalidateCandidateLookup()
         dictionaryMode = DictionaryMode.CLOSED
         dictionaryReadingField = null
         dictionaryWordField = null
@@ -415,6 +464,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val values = dictionary?.optJSONArray("data")
         if (metadata?.optString("status") != "active" || values == null) {
             hotfixDictionaryEntries = emptyList()
+            hotfixEntriesByFirstKana = emptyMap()
             hotfixDictionaryVersion = "$tag|disabled"
             return
         }
@@ -437,8 +487,34 @@ class AzooKeyInputMethodService : InputMethodService() {
                 )
             }
         }
+        hotfixEntriesByFirstKana = hotfixDictionaryEntries.withIndex()
+            .mapNotNull { (index, entry) ->
+                val ruby = katakanaToHiragana(entry.ruby)
+                ruby.firstOrNull()?.let { it to IndexedHotfixEntry(index, ruby, entry) }
+            }.groupBy({ it.first }, { it.second })
         hotfixDictionaryVersion =
             "$tag|${metadata.optString("last_update", "unknown")}|${hotfixDictionaryEntries.size}"
+    }
+
+    private fun activeHotfixEntries(reading: String): List<AzooKeyHotfixDictionaryEntry> =
+        reading.toSet().asSequence()
+            .flatMap { hotfixEntriesByFirstKana[it].orEmpty().asSequence() }
+            .filter { reading.contains(it.ruby) || it.ruby.startsWith(reading) }
+            .sortedBy(IndexedHotfixEntry::index)
+            .map(IndexedHotfixEntry::entry)
+            .toList()
+
+    private fun sortedUserDictionaryEntries(): List<JSONObject> {
+        val dictionary = state.optJSONArray("userDictionary") ?: return emptyList()
+        if (dictionary === cachedUserDictionarySource) return cachedSortedUserEntries
+        return (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
+            .sortedWith(
+                compareByDescending<JSONObject> { it.optInt("importance", 3).coerceIn(1, 5) }
+                    .thenBy { it.optString("ruby").length },
+            ).also {
+                cachedUserDictionarySource = dictionary
+                cachedSortedUserEntries = it
+            }
     }
 
     private fun loadPalette(): KeyboardPalette {
@@ -2017,6 +2093,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun renderCandidates(showTabs: Boolean = composing.isEmpty()) {
         if (!::candidateRow.isInitialized) return
         if (dictionaryMode != DictionaryMode.CLOSED) return
+        hiraganaCommitButton.visibility = View.GONE
         candidateRow.removeAllViews()
         candidateScroll.scrollTo(0, 0)
         if (showTabs) {
@@ -2036,6 +2113,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (settings.optBoolean("display_tab_bar_button", true)) renderTabBar()
             return
         }
+        pendingOfficialLookup = null
+        candidateExecutor.queue.clear()
         val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
         candidates = buildCandidates().toMutableList()
         if (candidates.isEmpty()) candidates.add(displayReading())
@@ -2055,6 +2134,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             val word = candidates.getOrNull(selectedCandidate).orEmpty()
             showDictionaryEditor(candidatePredictionReadings[word] ?: displayReading(), word)
         }
+        hiraganaCommitButton.visibility = if (mode == "japanese" &&
+            displayReading().any { it in '\u3041'..'\u3096' }) View.VISIBLE else View.GONE
+        hiraganaCommitButton.background = roundedDrawable(palette.key, dp(6).toFloat())
+        hiraganaCommitButton.setTextColor(palette.text)
         val candidateSize = settings.optDouble("result_view_font_size", -1.0)
         // The expanded panel retains every result. Recreating dozens of row
         // views on each keystroke blocks the input method's UI thread.
@@ -2180,6 +2263,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun showDictionaryList() {
         dictionaryMode = DictionaryMode.LIST
+        hiraganaCommitButton.visibility = View.GONE
         dictionaryReadingField = null
         dictionaryWordField = null
         dictionaryActiveField = null
@@ -2231,6 +2315,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         reading: String = "", word: String = "", id: Int? = null, importance: Int = 3,
     ) {
         dictionaryMode = DictionaryMode.EDIT
+        hiraganaCommitButton.visibility = View.GONE
         dictionaryEditingId = id
         dictionaryImportance = importance.coerceIn(1, 5)
         dictionaryEnglishReading = mode == "english" || (id != null && reading.all { it.code < 128 })
@@ -2328,6 +2413,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         entry.put("isTemplateMode", false)
         if (target >= 0) dictionary.put(target, entry) else dictionary.put(entry)
         state.put("userDictionary", dictionary)
+        cachedUserDictionarySource = null
         persistState()
         showDictionaryList()
     }
@@ -2341,6 +2427,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             if (entry.optInt("id", index) != id) updated.put(entry)
         }
         state.put("userDictionary", updated)
+        cachedUserDictionarySource = null
         persistState()
         showDictionaryList()
     }
@@ -2390,6 +2477,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderCursorBar() {
+        hiraganaCommitButton.visibility = View.GONE
         if (!::candidateRow.isInitialized) return
         candidateRow.removeAllViews()
         val bar = CursorBarView()
@@ -2643,10 +2731,15 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun updateComposition() {
+        val revision = candidateRevision.incrementAndGet()
+        pendingOfficialLookup = null
         val reading = displayReading()
         if (mode != "english" && layout == "qwerty") composing = reading
         candidateSelectedExplicitly = false
-        candidates = buildCandidates().toMutableList()
+        if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        var lookup: OfficialLookupRequest? = null
+        candidates = buildCandidates(onOfficialLookup = { lookup = it }).toMutableList()
+        pendingOfficialLookup = lookup?.let { revision to it }
         if (candidates.isEmpty() && reading.isNotEmpty()) candidates.add(reading)
         selectedCandidate = defaultCandidateIndex()
         val live = settings.optBoolean("live_conversion", true)
@@ -2658,9 +2751,66 @@ class AzooKeyInputMethodService : InputMethodService() {
             reading
         }
         currentInputConnection?.setComposingText(displayed, 1)
-        if (completeStableFirstClauseIfNeeded(reading)) return
         renderCandidateValues()
-        requestZenzaiCandidates(reading, candidates.toList())
+        if (lookup == null) {
+            if (completeStableFirstClauseIfNeeded(reading)) return
+            requestZenzaiCandidates(reading, candidates.toList())
+        } else {
+            scheduleOfficialLookup(revision, checkNotNull(lookup))
+        }
+    }
+
+    private fun scheduleOfficialLookup(revision: Long, request: OfficialLookupRequest) {
+        candidateExecutor.queue.clear()
+        candidateExecutor.execute {
+            if (revision != candidateRevision.get()) return@execute
+            val official = lookupOfficialCandidates(request)
+            candidateHandler.post {
+                if (revision != candidateRevision.get() ||
+                    pendingOfficialLookup?.first != revision ||
+                    displayReading() != request.reading || dictionaryMode != DictionaryMode.CLOSED
+                ) return@post
+                pendingOfficialLookup = null
+                val selectedText = if (candidateSelectedExplicitly) {
+                    candidates.getOrNull(selectedCandidate)
+                } else null
+                candidates = buildCandidates(officialOverride = official).toMutableList()
+                if (candidates.isEmpty()) candidates.add(request.reading)
+                if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
+                selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
+                    ?: defaultCandidateIndex()
+                if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
+                    currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                }
+                if (!candidateSelectedExplicitly &&
+                    completeStableFirstClauseIfNeeded(request.reading)) return@post
+                renderCandidateValues()
+                requestZenzaiCandidates(request.reading, candidates.toList())
+            }
+        }
+    }
+
+    private fun finishPendingOfficialLookup() {
+        val pending = pendingOfficialLookup ?: return
+        if (pending.first != candidateRevision.get() || displayReading() != pending.second.reading) {
+            pendingOfficialLookup = null
+            return
+        }
+        val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
+        candidateExecutor.queue.clear()
+        val official = lookupOfficialCandidates(pending.second)
+        pendingOfficialLookup = null
+        candidates = buildCandidates(officialOverride = official).toMutableList()
+        if (candidates.isEmpty()) candidates.add(pending.second.reading)
+        if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
+        selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
+            ?: defaultCandidateIndex()
+    }
+
+    private fun invalidateCandidateLookup() {
+        candidateRevision.incrementAndGet()
+        pendingOfficialLookup = null
+        candidateExecutor.queue.clear()
     }
 
     private fun completeStableFirstClauseIfNeeded(reading: String): Boolean {
@@ -2670,15 +2820,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val candidate = candidates.getOrNull(defaultCandidateIndex()).orEmpty()
         val entries = buildList {
-            val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
-            for (index in 0 until dictionary.length()) {
-                val entry = dictionary.optJSONObject(index) ?: continue
+            for (entry in sortedUserDictionaryEntries()) {
                 if (entry.optBoolean("isTemplateMode", false)) continue
                 val ruby = katakanaToHiragana(entry.optString("ruby"))
                 val word = entry.optString("word")
                 if (reading.startsWith(ruby) && candidate.startsWith(word)) add(CompletedClause(ruby, word))
             }
-            for (entry in hotfixDictionaryEntries) {
+            for (entry in activeHotfixEntries(reading)) {
                 val ruby = katakanaToHiragana(entry.ruby)
                 if (reading.startsWith(ruby) && candidate.startsWith(entry.word)) {
                     add(CompletedClause(ruby, entry.word))
@@ -2754,7 +2902,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         ) { ranked, generated ->
             if (displayReading() != reading || ranked.isEmpty()) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
-            candidates = rerankedJapaneseCandidates(
+            val reranked = rerankedJapaneseCandidates(
                 reading = reading,
                 ranked = ranked,
                 baseCandidates = baseCandidates,
@@ -2767,7 +2915,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             ).filter {
                 isAllowedCombinationCandidate(it, trustedCompleteTexts, normalizedIncompleteTexts,
                     blockedCombinationValues, exactRegistrationTexts)
-            }.toMutableList()
+            }
+            candidates = surfaceHiraganaReading(
+                reading, reranked, predictionReadings,
+            ).toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
                     normalizedIncompleteTexts, blockedCombinationValues, exactRegistrationTexts)) {
@@ -2789,7 +2940,23 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (settings.optBoolean("hide_worm_emoji", false)) add("🪱")
     }
 
-    private fun buildCandidates(): List<String> {
+    private fun lookupOfficialCandidates(request: OfficialLookupRequest): DictionaryCandidates = runCatching {
+        azooKeyDictionary.candidates(
+            request.reading,
+            request.predictionLimit,
+            additionalEntries = request.additionalEntries,
+            additionalDictionaryVersion = request.dictionaryVersion,
+        )
+    }.onFailure {
+        Log.e("AzooKeyDictionary", "Failed to read the bundled dictionary", it)
+    }.getOrElse {
+        DictionaryCandidates(emptyList(), emptyList())
+    }
+
+    private fun buildCandidates(
+        officialOverride: DictionaryCandidates? = null,
+        onOfficialLookup: ((OfficialLookupRequest) -> Unit)? = null,
+    ): List<String> {
         val input = displayReading()
         candidatePredictionReadings = emptyMap()
         candidateDictionaryPriority = emptyList()
@@ -2802,15 +2969,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
-        val activeHotfixEntries = hotfixDictionaryEntries.filter { entry ->
-            val ruby = katakanaToHiragana(entry.ruby)
-            ruby.isNotEmpty() && (reading.contains(ruby) || ruby.startsWith(reading))
-        }
+        val activeHotfixEntries = activeHotfixEntries(reading)
         val specialCandidates = AzooKeySpecialCandidates.complete(reading)
         if (shouldDirectCommitJapaneseInput(reading) && specialCandidates.isEmpty()) return listOf(reading)
         val values = linkedSetOf<String>()
         val blockedEmoji = blockedAdditionalEmoji()
-        val dictionary = state.optJSONArray("userDictionary") ?: JSONArray()
         val predictedValues = linkedSetOf<String>()
         val registeredExact = mutableListOf<String>()
         val predictionReadings = mutableMapOf<String, String>()
@@ -2819,11 +2982,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         // A user who disables automatic commit must still see completions while
         // composing a word.
         val predictionLimit = PREDICTION_LIMIT
-        val userEntries = (0 until dictionary.length()).mapNotNull(dictionary::optJSONObject)
-            .sortedWith(
-                compareByDescending<JSONObject> { it.optInt("importance", 3).coerceIn(1, 5) }
-                    .thenBy { it.optString("ruby").length },
-            )
+        val userEntries = sortedUserDictionaryEntries()
         for (entry in userEntries) {
             val ruby = katakanaToHiragana(entry.optString("ruby"))
             val value = if (entry.optBoolean("isTemplateMode", false)) {
@@ -2904,17 +3063,18 @@ class AzooKeyInputMethodService : InputMethodService() {
                 mid = 501,
             )
         }
-        val officialCandidates = runCatching {
-            azooKeyDictionary.candidates(
-                reading,
-                predictionLimit,
-                additionalEntries = activeHotfixEntries + personalEntries + learnedDictionaryEntries,
-                additionalDictionaryVersion = hotfixDictionaryVersion,
-            )
-        }.onFailure {
-            Log.e("AzooKeyDictionary", "Failed to read the bundled dictionary", it)
-        }.getOrElse {
-            DictionaryCandidates(emptyList(), emptyList())
+        val request = OfficialLookupRequest(
+            reading, predictionLimit,
+            activeHotfixEntries + personalEntries + learnedDictionaryEntries,
+            hotfixDictionaryVersion,
+        )
+        val officialCandidates = when {
+            officialOverride != null -> officialOverride
+            onOfficialLookup != null -> {
+                onOfficialLookup(request)
+                DictionaryCandidates(emptyList(), emptyList())
+            }
+            else -> lookupOfficialCandidates(request)
         }
         val explicitWords = (personalEntries + activeHotfixEntries + learnedDictionaryEntries)
             .mapTo(mutableSetOf()) { it.word }
@@ -3042,9 +3202,14 @@ class AzooKeyInputMethodService : InputMethodService() {
             allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))
         if (shortKanaDefault &&
             !exactRegistration) {
-            return listOf(reading) + ordered.filter { it != reading }
+            return surfaceHiraganaReading(
+                reading, listOf(reading) + ordered.filter { it != reading }, candidatePredictionReadings,
+            )
         }
-        return preferSingleKanaReading(reading, ordered, exactRegistration)
+        return surfaceHiraganaReading(
+            reading, preferSingleKanaReading(reading, ordered, exactRegistration),
+            candidatePredictionReadings,
+        )
     }
 
     private fun buildEnglishCandidates(input: String): List<String> {
@@ -3091,6 +3256,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             returnKeyType = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)?.toString() ?: "default",
         )
         if (currentInputConnection?.commitText(candidate, 1) != true) return
+        invalidateCandidateLookup()
         learnSelectedCandidate(displayReading(), candidate, explicitSelection = true)
         composing = ""
         rawRoman = ""
@@ -3234,7 +3400,11 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun learningScores(): Map<String, Int> {
         if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) == 2) return emptyMap()
         val scores = state.optJSONObject("learning") ?: return emptyMap()
-        return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }
+        if (scores === cachedLearningSource) return cachedLearningScores
+        return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }.also {
+            cachedLearningSource = scores
+            cachedLearningScores = it
+        }
     }
 
     private fun shouldStopLearningForSearch(): Boolean =
@@ -3262,10 +3432,12 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun commitComposition(useCandidate: Boolean = true) {
         if (composing.isEmpty() && rawRoman.isEmpty()) return
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        if (useCandidate) finishPendingOfficialLookup()
         val reading = displayReading()
         val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
         val text = compositionCommitText(reading, availableCandidates, useCandidate, selectedCandidate)
         if (currentInputConnection?.commitText(text, 1) != true) return
+        invalidateCandidateLookup()
         if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly)
         composing = ""
         rawRoman = ""
@@ -3304,6 +3476,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun clearComposition() {
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        invalidateCandidateLookup()
         composing = ""
         rawRoman = ""
         stableClauseCompletion.reset()
@@ -3351,6 +3524,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun deleteSelectedText(): Boolean {
         if (!replaceCurrentSelection(currentInputConnection)) return false
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
+        invalidateCandidateLookup()
         pendingQuickWordDelete = null
         composing = ""
         rawRoman = ""
@@ -3482,6 +3656,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun space() {
         if (dictionaryMode == DictionaryMode.EDIT) { editDictionaryText(" "); return }
+        if (composing.isNotEmpty() || rawRoman.isNotEmpty()) finishPendingOfficialLookup()
         if (composing.isEmpty() && rawRoman.isEmpty()) {
             directCommit(" ")
         } else if (layout == "flick" && settings.optBoolean("use_next_candidate_key", false) && candidates.size > 1) {
@@ -3503,6 +3678,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun selectNextCandidate() {
         if (dictionaryMode == DictionaryMode.EDIT) return
+        finishPendingOfficialLookup()
         if (candidates.isEmpty()) {
             space()
             return
