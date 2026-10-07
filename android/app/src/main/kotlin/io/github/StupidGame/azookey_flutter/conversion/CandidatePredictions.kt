@@ -191,8 +191,9 @@ internal fun rerankedJapaneseCandidates(
         explicitlyPreferred.isNotEmpty()
     // A kana-only word or phrase can be a complete conversion. If the
     // dictionary itself puts it first, do not demote it as a raw fallback.
-    if (baseCandidates.firstOrNull() == reading &&
-        (reading.length <= 2 || dictionaryLedLiteral) && !exactRegistration) {
+    val keepLiteral = (reading.length <= 2 && prominentPredictions.isEmpty()) ||
+        (reading.length > 2 && dictionaryLedLiteral)
+    if (baseCandidates.firstOrNull() == reading && keepLiteral && !exactRegistration) {
         return listOf(reading) + ordered.filter { it != reading }
     }
     val leading = ordered.firstOrNull()
