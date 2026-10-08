@@ -126,10 +126,22 @@ class DesktopInputController extends ChangeNotifier {
     if (_mode == InputMode.japanese &&
         (_liveConversionEnabled || _converting) &&
         _candidates.isNotEmpty) {
-      return _candidates[_selectedIndex].text;
+      return (_converting
+              ? _candidates[_selectedIndex]
+              : _firstCompleteCandidate())
+          .text;
     }
     return composingText;
   }
+
+  ConversionCandidate _firstCompleteCandidate() => _candidates.firstWhere(
+    (candidate) => !candidate.source.contains('prediction'),
+    orElse: () => ConversionCandidate(
+      text: composingText,
+      reading: composingText,
+      source: 'hiragana',
+    ),
+  );
 
   void setLiveConversionEnabled(bool enabled) {
     if (_liveConversionEnabled == enabled) return;
@@ -306,17 +318,22 @@ class DesktopInputController extends ChangeNotifier {
   }
 
   Future<bool> shareCandidate(int index) async {
-    if (_candidateSharing || index < 0 || index >= _candidates.length) {
+    if (index < 0 || index >= _candidates.length) return false;
+    final candidate = _candidates[index];
+    return shareCandidateText(candidate.text, candidate.reading);
+  }
+
+  Future<bool> shareCandidateText(String word, String reading) async {
+    if (_candidateSharing || word.trim().isEmpty || reading.trim().isEmpty) {
       return false;
     }
-    final candidate = _candidates[index];
     _candidateSharing = true;
     _candidateShareStatus = '共有ストレージへ送信中';
     notifyListeners();
     try {
       final sent = await _sharedDictionarySubmitter.submit(
-        word: candidate.text,
-        ruby: candidate.reading,
+        word: word,
+        ruby: reading,
         importance: 3,
         categories: const [],
         note: 'Desktop candidate right-click',
@@ -333,22 +350,32 @@ class DesktopInputController extends ChangeNotifier {
   }
 
   Future<bool> saveCandidateToPersonalDictionary(int index) async {
+    if (index < 0 || index >= _candidates.length) return false;
+    final candidate = _candidates[index];
+    return saveCandidateTextToPersonalDictionary(
+      candidate.text,
+      candidate.reading,
+    );
+  }
+
+  Future<bool> saveCandidateTextToPersonalDictionary(
+    String word,
+    String reading,
+  ) async {
     final repository = _personalDictionaryRepository;
     if (_candidateSharing ||
         repository == null ||
-        index < 0 ||
-        index >= _candidates.length) {
+        word.trim().isEmpty ||
+        reading.trim().isEmpty) {
       return false;
     }
-    final candidate = _candidates[index];
     _candidateSharing = true;
     _candidateShareStatus = '個人辞書に登録中';
     notifyListeners();
     try {
       final entries = await repository.load();
       if (entries.any(
-        (entry) =>
-            entry.reading == candidate.reading && entry.value == candidate.text,
+        (entry) => entry.reading == reading && entry.value == word,
       )) {
         _personalDictionary = List.unmodifiable(entries);
         _personalDictionaryLoadFailed = false;
@@ -358,11 +385,7 @@ class DesktopInputController extends ChangeNotifier {
       }
       await savePersonalDictionary([
         ...entries,
-        ConversionDictionaryEntry(
-          reading: candidate.reading,
-          value: candidate.text,
-          importance: 3,
-        ),
+        ConversionDictionaryEntry(reading: reading, value: word, importance: 3),
       ]);
       _candidateShareStatus = '個人辞書に登録しました';
       return true;
@@ -396,7 +419,11 @@ class DesktopInputController extends ChangeNotifier {
 
   void commitSelected({int? replaceStart, int? replaceEnd}) {
     if (_rawInput.isEmpty) return;
-    final selected = _candidates.isEmpty ? null : _candidates[_selectedIndex];
+    final selected = _candidates.isEmpty
+        ? null
+        : (_converting
+              ? _candidates[_selectedIndex]
+              : _firstCompleteCandidate());
     final candidate = selected?.text ?? composingText;
     if (candidate.isEmpty) return;
     CandidateLearning.record(
@@ -470,10 +497,28 @@ class DesktopInputController extends ChangeNotifier {
 
   void _scheduleZenzai() {
     final engine = _zenzaiEngine;
-    if (engine == null) return;
     final sequence = ++_requestSequence;
-    final reading = composingText;
     _zenzaiDebounce?.cancel();
+    final reading = composingText;
+    final hasExactRegistration = [..._personalDictionary, ..._sharedDictionary]
+        .any(
+          (entry) =>
+              CandidateLearning.normalizeReading(entry.reading) == reading,
+        );
+    final strongLearning = CandidateLearning.exactScores(
+      _learning,
+      reading,
+    ).values.any((score) => score >= 4);
+    if (engine == null ||
+        reading.characters.length == 1 ||
+        (reading.characters.length <= 2 &&
+            _candidates.isNotEmpty &&
+            _candidates.first.text == reading &&
+            !hasExactRegistration &&
+            !strongLearning)) {
+      _zenzaiWorking = false;
+      return;
+    }
     _zenzaiWorking = true;
     _zenzaiStatus = '入力待ち';
     notifyListeners();
@@ -506,24 +551,61 @@ class DesktopInputController extends ChangeNotifier {
       final selectedText = _converting && _candidates.isNotEmpty
           ? _candidates[_selectedIndex].text
           : null;
-      _candidates = [
-        ConversionCandidate(
+      final existingIndex = _candidates.indexWhere(
+        (candidate) => candidate.text == generated,
+      );
+      // Short readings cannot ground a new model word. Combining kana marks
+      // such as て゚ should not replace an ordinary reading either.
+      if (existingIndex < 0 &&
+          (reading.characters.length == 1 ||
+              _unusualModelText(generated, reading))) {
+        return;
+      }
+      if (existingIndex < 0) {
+        final insertion = _candidates.length < 3 ? _candidates.length : 3;
+        _candidates = [
+          ..._candidates.take(insertion),
+          ConversionCandidate(
+            text: generated,
+            reading: reading,
+            source: 'zenzai-suggestion',
+            score: 1000,
+          ),
+          ..._candidates.skip(insertion),
+        ];
+      } else if (_candidatePhase(_candidates[existingIndex]) == 0) {
+        // The model may select a word already present in a dictionary or learning.
+        _candidates[existingIndex] = ConversionCandidate(
           text: generated,
           reading: reading,
           source: 'zenzai',
           score: 1000,
-        ),
-        ..._candidates.where((candidate) => candidate.text != generated),
-      ];
+        );
+      }
       final learned = CandidateLearning.exactScores(_learning, reading);
       final ranked = _candidates.indexed.toList()
         ..sort((left, right) {
+          final leftPhase = _candidatePhase(left.$2);
+          final rightPhase = _candidatePhase(right.$2);
+          if (leftPhase != rightPhase) {
+            return leftPhase.compareTo(rightPhase);
+          }
+          final leftPriority = _candidatePriority(left.$2);
+          final rightPriority = _candidatePriority(right.$2);
+          if (leftPriority != rightPriority) {
+            return leftPriority.compareTo(rightPriority);
+          }
           final score = (learned[right.$2.text] ?? 0).compareTo(
             learned[left.$2.text] ?? 0,
           );
-          return score != 0 ? score : left.$1.compareTo(right.$1);
+          return leftPriority == 1 && score != 0
+              ? score
+              : left.$1.compareTo(right.$1);
         });
-      _candidates = ranked.map((entry) => entry.$2).toList();
+      _candidates = _keepKanaCandidatesVisible(
+        reading,
+        ranked.map((entry) => entry.$2).toList(),
+      );
       _selectedIndex = selectedText == null
           ? 0
           : _candidates.indexWhere((value) => value.text == selectedText);
@@ -538,6 +620,67 @@ class DesktopInputController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  static int _candidatePriority(ConversionCandidate candidate) {
+    if (candidate.source == 'zenzai') return -1;
+    if (candidate.source.startsWith('user')) return 1;
+    if (candidate.source.startsWith('learned')) return 2;
+    return 0;
+  }
+
+  List<ConversionCandidate> _keepKanaCandidatesVisible(
+    String reading,
+    List<ConversionCandidate> candidates,
+  ) {
+    final hiragana = _japaneseConverter.katakanaToHiragana(reading);
+    final katakana = _japaneseConverter.hiraganaToKatakana(hiragana);
+    if (hiragana.isEmpty || hiragana == katakana) return candidates;
+    final visible = List<ConversionCandidate>.of(candidates);
+    for (final (text, source, latestIndex) in [
+      (hiragana, 'hiragana', 3),
+      (katakana, 'katakana', 4),
+    ]) {
+      final index = visible.indexWhere((candidate) => candidate.text == text);
+      if (index >= 0 && index <= latestIndex) continue;
+      final candidate = index >= 0
+          ? visible.removeAt(index)
+          : ConversionCandidate(text: text, reading: hiragana, source: source);
+      visible.insert(latestIndex.clamp(0, visible.length).toInt(), candidate);
+    }
+    return visible;
+  }
+
+  static bool _unusualModelText(String value, String reading) {
+    final inputHasKanaMark = reading.runes.any(
+      (rune) => rune == 0x3099 || rune == 0x309A,
+    );
+    return value.runes.any(
+      (rune) =>
+          rune == 0xFFFD ||
+          rune < 0x20 ||
+          (rune >= 0x7F && rune <= 0x9F) ||
+          (rune >= 0xE000 && rune <= 0xF8FF) ||
+          (rune >= 0x202A && rune <= 0x202E) ||
+          (rune >= 0x2066 && rune <= 0x2069) ||
+          ((rune == 0x3099 || rune == 0x309A) && !inputHasKanaMark),
+    );
+  }
+
+  static int _candidatePhase(ConversionCandidate candidate) {
+    if (const {
+      'hiragana',
+      'katakana',
+      'half-kana',
+      'full-width',
+      'english',
+    }.contains(candidate.source)) {
+      return 2;
+    }
+    return candidate.source == 'user-prefix' ||
+            candidate.source.contains('prediction')
+        ? 1
+        : 0;
   }
 
   @override

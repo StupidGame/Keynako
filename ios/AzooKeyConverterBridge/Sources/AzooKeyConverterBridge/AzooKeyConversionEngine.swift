@@ -26,6 +26,11 @@ public struct AzooKeyHotfixDictionaryEntry: Sendable {
     public let mid: Int
 }
 
+public struct AzooKeyCompletedClause: Sendable {
+    public let text: String
+    public let reading: String
+}
+
 /// A small, stable boundary between the native keyboard and azooKey's pinned
 /// conversion engine. The package revision and ZenzaiCPU trait match the Swift
 /// application this Flutter port was derived from.
@@ -36,7 +41,12 @@ public final class AzooKeyConversionEngine {
     private var lastCandidates: [String: Candidate] = [:]
     public private(set) var predictionTexts = Set<String>()
     public private(set) var baselineTexts: [String] = []
+    public private(set) var completedClause: AzooKeyCompletedClause?
     private var hotfixDictionaryVersion: String?
+    private var lastCompletionInput = ""
+    private var lastCompletionText = ""
+    private var lastCompletionClauseReading = ""
+    private var stableCompletionCount = 0
 
     public init(sharedContainerURL: URL) {
         self.sharedContainerURL = sharedContainerURL
@@ -80,6 +90,9 @@ public final class AzooKeyConversionEngine {
         modelURL: URL?,
         inferenceLimit: Int,
         learningMode: Int,
+        automaticCompletionStrength: Int,
+        englishCandidateInRoman2KanaInput: Bool,
+        typographyCandidate: Bool,
         fullWidthRomanCandidate: Bool,
         halfWidthKanaCandidate: Bool,
         unicodeCandidate: Bool,
@@ -89,6 +102,7 @@ public final class AzooKeyConversionEngine {
             lastCandidates = [:]
             predictionTexts = []
             baselineTexts = []
+            resetCompletionHistory()
             return []
         }
 
@@ -129,16 +143,20 @@ public final class AzooKeyConversionEngine {
         if !unicodeCandidate {
             providers.removeAll { $0 is UnicodeSpecialCandidateProvider }
         }
+        if typographyCandidate {
+            providers.append(TypographySpecialCandidateProvider())
+        }
         func options(
             for mode: ConvertRequestOptions.ZenzaiMode,
-            predictiveInput: Bool
+            predictiveInput: Bool,
+            bestCount: Int = 20
         ) -> ConvertRequestOptions {
             ConvertRequestOptions(
-                N_best: 20,
+                N_best: bestCount,
                 requireJapanesePrediction: .autoMix,
                 requireEnglishPrediction: .disabled,
                 keyboardLanguage: .ja_JP,
-                englishCandidateInRoman2KanaInput: true,
+                englishCandidateInRoman2KanaInput: englishCandidateInRoman2KanaInput,
                 fullWidthRomanCandidate: fullWidthRomanCandidate,
                 halfWidthKanaCandidate: halfWidthKanaCandidate,
                 learningType: learningType,
@@ -156,18 +174,33 @@ public final class AzooKeyConversionEngine {
         // Keep a standard conversion available when model suggestions are unusual.
         let baseline = converter.requestCandidates(
             composingText,
-            options: options(for: .off, predictiveInput: false)
+            options: options(for: .off, predictiveInput: false,
+                bestCount: reading.count >= 16 ? 48 : 20)
         )
-        let result = modelURL == nil
+        let baselineLeadingTexts = baseline.mainResults.prefix(2).map(\.text)
+        let keepShortReading = reading.count <= 2 && baselineLeadingTexts.contains(reading) &&
+            (baselineLeadingTexts.first == reading || baselineLeadingTexts.first == Self.toKatakana(reading))
+        let result = modelURL == nil || reading.count == 1 || keepShortReading
             ? baseline
             : converter.requestCandidates(
                 composingText,
                 options: options(for: zenzaiMode, predictiveInput: true)
             )
         baselineTexts = baseline.mainResults.map(\.text)
-        let mainTexts = Set(result.mainResults.map(\.text)).union(baselineTexts)
-        predictionTexts = Set(result.predictionResults.map(\.text)).subtracting(mainTexts)
-        let values = result.mainResults + baseline.mainResults + result.predictionResults
+        let established = Set(baselineTexts)
+        let modelResults = result.mainResults.filter { candidate in
+            if established.contains(candidate.text) { return true }
+            if reading.count == 1 { return false }
+            return Self.plausibleNovelText(candidate.text, reading: reading)
+        }
+        let mainTexts = Set(modelResults.map(\.text)).union(established)
+        let modelPredictions = result.predictionResults.filter {
+            established.contains($0.text) || Self.plausibleNovelText($0.text, reading: reading)
+        }
+        predictionTexts = Set(modelPredictions.map(\.text)).subtracting(mainTexts)
+        // Keep the converter's own lattice/model ranking. The standard result
+        // only fills gaps left by invalid model text or unavailable weights.
+        let values = modelResults + baseline.mainResults + modelPredictions
         lastCandidates = [:]
         var texts: [String] = []
         var seen = Set<String>()
@@ -175,7 +208,63 @@ public final class AzooKeyConversionEngine {
             texts.append(candidate.text)
             if lastCandidates[candidate.text] == nil { lastCandidates[candidate.text] = candidate }
         }
+        updateCompletionHistory(
+            reading: reading,
+            input: rawRoman.flatMap { $0.isEmpty ? nil : $0 } ?? reading,
+            firstClauseResults: baseline.firstClauseResults,
+            mainText: baseline.mainResults.first?.text,
+            strength: automaticCompletionStrength
+        )
         return texts
+    }
+
+    private func updateCompletionHistory(
+        reading: String,
+        input: String,
+        firstClauseResults: [Candidate],
+        mainText: String?,
+        strength: Int
+    ) {
+        completedClause = nil
+        let thresholds = [Int.max, 16, 13, 10, 6]
+        let threshold = thresholds[max(0, min(strength, 4))]
+        guard threshold != .max,
+              let mainText,
+              let clause = firstClauseResults.first(where: { mainText.hasPrefix($0.text) }),
+              !clause.text.isEmpty,
+              mainText.count > clause.text.count else {
+            resetCompletionHistory()
+            return
+        }
+        let clauseReading = Self.toHiragana(clause.data.map(\.ruby).joined())
+        guard clauseReading.count >= 2,
+              reading.hasPrefix(clauseReading),
+              reading.count > clauseReading.count,
+              clause.text != clauseReading else {
+            resetCompletionHistory()
+            return
+        }
+        if input != lastCompletionInput {
+            stableCompletionCount = input.hasPrefix(lastCompletionInput)
+                && clause.text == lastCompletionText
+                && clauseReading == lastCompletionClauseReading
+                ? stableCompletionCount + 1 : 1
+            lastCompletionInput = input
+            lastCompletionText = clause.text
+            lastCompletionClauseReading = clauseReading
+        }
+        if stableCompletionCount >= threshold {
+            completedClause = .init(text: clause.text, reading: clauseReading)
+            lastCandidates[clause.text] = clause
+        }
+    }
+
+    private func resetCompletionHistory() {
+        completedClause = nil
+        lastCompletionInput = ""
+        lastCompletionText = ""
+        lastCompletionClauseReading = ""
+        stableCompletionCount = 0
     }
 
     public func commit(candidateText: String, learningMode: Int) {
@@ -187,6 +276,7 @@ public final class AzooKeyConversionEngine {
         lastCandidates = [:]
         predictionTexts = []
         baselineTexts = []
+        resetCompletionHistory()
     }
 
     public func stopComposition() {
@@ -194,6 +284,7 @@ public final class AzooKeyConversionEngine {
         lastCandidates = [:]
         predictionTexts = []
         baselineTexts = []
+        resetCompletionHistory()
     }
 
     public func resetLearning() {
@@ -201,12 +292,41 @@ public final class AzooKeyConversionEngine {
         lastCandidates = [:]
         predictionTexts = []
         baselineTexts = []
+        resetCompletionHistory()
     }
 
     private static func toKatakana(_ value: String) -> String {
         String(value.unicodeScalars.map { scalar in
             if (0x3041 ... 0x3096).contains(scalar.value),
                let converted = UnicodeScalar(scalar.value + 0x60) {
+                return Character(converted)
+            }
+            return Character(scalar)
+        })
+    }
+
+    private static func plausibleNovelText(_ text: String, reading: String) -> Bool {
+        let inputHasKanaMark = reading.unicodeScalars.contains {
+            $0.value == 0x3099 || $0.value == 0x309A
+        }
+        return !text.unicodeScalars.contains { scalar in
+            let value = scalar.value
+            switch value {
+            case 0x00 ... 0x1F, 0x7F ... 0x9F, 0xE000 ... 0xF8FF,
+                 0x202A ... 0x202E, 0x2066 ... 0x2069, 0xFFFD:
+                return true
+            case 0x3099, 0x309A:
+                return !inputHasKanaMark
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func toHiragana(_ value: String) -> String {
+        String(value.unicodeScalars.map { scalar in
+            if (0x30A1 ... 0x30F6).contains(scalar.value),
+               let converted = UnicodeScalar(scalar.value - 0x60) {
                 return Character(converted)
             }
             return Character(scalar)

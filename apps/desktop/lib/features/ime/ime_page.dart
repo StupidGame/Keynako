@@ -590,7 +590,7 @@ class _InputCard extends StatelessWidget {
                         final candidate = controller.candidates[index];
                         final selected = index == controller.selectedIndex;
                         final sourceLabel = switch (candidate.source) {
-                          'zenzai' => 'Zenzai',
+                          'zenzai' || 'zenzai-suggestion' => 'Zenzai',
                           'user' || 'shared' =>
                             controller.isPersonalCandidate(candidate)
                                 ? '個人'
@@ -712,7 +712,8 @@ class _InputCard extends StatelessWidget {
                                   if (sourceLabel != null)
                                     _StatusPill(
                                       label: sourceLabel,
-                                      color: candidate.source == 'zenzai'
+                                      color:
+                                          candidate.source.startsWith('zenzai')
                                           ? colors.tertiary
                                           : colors.primary,
                                     ),

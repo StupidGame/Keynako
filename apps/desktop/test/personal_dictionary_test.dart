@@ -102,6 +102,36 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('system IME choice saves the passed word and full reading', (
+    tester,
+  ) async {
+    final repository = _MemoryPersonalDictionaryRepository();
+    final submitter = _CapturingSubmitter();
+    final controller = DesktopInputController(
+      personalDictionaryRepository: repository,
+      sharedDictionarySubmitter: submitter,
+    );
+    await tester.pumpWidget(
+      KeynakoDesktopApp(
+        controller: controller,
+        candidateWord: '仮面ライダー',
+        candidateReading: 'かめんらいだー',
+      ),
+    );
+    expect(repository.entries, isEmpty);
+    await tester.tap(find.byKey(const Key('candidate-register-personal')));
+    await tester.pumpAndSettle();
+    expect(repository.entries.single.reading, 'かめんらいだー');
+    expect(repository.entries.single.value, '仮面ライダー');
+    expect(submitter.word, isNull);
+    await tester.tap(find.byKey(const Key('candidate-register-shared')));
+    await tester.pumpAndSettle();
+    expect(submitter.word, '仮面ライダー');
+    expect(submitter.reading, 'かめんらいだー');
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   testWidgets('dictionary opens from IME and adds, edits, deletes a word', (
     tester,
   ) async {
@@ -150,5 +180,23 @@ class _MemoryPersonalDictionaryRepository
   @override
   Future<void> save(List<ConversionDictionaryEntry> value) async {
     entries = List.of(value);
+  }
+}
+
+class _CapturingSubmitter implements KeynakoDictionarySubmitter {
+  String? word;
+  String? reading;
+
+  @override
+  Future<bool> submit({
+    required String word,
+    required String ruby,
+    required int importance,
+    required List<String> categories,
+    String? note,
+  }) async {
+    this.word = word;
+    reading = ruby;
+    return true;
   }
 }

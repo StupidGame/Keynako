@@ -8,5 +8,8 @@ offers `あ`/`A` mode and live-conversion controls.
 It also offers a manual shared-dictionary refresh and requests a non-visual
 refresh at most once every five minutes while the input method is in use. The
 install script places the companion app in `~/Applications` for this updater.
+Right-clicking the selected candidate offers shared or personal dictionary
+registration without committing the composition. The companion app performs
+the chosen action.
 Install it in `~/Library/Input Methods`, then log out and back in before adding
 Keynako in System Settings > Keyboard > Input Sources.

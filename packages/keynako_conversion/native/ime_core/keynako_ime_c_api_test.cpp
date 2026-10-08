@@ -28,15 +28,23 @@ int main() {
         if (value != '\0') keynako_ime_append_ascii(session, value);
     }
     keynako_ime_insert_zenzai(session, "日本語です");
-    assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
+    assert(std::strcmp(keynako_ime_selected_text(session), "日本語") == 0);
+    bool has_model_suggestion = false;
+    for (std::size_t index = 1; index < keynako_ime_candidate_count(session); ++index) {
+        if (std::strcmp(keynako_ime_candidate_at(session, index), "日本語です") == 0) {
+            has_model_suggestion = true;
+            break;
+        }
+    }
+    assert(has_model_suggestion);
     keynako_ime_learn_selected(session);
     keynako_ime_clear(session);
     for (const char value : "nihongo") {
         if (value != '\0') keynako_ime_append_ascii(session, value);
     }
-    assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
+    assert(std::strcmp(keynako_ime_selected_text(session), "日本語") == 0);
     keynako_ime_insert_zenzai(session, "日本語");
-    assert(std::strcmp(keynako_ime_selected_text(session), "日本語です") == 0);
+    assert(std::strcmp(keynako_ime_selected_text(session), "日本語") == 0);
     keynako_ime_set_mode(session, 1);
     assert(std::strcmp(keynako_ime_raw_input(session), "nihongo") == 0);
     assert(std::strcmp(keynako_ime_selected_text(session), "nihongo") == 0);
@@ -65,6 +73,18 @@ int main() {
         return false;
     };
     assert(has_custom_candidate());
+    keynako_ime_clear(session);
+    for (const char value : "kaki") {
+        if (value != '\0') keynako_ime_append_ascii(session, value);
+    }
+    bool found_full_reading = false;
+    for (std::size_t index = 0; index < keynako_ime_candidate_count(session); ++index) {
+        if (std::strcmp(keynako_ime_candidate_at(session, index), "独自語") == 0) {
+            found_full_reading = std::strcmp(
+                keynako_ime_candidate_reading(session, index), "かきくけこ") == 0;
+        }
+    }
+    assert(found_full_reading);
     {
         std::ofstream output(cache, std::ios::trunc);
         output << "# keynako-shared-dictionary-v1\tpartial\n";
@@ -77,6 +97,10 @@ int main() {
     }
     assert(keynako_ime_load_user_dictionary(session, cache.u8string().c_str()) == 1);
     assert(!has_custom_candidate());
+    keynako_ime_clear(session);
+    for (const char value : "kakikukeko") {
+        if (value != '\0') keynako_ime_append_ascii(session, value);
+    }
     const auto personal = cache.string() + ".personal";
     {
         std::ofstream output(cache, std::ios::trunc);

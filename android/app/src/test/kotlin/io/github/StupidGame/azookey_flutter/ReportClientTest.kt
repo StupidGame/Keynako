@@ -2,7 +2,9 @@ package io.github.StupidGame.azookey_flutter
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
+import java.net.URL
 
 class ReportClientTest {
     @Test
@@ -34,5 +36,18 @@ class ReportClientTest {
         assertFalse(payload.containsKey("leftContext"))
         assertFalse(payload.containsKey("rightContext"))
         assertFalse(payload.values.contains("小椋"))
+    }
+
+    @Test
+    fun onlyAppsScriptResponseRedirectIsAccepted() {
+        val endpoint = URL("https://script.google.com/macros/s/deployment/exec")
+        assertEquals(
+            "https://script.googleusercontent.com/macros/echo?token=1",
+            ReportClient.sharedSubmissionResponseUrl(
+                endpoint, 302, "https://script.googleusercontent.com/macros/echo?token=1",
+            )?.toString(),
+        )
+        assertNull(ReportClient.sharedSubmissionResponseUrl(endpoint, 302, "https://example.com/collect"))
+        assertNull(ReportClient.sharedSubmissionResponseUrl(endpoint, 307, "https://script.googleusercontent.com/"))
     }
 }

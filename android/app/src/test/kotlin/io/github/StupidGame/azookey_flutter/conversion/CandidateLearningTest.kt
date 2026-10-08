@@ -6,6 +6,15 @@ import org.junit.Test
 
 class CandidateLearningTest {
     @Test
+    fun automaticAcceptanceRemainsWeakerThanExplicitSelection() {
+        val learning = mutableMapOf<String, Int>()
+        repeat(20) { recordCandidateLearning(learning, "して", "仕手") }
+        assertEquals(3, learning["して\t仕手"])
+        recordCandidateLearning(learning, "して", "して", explicitSelection = true)
+        assertTrue(learning.getValue("して\tして") > learning.getValue("して\t仕手"))
+    }
+
+    @Test
     fun correctionOvertakesPreviouslyFrequentChoice() {
         val learning = mutableMapOf("あい\t愛" to 1_000_000, "べつ\t別" to 7)
         recordCandidateLearning(learning, "あい", "藍", explicitSelection = true)
@@ -44,14 +53,14 @@ class CandidateLearningTest {
         assertTrue("Hel\tHello" !in learning)
         assertTrue("english:hel\thello" !in learning)
         val values = englishPredictionCandidates("Hel", learning = learning)
-        assertEquals(listOf("Hel", "HELLO"), values.take(2))
+        assertEquals(listOf("HELLO", "Hel"), values.take(2))
         assertTrue("Helloworld" !in values)
     }
 
     @Test
     fun englishLearningWorksForLongerPrefixesWithoutAutoCompletion() {
         val learning = mapOf("english:he\thelium" to 8)
-        assertEquals(listOf("heli", "helium"), englishPredictionCandidates("heli", learning = learning))
+        assertEquals(listOf("helium", "heli"), englishPredictionCandidates("heli", learning = learning))
         assertEquals(listOf("heli"), englishPredictionCandidates("heli"))
     }
 

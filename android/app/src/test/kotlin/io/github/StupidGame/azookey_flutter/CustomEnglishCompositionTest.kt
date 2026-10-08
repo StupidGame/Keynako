@@ -142,6 +142,18 @@ class CustomEnglishCompositionTest {
     }
 
     @Test
+    fun aaKeyChangesThePreviousLetterWithoutChangingCustomShift() {
+        dispatch(tabAction("qwerty_english", "system"))
+        dispatch(JSONObject().put("type", "input").put("value", "h"))
+        ReflectionHelpers.callInstanceMethod<Unit>(
+            service, "dispatchNamedAction", ClassParameter.from(String::class.java, "upperLowerEnglish"),
+        )
+        assertComposing("H")
+        dispatch(JSONObject().put("type", "input").put("value", "a"))
+        assertComposing("Ha")
+    }
+
+    @Test
     fun languageChangeStillCommitsThePreviousComposition() {
         input("a")
         moveTab("kana")

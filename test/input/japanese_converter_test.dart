@@ -18,32 +18,26 @@ void main() {
     });
   });
 
-  test(
-    'puts a live conversion before hiragana, katakana, and dictionaries',
-    () {
-      final data = AppData.defaults();
-      data.userDictionary.add(
-        const UserDictionaryEntry(id: 10, ruby: 'にほんご', word: '日本語入力'),
-      );
+  test('puts complete conversions before raw kana', () {
+    final data = AppData.defaults();
+    data.userDictionary.add(
+      const UserDictionaryEntry(id: 10, ruby: 'にほんご', word: '日本語入力'),
+    );
 
-      final values = converter.candidates(
-        input: 'nihongo',
-        data: data,
-        romanInput: true,
-      );
+    final values = converter.candidates(
+      input: 'nihongo',
+      data: data,
+      romanInput: true,
+    );
 
-      expect(values.take(3).map((value) => value.text), [
-        '日本語入力',
-        'にほんご',
-        'ニホンゴ',
-      ]);
-      expect(values.map((value) => value.text), contains('日本語'));
-      expect(
-        values.indexWhere((value) => value.text == '日本語入力'),
-        lessThan(values.indexWhere((value) => value.text == '日本語')),
-      );
-    },
-  );
+    expect(values.take(2).map((value) => value.text), ['日本語', '日本語入力']);
+    expect(values.indexWhere((value) => value.text == 'にほんご'), greaterThan(1));
+    expect(values.map((value) => value.text), contains('日本語'));
+    expect(
+      values.indexWhere((value) => value.text == '日本語入力'),
+      greaterThan(values.indexWhere((value) => value.text == '日本語')),
+    );
+  });
 
   test('orders matching user words by conversion importance', () {
     final data = AppData.defaults();
@@ -59,7 +53,11 @@ void main() {
       values.indexWhere((value) => value.text == '高い候補'),
       lessThan(values.indexWhere((value) => value.text == '低い候補')),
     );
-    expect(values.skip(1).take(2).map((value) => value.text), ['きーなこ', 'キーナコ']);
+    expect(
+      values.indexWhere((value) => value.text == '低い候補'),
+      lessThan(values.indexWhere((value) => value.text == 'きーなこ')),
+    );
+    expect(values.map((value) => value.text), contains('キーナコ'));
   });
 
   test('pins hiragana and katakana first when live conversion is disabled', () {
@@ -175,6 +173,48 @@ void main() {
       candidates.firstWhere((candidate) => candidate.text == '私は猫').source,
       'user-combination',
     );
+  });
+
+  test('shows personal and shared long words from short reading prefixes', () {
+    final data = AppData.defaults();
+    data.userDictionary.add(
+      const UserDictionaryEntry(id: 31, ruby: 'かめんらいだー', word: '仮面ライダー'),
+    );
+    data.azooKeyHotfixDictionary = AzooKeyHotfixDictionary.fromJson({
+      'metadata': {
+        'status': 'active',
+        'name': 'test',
+        'description': 'test',
+        'version': '1',
+        'last_update': '2026-09-22',
+      },
+      'data': [
+        {
+          'word': '仮面の共有語',
+          'ruby': 'カメンノキョウユウゴ',
+          'word_weight': -5,
+          'lcid': 1285,
+          'rcid': 1285,
+          'mid': 501,
+          'date': '2026-09-22',
+          'author': 'test',
+          'importance': 5,
+        },
+      ],
+    });
+
+    for (final reading in ['かめ', 'かめん']) {
+      final candidates = converter.candidates(input: reading, data: data);
+      final texts = candidates.map((candidate) => candidate.text).toList();
+      expect(texts.first, isNot('仮面ライダー'));
+      expect(texts.take(5), containsAll(['仮面ライダー', '仮面の共有語']));
+      expect(
+        candidates
+            .firstWhere((candidate) => candidate.text == '仮面ライダー')
+            .reading,
+        'かめんらいだー',
+      );
+    }
   });
 
   test('provides half-width kana and full-width roman candidates', () {

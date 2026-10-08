@@ -9,5 +9,7 @@ candidates, the bundled AzooKey default dictionary, the cached and bundled
 The IBus property menu offers an immediate shared-dictionary refresh, and the
 engine requests a non-visual refresh at most once every five minutes while it
 is in use.
+Right-clicking a candidate opens a GTK menu for sending it to the shared
+dictionary or saving it locally; the companion app handles the selected action.
 The IBus source selector uses the same icon as the Flutter app. The user-local
 installer does not require root access.

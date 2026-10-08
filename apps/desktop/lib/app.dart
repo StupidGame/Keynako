@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'features/ime/ime_page.dart';
+import 'features/ime/candidate_dictionary_choice_page.dart';
 import 'features/ime/personal_dictionary_page.dart';
 import 'input/desktop_input_controller.dart';
 
@@ -9,11 +10,15 @@ class KeynakoDesktopApp extends StatelessWidget {
   const KeynakoDesktopApp({
     required this.controller,
     this.openDictionary = false,
+    this.candidateWord,
+    this.candidateReading,
     super.key,
   });
 
   final DesktopInputController controller;
   final bool openDictionary;
+  final String? candidateWord;
+  final String? candidateReading;
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +33,13 @@ class KeynakoDesktopApp extends StatelessWidget {
       themeMode: ThemeMode.system,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
-      home: openDictionary
+      home: candidateWord != null && candidateReading != null
+          ? CandidateDictionaryChoicePage(
+              controller: controller,
+              word: candidateWord!,
+              reading: candidateReading!,
+            )
+          : openDictionary
           ? PersonalDictionaryPage(controller: controller)
           : ImePage(controller: controller),
     );
