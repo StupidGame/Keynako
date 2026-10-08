@@ -107,6 +107,25 @@ void main() {
     );
   });
 
+  testWidgets('finds the delete-button interval from settings search', (
+    tester,
+  ) async {
+    final controller = AppController(storage: MemoryStorage());
+    await controller.initialize();
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: SettingsPage()),
+      ),
+    );
+
+    await tester.enterText(find.byType(SearchBar), '単語削除');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('キーボード設定'));
+    await tester.pumpAndSettle();
+    expect(find.text('削除ボタンを2回押す間隔'), findsOneWidget);
+  });
+
   testWidgets('keyboard sandbox opens a real editable input field', (
     tester,
   ) async {
@@ -220,6 +239,8 @@ void main() {
       find.byKey(const ValueKey('keyboard-layout-keyboard_type_phone')),
       240,
     );
+    await tester.drag(find.byType(ListView), const Offset(0, -160));
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey('keyboard-layout-keyboard_type_phone')),
     );

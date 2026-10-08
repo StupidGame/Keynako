@@ -44,7 +44,7 @@ class _SettingsPageState extends State<SettingsPage> {
             sliver: SliverList.list(
               children: [
                 if (_query.isEmpty ||
-                    'キーボード設定 入力欄 自動切り替え 日本語 英語 数字 電話 URL'
+                    'キーボード設定 入力欄 自動切り替え 日本語 英語 数字 電話 URL 削除ボタン 単語削除 2回押す 間隔 連打'
                         .toLowerCase()
                         .contains(_query.trim().toLowerCase())) ...[
                   const _SectionHeader('キーボード'),
@@ -53,7 +53,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: ListTile(
                       leading: const Icon(Icons.keyboard_outlined),
                       title: const Text('キーボード設定'),
-                      subtitle: const Text('入力欄に合わせた自動切り替えと、種類ごとの配列'),
+                      subtitle: const Text('配列と、削除ボタンを2回押す間隔'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
