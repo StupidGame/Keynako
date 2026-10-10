@@ -71,9 +71,12 @@ import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.preferSingleKanaReading
+import io.github.StupidGame.azookey_flutter.conversion.precedingTextBeforeComposition
+import io.github.StupidGame.azookey_flutter.conversion.prioritizeContextualJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
+import io.github.StupidGame.azookey_flutter.conversion.recordContextCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
@@ -145,6 +148,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var cachedUserDictionarySource: JSONArray? = null
     private var cachedSortedUserEntries: List<JSONObject> = emptyList()
     private var composing = ""
+    private var displayedComposingText = ""
     private var rawRoman = ""
     private var mode = "japanese"
     private var layout = "flick"
@@ -365,6 +369,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         reloadState()
         composing = ""
+        displayedComposingText = ""
         rawRoman = ""
         selectedCandidate = 0
         candidateSelectedExplicitly = false
@@ -1359,7 +1364,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (candidates.isEmpty()) space() else {
                     selectedCandidate = (selectedCandidate + 1) % candidates.size
                     candidateSelectedExplicitly = true
-                    currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                    showComposingText(candidates[selectedCandidate])
                     renderCandidateValues()
                 }
             }
@@ -1371,7 +1376,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (candidates.isEmpty()) space() else {
                     selectedCandidate = (selectedCandidate + 1) % candidates.size
                     candidateSelectedExplicitly = true
-                    currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                    showComposingText(candidates[selectedCandidate])
                     renderCandidateValues()
                 }
             }
@@ -2709,6 +2714,21 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
+    private fun showComposingText(text: String) {
+        if (currentInputConnection?.setComposingText(text, 1) == true) {
+            displayedComposingText = text
+        }
+    }
+
+    private fun leftContextBeforeComposition(maxLength: Int): String {
+        val visible = displayedComposingText
+        if (visible.length > 1000) return ""
+        val beforeCursor = currentInputConnection
+            ?.getTextBeforeCursor(maxLength + visible.length, 0)
+            ?.toString().orEmpty()
+        return precedingTextBeforeComposition(beforeCursor, visible, maxLength)
+    }
+
     private fun updateComposition() {
         val revision = candidateRevision.incrementAndGet()
         pendingOfficialLookup = null
@@ -2729,7 +2749,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         } else {
             reading
         }
-        currentInputConnection?.setComposingText(displayed, 1)
+        showComposingText(displayed)
         renderCandidateValues()
         if (lookup == null) {
             if (completeStableFirstClauseIfNeeded(reading)) return
@@ -2759,7 +2779,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
                     ?: defaultCandidateIndex()
                 if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
-                    currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                    showComposingText(candidates[selectedCandidate])
                 }
                 if (!candidateSelectedExplicitly &&
                     completeStableFirstClauseIfNeeded(request.reading)) return@post
@@ -2834,6 +2854,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val connection = currentInputConnection ?: return false
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
         if (!connection.commitText(clause.text, 1)) return false
+        displayedComposingText = ""
         composing = remaining
         rawRoman = remainingRoman
         updateComposition()
@@ -2855,10 +2876,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val size = if (effort == 0) "xsmall" else "small"
         val modelInput = hiraganaToKatakana(reading)
         val maxTokens = zenzaiGenerationTokenBudget(modelInput.length, effort)
-        val leftContext = currentInputConnection
-            ?.getTextBeforeCursor(20, 0)
-            ?.toString()
-            .orEmpty()
+        val leftContext = leftContextBeforeComposition(48)
         val rightContext = currentInputConnection
             ?.getTextAfterCursor(20, 0)
             ?.toString()
@@ -2902,7 +2920,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                     blockedCombinationValues, exactRegistrationTexts,
                 )
             }
-            val reranked = keepKanaCandidatesVisible(reading, rankedCandidates)
+            val reranked = keepKanaCandidatesVisible(reading,
+                prioritizeContextualJapaneseCandidates(reading, rankedCandidates,
+                    learningScores(), leftContext))
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
@@ -2912,7 +2932,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
                 ?: defaultCandidateIndex()
             if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
-                currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+                showComposingText(candidates[selectedCandidate])
             }
             renderCandidateValues()
         }
@@ -3184,6 +3204,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                         candidateBlockedCombinationValues, candidateExactRegistrationTexts,
                     ))
             }.distinct()
+        val contextual = prioritizeContextualJapaneseCandidates(
+            reading, ordered, learning,
+            leftContextBeforeComposition(20),
+        )
         val strongLearning = learnedEntries.any {
             it.reading == reading && it.score >= 4
         }
@@ -3194,10 +3218,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))
         if (shortKanaDefault &&
             !exactRegistration) {
-            return keepKanaCandidatesVisible(reading, listOf(reading) + ordered.filter { it != reading })
+            return keepKanaCandidatesVisible(reading, listOf(reading) + contextual.filter { it != reading })
         }
         return keepKanaCandidatesVisible(
-            reading, preferSingleKanaReading(reading, ordered, exactRegistration),
+            reading, preferSingleKanaReading(reading, contextual, exactRegistration),
         )
     }
 
@@ -3238,15 +3262,17 @@ class AzooKeyInputMethodService : InputMethodService() {
             reading = displayReading(),
             rawInput = if (layout == "qwerty") rawRoman else composing,
             inputStyle = if (layout == "qwerty") "roman2kana" else "direct",
-            leftContext = currentInputConnection?.getTextBeforeCursor(10, 0)?.toString().orEmpty(),
+            leftContext = leftContextBeforeComposition(20),
             rightContext = currentInputConnection?.getTextAfterCursor(10, 0)?.toString().orEmpty(),
             japaneseLayout = layout,
             textContentType = currentInputEditorInfo?.inputType?.toString() ?: "nil",
             returnKeyType = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)?.toString() ?: "default",
         )
         if (currentInputConnection?.commitText(candidate, 1) != true) return
+        displayedComposingText = ""
         invalidateCandidateLookup()
-        learnSelectedCandidate(displayReading(), candidate, explicitSelection = true)
+        learnSelectedCandidate(displayReading(), candidate, explicitSelection = true,
+            leftContext = report.leftContext)
         composing = ""
         rawRoman = ""
         stableClauseCompletion.reset()
@@ -3400,17 +3426,31 @@ class AzooKeyInputMethodService : InputMethodService() {
         settings.optBoolean("stop_learning_when_search", false) &&
             currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) == EditorInfo.IME_ACTION_SEARCH
 
-    private fun learnCandidate(reading: String, candidate: String, explicitSelection: Boolean = false) {
+    private fun learnCandidate(
+        reading: String,
+        candidate: String,
+        explicitSelection: Boolean = false,
+        leftContext: String = "",
+    ) {
         if (sensitiveInput || shouldStopLearningForSearch() ||
             settings.optInt("memory_learining_styple_setting", 0) != 0) return
         val scores = learningScores().toMutableMap()
         recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
+        if (mode == "japanese" && explicitSelection) {
+            recordContextCandidateLearning(scores, leftContext, reading, candidate)
+        }
         state.put("learning", JSONObject(scores))
         persistState()
     }
 
-    private fun learnSelectedCandidate(reading: String, candidate: String, explicitSelection: Boolean) {
-        learnCandidate(candidatePredictionReadings[candidate] ?: reading, candidate, explicitSelection)
+    private fun learnSelectedCandidate(
+        reading: String,
+        candidate: String,
+        explicitSelection: Boolean,
+        leftContext: String = "",
+    ) {
+        learnCandidate(candidatePredictionReadings[candidate] ?: reading, candidate,
+            explicitSelection, leftContext)
     }
 
     private fun persistState() {
@@ -3425,9 +3465,14 @@ class AzooKeyInputMethodService : InputMethodService() {
         val reading = displayReading()
         val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
         val text = compositionCommitText(reading, availableCandidates, useCandidate, selectedCandidate)
+        val leftContext = if (candidateSelectedExplicitly) {
+            leftContextBeforeComposition(20)
+        } else ""
         if (currentInputConnection?.commitText(text, 1) != true) return
+        displayedComposingText = ""
         invalidateCandidateLookup()
-        if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly)
+        if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly,
+            leftContext)
         composing = ""
         rawRoman = ""
         stableClauseCompletion.reset()
@@ -3475,8 +3520,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         // finishComposingText() alone commits the visible composing candidate.
         // Replace it with an empty composition first so deletion is reflected
         // in the editor as well as in our internal buffers.
-        currentInputConnection?.setComposingText("", 1)
+        showComposingText("")
         currentInputConnection?.finishComposingText()
+        displayedComposingText = ""
         renderCandidates()
     }
 
@@ -3516,6 +3562,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         invalidateCandidateLookup()
         pendingQuickWordDelete = null
         composing = ""
+        displayedComposingText = ""
         rawRoman = ""
         candidates.clear()
         selectedCandidate = 0
@@ -3677,7 +3724,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         selectedCandidate = (selectedCandidate + 1) % candidates.size
         candidateSelectedExplicitly = true
-        currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+        showComposingText(candidates[selectedCandidate])
         renderCandidateValues()
     }
 
@@ -4201,7 +4248,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             else -> 0
         }.coerceIn(0, candidates.lastIndex)
         candidateSelectedExplicitly = true
-        currentInputConnection?.setComposingText(candidates[selectedCandidate], 1)
+        showComposingText(candidates[selectedCandidate])
         renderCandidateValues()
     }
 
@@ -4226,6 +4273,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         currentInputConnection?.commitText(converted, 1)
         composing = ""
+        displayedComposingText = ""
         rawRoman = ""
         renderCandidates()
     }

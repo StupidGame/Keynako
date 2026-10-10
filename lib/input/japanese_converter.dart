@@ -27,6 +27,7 @@ class JapaneseConverter {
     required String input,
     required AppData data,
     bool romanInput = false,
+    String leftContext = '',
   }) {
     return _converter.candidates(
       input: input,
@@ -55,6 +56,7 @@ class JapaneseConverter {
             ),
         ],
         learning: data.learning,
+        leftContext: leftContext,
         learningEnabled: data.settings['memory_learining_styple_setting'] != 2,
         halfWidthKanaCandidate: data.settings['half_kana_candidate'] == true,
         fullWidthRomanCandidate: data.settings['full_roman_candidate'] == true,

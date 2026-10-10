@@ -4,9 +4,33 @@ import 'conversion_candidate.dart';
 import 'conversion_options.dart';
 
 const _combinationConnectors = [
-  'は', 'が', 'を', 'に', 'へ', 'で', 'と', 'も', 'の', 'や', 'か', 'ね', 'よ',
-  'から', 'まで', 'より', 'だけ', 'など', 'しか', 'こそ', 'でも',
-  'です', 'でした', 'だ', 'だった', 'ます', 'ました',
+  'は',
+  'が',
+  'を',
+  'に',
+  'へ',
+  'で',
+  'と',
+  'も',
+  'の',
+  'や',
+  'か',
+  'ね',
+  'よ',
+  'から',
+  'まで',
+  'より',
+  'だけ',
+  'など',
+  'しか',
+  'こそ',
+  'でも',
+  'です',
+  'でした',
+  'だ',
+  'だった',
+  'ます',
+  'ました',
 ];
 
 bool _isCombinationConnector(String value) {
@@ -234,29 +258,109 @@ class JapaneseConverter {
     'あう': ['会う', '合う', '遭う'],
     'あさ': ['朝', '麻'],
     'あした': ['明日'],
+    'あそぶ': ['遊ぶ'],
+    'あたらしい': ['新しい'],
+    'あめ': ['雨', '飴'],
+    'あなた': ['あなた'],
+    'ある': ['ある', '有る'],
+    'いえ': ['家'],
+    'いく': ['行く'],
+    'いった': ['行った'],
+    'いぬ': ['犬'],
     'ありがとう': ['ありがとう', '有難う'],
     'いま': ['今', '居間'],
+    'いる': ['いる', '居る'],
+    'うみ': ['海'],
     'うえ': ['上'],
+    'えき': ['駅'],
+    'おおきい': ['大きい'],
+    'おもう': ['思う'],
     'おはよう': ['おはよう', 'お早う'],
     'おねがい': ['お願い'],
+    'かいしゃ': ['会社'],
+    'かう': ['買う', '飼う'],
+    'かえる': ['帰る', '変える'],
+    'かぞく': ['家族'],
     'かく': ['書く', '描く', '各'],
+    'がくせい': ['学生'],
+    'かんがえる': ['考える'],
+    'きく': ['聞く', '聴く'],
+    'きのう': ['昨日'],
     'きょう': ['今日', '京'],
+    'くる': ['来る'],
+    'くるま': ['車'],
+    'こうえん': ['公園'],
     'こんにちは': ['こんにちは'],
+    'こども': ['子ども', '子供'],
+    'こと': ['こと', '事'],
     'ことば': ['言葉'],
+    'ごはん': ['ご飯'],
+    'さがす': ['探す'],
+    'しごと': ['仕事'],
+    'しる': ['知る'],
     'じかん': ['時間'],
+    'じぶん': ['自分'],
+    'すこし': ['少し'],
     'すき': ['好き'],
+    'する': ['する'],
+    'せかい': ['世界'],
     'せってい': ['設定'],
+    'せんせい': ['先生'],
+    'そと': ['外'],
+    'たかい': ['高い'],
+    'たべる': ['食べる'],
+    'たべた': ['食べた'],
     'だいじょうぶ': ['大丈夫'],
+    'だれ': ['誰'],
+    'ちいさい': ['小さい'],
+    'ちがう': ['違う'],
+    'つぎ': ['次'],
+    'つくる': ['作る'],
     'つかう': ['使う'],
+    'てがみ': ['手紙'],
+    'てんき': ['天気'],
     'でんわ': ['電話'],
+    'ともだち': ['友達'],
+    'ない': ['ない', '無い'],
+    'なか': ['中'],
+    'なまえ': ['名前'],
+    'ねこ': ['猫'],
     'にほん': ['日本', '二本'],
     'にほんご': ['日本語'],
+    'のむ': ['飲む'],
+    'はな': ['花', '鼻'],
+    'はなす': ['話す', '離す'],
+    'はやい': ['早い', '速い'],
+    'ひと': ['人'],
+    'ひる': ['昼'],
+    'ふゆ': ['冬'],
     'へんかん': ['変換'],
+    'へや': ['部屋'],
+    'ぼいす': ['ボイス'],
+    'ほしょう': ['保証', '補償'],
+    'ほしい': ['欲しい'],
+    'ほん': ['本'],
     'ほんじつ': ['本日'],
+    'まえ': ['前'],
+    'まち': ['町', '街'],
+    'まつ': ['待つ'],
     'また': ['また'],
+    'みず': ['水'],
     'みる': ['見る', '観る'],
+    'みせ': ['店', '見せ'],
+    'みち': ['道'],
     'もじ': ['文字'],
+    'やま': ['山'],
+    'やる': ['やる'],
+    'ゆっくり': ['ゆっくり'],
+    'よい': ['良い', 'よい'],
+    'よく': ['よく'],
+    'よむ': ['読む'],
     'よろしく': ['よろしく', '宜しく'],
+    'らいしゅう': ['来週'],
+    'りょこう': ['旅行'],
+    'わかる': ['分かる', 'わかる'],
+    'わるい': ['悪い'],
     'わたし': ['私'],
   };
 
@@ -422,6 +526,13 @@ class JapaneseConverter {
     final prefixPredictions = <ConversionCandidate>[];
     final exactLearning = <String, int>{};
     final predictionLearning = <String, int>{};
+    final contextLearning = options.learningEnabled
+        ? CandidateLearning.contextScores(
+            options.learning,
+            leftContext: options.leftContext,
+            reading: reading,
+          )
+        : const <String, int>{};
 
     // Recover selected words even when they came from Zenzai or a dictionary
     // that is no longer loaded. A longer learned reading is only a completion.
@@ -443,6 +554,17 @@ class JapaneseConverter {
           ),
         );
       }
+    }
+
+    for (final entry in contextLearning.entries) {
+      values.add(
+        ConversionCandidate(
+          text: entry.key,
+          reading: reading,
+          source: 'context-learned',
+          score: 320 + entry.value * 25,
+        ),
+      );
     }
 
     for (final entry in options.userDictionary) {
@@ -486,9 +608,66 @@ class JapaneseConverter {
         );
       }
     }
-    for (final value in _dictionary[reading] ?? const <String>[]) {
+    for (final (index, value)
+        in (_dictionary[reading] ?? const <String>[]).indexed) {
       values.add(
-        ConversionCandidate(text: value, reading: reading, score: 250),
+        ConversionCandidate(
+          text: value,
+          reading: reading,
+          score: 270 - index * 15,
+        ),
+      );
+    }
+    // Treat 「付き」 as a suffix of a converted noun. The earlier words may
+    // themselves be a dictionary or learned combination.
+    if (reading.endsWith('つき') && reading.length > 2) {
+      final prefix = reading.substring(0, reading.length - 2);
+      final preceding = candidates(
+        input: prefix,
+        predictionLimit: 0,
+        options: options,
+      );
+      for (final candidate in preceding.take(12)) {
+        if (!const {
+          'system',
+          'system-combination',
+          'user',
+          'user-combination',
+          'learned',
+          'learned-combination',
+          'context-learned',
+        }.contains(candidate.source)) {
+          continue;
+        }
+        final last = candidate.text.runes.last;
+        if (!(last >= 0x30a1 && last <= 0x30ff ||
+            last >= 0x4e00 && last <= 0x9fff)) {
+          continue;
+        }
+        values.add(
+          ConversionCandidate(
+            text: '${candidate.text}付き',
+            reading: reading,
+            source: 'attached-suffix',
+            score: 285,
+          ),
+        );
+      }
+    }
+    // Complete everyday phrases can be assembled even without a registered
+    // word. Only the preferred spelling of each built-in word participates.
+    for (final path in _dictionaryCombinations(
+      reading,
+      const [],
+      requireRegistered: false,
+    )) {
+      values.add(
+        ConversionCandidate(
+          text: path.text,
+          reading: reading,
+          source: 'system-combination',
+          score: 210 + (path.score ~/ 4).clamp(0, 35),
+        ),
       );
     }
     final registeredCombinations = _dictionaryCombinations(
@@ -669,7 +848,12 @@ class JapaneseConverter {
     for (final candidate in values) {
       if (candidate.text.trim().isEmpty) continue;
       final learned = (exactLearning[candidate.text] ?? 0).clamp(0, 1000);
-      final scored = candidate.copyWith(score: candidate.score + learned * 50);
+      final scored = candidate.copyWith(
+        score:
+            candidate.score +
+            learned * 50 +
+            (contextLearning[candidate.text] ?? 0) * 120,
+      );
       final previous = unique[candidate.text];
       if (previous == null ||
           _candidatePriority(scored) < _candidatePriority(previous) ||
@@ -741,6 +925,9 @@ class JapaneseConverter {
                 'user',
                 'user-combination',
                 'learned-combination',
+                'context-learned',
+                'system-combination',
+                'attached-suffix',
                 'system',
                 'learned',
                 'special',
@@ -778,7 +965,8 @@ class JapaneseConverter {
         literalLength <= 2 &&
         reading.runes.every((rune) => rune >= 0x3041 && rune <= 0x3096) &&
         (literalLength == 1 ||
-            (!_dictionary.containsKey(reading) && visiblePredictions.isEmpty)) &&
+            (!_dictionary.containsKey(reading) &&
+                visiblePredictions.isEmpty)) &&
         !exactLearning.values.any((score) => score >= 4) &&
         !options.userDictionary.any(
           (entry) => katakanaToHiragana(entry.reading) == reading,
@@ -846,8 +1034,9 @@ class JapaneseConverter {
 
   int _candidatePriority(ConversionCandidate candidate) =>
       switch (candidate.source) {
-        'user' || 'user-combination' => 1,
+        'user' || 'user-combination' || 'context-learned' => 1,
         'learned' || 'learned-combination' => 2,
+        'system-combination' || 'attached-suffix' => 3,
         'user-prefix' || 'user-prediction' => 4,
         'learned-prediction' => 5,
         _ when candidate.source.contains('prediction') => 3,
@@ -872,6 +1061,7 @@ class JapaneseConverter {
     String reading,
     List<ConversionDictionaryEntry> entries, {
     int limit = 8,
+    bool requireRegistered = true,
   }) {
     if (reading.length < 2) return const [];
     final matches = List.generate(reading.length, (_) => <_DictionaryMatch>[]);
@@ -903,9 +1093,9 @@ class JapaneseConverter {
         true,
       );
     }
-    if (!hasRegisteredMatch) return const [];
+    if (requireRegistered && !hasRegisteredMatch) return const [];
     for (final entry in _dictionary.entries) {
-      for (final value in entry.value.take(2)) {
+      for (final value in entry.value.take(1)) {
         add(entry.key, value, 3, false);
       }
     }
@@ -918,8 +1108,8 @@ class JapaneseConverter {
     );
     lattice[0][0] = [const _DictionaryPath('', 0, 0, 0, false, '', true)];
     void push(int end, _DictionaryPath path) {
-      final context = (path.registeredWords > 0 ? 2 : 0) +
-          (path.words > 0 ? 1 : 0);
+      final context =
+          (path.registeredWords > 0 ? 2 : 0) + (path.words > 0 ? 1 : 0);
       final paths = lattice[end].putIfAbsent(context, () => [])..add(path);
       if (paths.length > 48) {
         paths.sort((a, b) => b.score.compareTo(a.score));
@@ -962,10 +1152,16 @@ class JapaneseConverter {
       }
     }
     final ranked =
-        lattice.last.values.expand((paths) => paths)
-            .where((path) => path.words >= 2 && path.registeredWords >= 1 &&
-                path.startsWithWord && path.validConnectors &&
-                _isCombinationConnector(path.pendingKana))
+        lattice.last.values
+            .expand((paths) => paths)
+            .where(
+              (path) =>
+                  path.words >= 2 &&
+                  (!requireRegistered || path.registeredWords >= 1) &&
+                  path.startsWithWord &&
+                  path.validConnectors &&
+                  _isCombinationConnector(path.pendingKana),
+            )
             .toList()
           ..sort((a, b) => b.score.compareTo(a.score));
     final unique = <String, _DictionaryPath>{};

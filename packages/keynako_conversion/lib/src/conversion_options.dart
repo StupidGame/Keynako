@@ -26,6 +26,7 @@ class ConversionOptions {
   const ConversionOptions({
     this.userDictionary = const [],
     this.learning = const {},
+    this.leftContext = '',
     this.learningEnabled = true,
     this.halfWidthKanaCandidate = true,
     this.fullWidthRomanCandidate = true,
@@ -39,6 +40,9 @@ class ConversionOptions {
 
   final List<ConversionDictionaryEntry> userDictionary;
   final Map<String, int> learning;
+
+  /// Text immediately before the insertion point, used for local choices.
+  final String leftContext;
   final bool learningEnabled;
   final bool halfWidthKanaCandidate;
   final bool fullWidthRomanCandidate;
