@@ -163,4 +163,31 @@ void main() {
       isEmpty,
     );
   });
+
+  test('context choices stay local and separate from general learning', () {
+    final learning = <String, int>{};
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    expect(CandidateLearning.entries(learning), isEmpty);
+    expect(
+      CandidateLearning.contextScores(
+        learning,
+        leftContext: '今日は',
+        reading: 'あめ',
+      ),
+      {'飴': 4},
+    );
+    expect(
+      CandidateLearning.contextScores(
+        learning,
+        leftContext: '明日は',
+        reading: 'あめ',
+      ),
+      isEmpty,
+    );
+  });
 }

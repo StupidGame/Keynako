@@ -433,6 +433,17 @@ class DesktopInputController extends ChangeNotifier {
       english: _mode == InputMode.english,
       explicitSelection: _converting,
     );
+    if (_mode == InputMode.japanese && _converting) {
+      CandidateLearning.recordContext(
+        _learning,
+        leftContext: _committedText.substring(
+          0,
+          _committedSelectionOffset.clamp(0, _committedText.length),
+        ),
+        reading: selected?.reading ?? composingText,
+        text: candidate,
+      );
+    }
     final committedCandidate = _mode == InputMode.english
         ? '$candidate '
         : candidate;
@@ -485,6 +496,10 @@ class DesktopInputController extends ChangeNotifier {
     final options = ConversionOptions(
       userDictionary: [..._personalDictionary, ..._sharedDictionary],
       learning: _learning,
+      leftContext: _committedText.substring(
+        0,
+        _committedSelectionOffset.clamp(0, _committedText.length),
+      ),
     );
     _candidates = _mode == InputMode.japanese
         ? _japaneseConverter.candidates(
@@ -537,7 +552,12 @@ class DesktopInputController extends ChangeNotifier {
     _zenzaiStatus = '推論中';
     notifyListeners();
     try {
-      final committedCharacters = _committedText.characters;
+      final committedCharacters = _committedText
+          .substring(
+            0,
+            _committedSelectionOffset.clamp(0, _committedText.length),
+          )
+          .characters;
       final skipCount = committedCharacters.length - 40;
       final generated = await engine.generate(
         ZenzaiRequest(

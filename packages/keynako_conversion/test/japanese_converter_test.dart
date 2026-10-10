@@ -138,21 +138,23 @@ void main() {
   });
 
   test('allows particle endings but not unmatched words in combinations', () {
-    const options = ConversionOptions(userDictionary: [
-      ConversionDictionaryEntry(reading: 'まきな', value: 'マキナ'),
-      ConversionDictionaryEntry(reading: 'れいな', value: 'レイナ'),
-    ]);
+    const options = ConversionOptions(
+      userDictionary: [
+        ConversionDictionaryEntry(reading: 'まきな', value: 'マキナ'),
+        ConversionDictionaryEntry(reading: 'れいな', value: 'レイナ'),
+      ],
+    );
     expect(
-      converter.candidates(input: 'まきなとれいなも', options: options)
+      converter
+          .candidates(input: 'まきなとれいなも', options: options)
           .where((candidate) => candidate.source == 'user-combination')
           .map((candidate) => candidate.text),
       contains('マキナとレイナも'),
     );
-    for (final reading in [
-      'あまきなとれいな', 'まきなぴょれいな', 'まきなとれいなぴょ',
-    ]) {
+    for (final reading in ['あまきなとれいな', 'まきなぴょれいな', 'まきなとれいなぴょ']) {
       expect(
-        converter.candidates(input: reading, options: options)
+        converter
+            .candidates(input: reading, options: options)
             .where((candidate) => candidate.source == 'user-combination'),
         isEmpty,
       );
@@ -170,6 +172,69 @@ void main() {
     expect(candidates.map((candidate) => candidate.text), contains('私は猫'));
   });
 
+  test('prefers ordinary spellings and combines built-in words', () {
+    final rain = converter.candidates(input: 'あめ');
+    expect(rain.first.text, '雨');
+    expect(rain.map((candidate) => candidate.text), contains('飴'));
+    expect(rain.indexWhere((candidate) => candidate.text == 'あめ'), lessThan(4));
+
+    final phrase = converter.candidates(input: 'きょうはあめ');
+    expect(phrase.first.text, '今日は雨');
+    expect(phrase.first.source, 'system-combination');
+    expect(phrase.map((candidate) => candidate.text), isNot(contains('今日は飴')));
+
+    final longer = converter.candidates(input: 'にほんごをつかう');
+    expect(longer.first.text, '日本語を使う');
+    expect(longer.first.source, 'system-combination');
+  });
+
+  test('does not join built-in words through unmatched kana', () {
+    final candidates = converter.candidates(input: 'きょうぴょあめ');
+    expect(
+      candidates.map((candidate) => candidate.text),
+      isNot(contains('今日ぴょ雨')),
+    );
+  });
+
+  test('combines learned words with ordinary words', () {
+    final candidates = converter.candidates(
+      input: 'まきなとねこ',
+      options: const ConversionOptions(learning: {'まきな\tマキナ': 8}),
+    );
+    expect(candidates.first.text, 'マキナと猫');
+    expect(candidates.first.source, 'learned-combination');
+  });
+
+  test('uses the preceding text to disambiguate an ordinary word', () {
+    final learning = <String, int>{'あめ\t雨': 8};
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    expect(
+      converter
+          .candidates(
+            input: 'あめ',
+            options: ConversionOptions(learning: learning, leftContext: '今日は'),
+          )
+          .first
+          .text,
+      '飴',
+    );
+    expect(
+      converter
+          .candidates(
+            input: 'あめ',
+            options: ConversionOptions(learning: learning, leftContext: '明日は'),
+          )
+          .first
+          .text,
+      '雨',
+    );
+  });
+
   test('combines two learned words across a particle', () {
     final candidates = converter.candidates(
       input: 'わたしはねこ',
@@ -181,12 +246,14 @@ void main() {
     );
     final withParticle = converter.candidates(
       input: 'わたしはねこも',
-      options: const ConversionOptions(
-        learning: {'わたし\t私': 16, 'ねこ\t猫': 16},
-      ),
+      options: const ConversionOptions(learning: {'わたし\t私': 16, 'ねこ\t猫': 16}),
     );
-    expect(withParticle.where((candidate) => candidate.source == 'learned-combination')
-        .map((candidate) => candidate.text), contains('私は猫も'));
+    expect(
+      withParticle
+          .where((candidate) => candidate.source == 'learned-combination')
+          .map((candidate) => candidate.text),
+      contains('私は猫も'),
+    );
   });
 
   test('keeps learned and registered paths through a long sentence', () {
@@ -197,8 +264,10 @@ void main() {
         learning: {'わたし\t私': 8},
       ),
     );
-    expect(candidates.map((candidate) => candidate.text),
-        contains('私は猫と今日の日本語'));
+    expect(
+      candidates.map((candidate) => candidate.text),
+      contains('私は猫と今日の日本語'),
+    );
   });
 
   test('keeps dictionary combinations before mixed learned combinations', () {
