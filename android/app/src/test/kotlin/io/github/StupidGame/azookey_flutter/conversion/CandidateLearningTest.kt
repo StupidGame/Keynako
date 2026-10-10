@@ -69,4 +69,29 @@ class CandidateLearningTest {
         assertEquals("藍", compositionCommitText("あい", listOf("愛", "藍"), true, selectedIndex = 1))
         assertEquals("あい", compositionCommitText("あい", listOf("愛", "藍"), false, selectedIndex = 1))
     }
+
+    @Test
+    fun deliberateChoicesRecallTheSpellingForEachPreviousPhrase() {
+        val learning = mutableMapOf<String, Int>()
+        recordCandidateLearning(learning, "あめ", "飴", explicitSelection = true)
+        recordContextCandidateLearning(learning, "今日は", "あめ", "飴")
+        recordCandidateLearning(learning, "あめ", "雨", explicitSelection = true)
+        recordContextCandidateLearning(learning, "明日は", "あめ", "雨")
+
+        val candidates = listOf("雨", "飴", "あめ")
+        assertEquals("飴", prioritizeContextualJapaneseCandidates("あめ", candidates, learning, "今日は").first())
+        assertEquals("雨", prioritizeContextualJapaneseCandidates("あめ", candidates, learning, "明日は").first())
+        assertEquals(candidates, prioritizeContextualJapaneseCandidates("あめ", candidates, learning, "昨日は"))
+        assertEquals(2, learnedCandidates(learning).count { it.reading == "あめ" })
+    }
+
+    @Test
+    fun contextLearningDoesNotStoreEmptyContextOrCrossReadings() {
+        val learning = mutableMapOf<String, Int>()
+        recordContextCandidateLearning(learning, "", "あめ", "飴")
+        assertTrue(learning.isEmpty())
+        recordContextCandidateLearning(learning, "今日は", "あめ", "飴")
+        assertEquals(listOf("雨", "飴"),
+            prioritizeContextualJapaneseCandidates("あい", listOf("雨", "飴"), learning, "今日は"))
+    }
 }

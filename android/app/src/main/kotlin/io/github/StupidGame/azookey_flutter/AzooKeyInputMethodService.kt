@@ -71,9 +71,11 @@ import io.github.StupidGame.azookey_flutter.conversion.katakanaToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.preferSingleKanaReading
+import io.github.StupidGame.azookey_flutter.conversion.prioritizeContextualJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
+import io.github.StupidGame.azookey_flutter.conversion.recordContextCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
 import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapaneseInput
@@ -2902,7 +2904,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                     blockedCombinationValues, exactRegistrationTexts,
                 )
             }
-            val reranked = keepKanaCandidatesVisible(reading, rankedCandidates)
+            val reranked = keepKanaCandidatesVisible(reading,
+                prioritizeContextualJapaneseCandidates(reading, rankedCandidates,
+                    learningScores(), leftContext))
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
@@ -3184,6 +3188,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                         candidateBlockedCombinationValues, candidateExactRegistrationTexts,
                     ))
             }.distinct()
+        val contextual = prioritizeContextualJapaneseCandidates(
+            reading, ordered, learning,
+            currentInputConnection?.getTextBeforeCursor(20, 0)?.toString().orEmpty(),
+        )
         val strongLearning = learnedEntries.any {
             it.reading == reading && it.score >= 4
         }
@@ -3194,10 +3202,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             allowedOfficialConversions.firstOrNull() in setOf(reading, hiraganaToKatakana(reading))
         if (shortKanaDefault &&
             !exactRegistration) {
-            return keepKanaCandidatesVisible(reading, listOf(reading) + ordered.filter { it != reading })
+            return keepKanaCandidatesVisible(reading, listOf(reading) + contextual.filter { it != reading })
         }
         return keepKanaCandidatesVisible(
-            reading, preferSingleKanaReading(reading, ordered, exactRegistration),
+            reading, preferSingleKanaReading(reading, contextual, exactRegistration),
         )
     }
 
@@ -3246,7 +3254,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         )
         if (currentInputConnection?.commitText(candidate, 1) != true) return
         invalidateCandidateLookup()
-        learnSelectedCandidate(displayReading(), candidate, explicitSelection = true)
+        learnSelectedCandidate(displayReading(), candidate, explicitSelection = true,
+            leftContext = report.leftContext)
         composing = ""
         rawRoman = ""
         stableClauseCompletion.reset()
@@ -3400,17 +3409,31 @@ class AzooKeyInputMethodService : InputMethodService() {
         settings.optBoolean("stop_learning_when_search", false) &&
             currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) == EditorInfo.IME_ACTION_SEARCH
 
-    private fun learnCandidate(reading: String, candidate: String, explicitSelection: Boolean = false) {
+    private fun learnCandidate(
+        reading: String,
+        candidate: String,
+        explicitSelection: Boolean = false,
+        leftContext: String = "",
+    ) {
         if (sensitiveInput || shouldStopLearningForSearch() ||
             settings.optInt("memory_learining_styple_setting", 0) != 0) return
         val scores = learningScores().toMutableMap()
         recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
+        if (mode == "japanese" && explicitSelection) {
+            recordContextCandidateLearning(scores, leftContext, reading, candidate)
+        }
         state.put("learning", JSONObject(scores))
         persistState()
     }
 
-    private fun learnSelectedCandidate(reading: String, candidate: String, explicitSelection: Boolean) {
-        learnCandidate(candidatePredictionReadings[candidate] ?: reading, candidate, explicitSelection)
+    private fun learnSelectedCandidate(
+        reading: String,
+        candidate: String,
+        explicitSelection: Boolean,
+        leftContext: String = "",
+    ) {
+        learnCandidate(candidatePredictionReadings[candidate] ?: reading, candidate,
+            explicitSelection, leftContext)
     }
 
     private fun persistState() {
@@ -3425,9 +3448,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         val reading = displayReading()
         val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
         val text = compositionCommitText(reading, availableCandidates, useCandidate, selectedCandidate)
+        val leftContext = if (candidateSelectedExplicitly) {
+            currentInputConnection?.getTextBeforeCursor(20, 0)?.toString().orEmpty()
+        } else ""
         if (currentInputConnection?.commitText(text, 1) != true) return
         invalidateCandidateLookup()
-        if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly)
+        if (useCandidate) learnSelectedCandidate(reading, text, candidateSelectedExplicitly,
+            leftContext)
         composing = ""
         rawRoman = ""
         stableClauseCompletion.reset()

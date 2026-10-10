@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'app.dart';
 import 'input/candidate_dictionary_command.dart';
 import 'input/desktop_input_controller.dart';
+import 'input/desktop_learning.dart';
 import 'input/desktop_personal_dictionary.dart';
 import 'input/desktop_shared_dictionary.dart';
 import 'input/desktop_zenzai_locator.dart';
@@ -25,6 +26,7 @@ Future<void> main(List<String> arguments) async {
     zenzaiEngineFactory: DesktopZenzaiLocator.create,
     sharedDictionaryRepository: DesktopSharedDictionaryRepository(),
     personalDictionaryRepository: DesktopPersonalDictionaryRepository(),
+    learningRepository: DesktopLearningRepository(),
   );
   final openDictionary = arguments.contains('--dictionary');
   final candidateIndex = arguments.indexOf('--candidate-word');
@@ -38,6 +40,7 @@ Future<void> main(List<String> arguments) async {
       ? arguments[readingIndex + 1]
       : null;
   await controller.initializePersonalDictionary();
+  await controller.initializeLearning();
   if (!openDictionary && (candidateWord == null || candidateReading == null)) {
     await controller.initializeSharedDictionary();
     await controller.setZenzaiModel(ZenzaiModel.xsmall);
