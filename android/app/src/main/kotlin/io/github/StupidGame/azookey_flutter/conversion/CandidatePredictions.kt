@@ -250,8 +250,14 @@ internal fun rerankedJapaneseCandidates(
             leading.startsWith(it.removeSuffix("付き")) && leading !in explicitlyPreferred &&
             it in stable
     }
-    val withCompound = if (attachedSuffix != null) {
-        listOf(attachedSuffix) + stable.filter { it != attachedSuffix }
+    val lexicalWord = dictionaryFirst?.takeIf {
+        reading.endsWith("つき") && it.length in 2..3 &&
+            it.all { char -> char in '一'..'龯' } && leading?.endsWith("付き") == true &&
+            leading !in explicitlyPreferred && it in stable
+    }
+    val protected = attachedSuffix ?: lexicalWord
+    val withCompound = if (protected != null) {
+        listOf(protected) + stable.filter { it != protected }
     } else stable
     return preferSingleKanaReading(reading, withCompound, exactRegistration)
 }
