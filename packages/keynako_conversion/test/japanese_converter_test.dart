@@ -188,6 +188,26 @@ void main() {
     expect(longer.first.source, 'system-combination');
   });
 
+  test('attaches 付き to preceding dictionary and learned word groups', () {
+    expect(converter.candidates(input: 'ぼいすつき').first.text, 'ボイス付き');
+    expect(converter.candidates(input: 'わたしのぼいすつき').first.text, '私のボイス付き');
+    expect(converter.candidates(input: 'ほしょうつき').first.text, '保証付き');
+    final learned = converter.candidates(
+      input: 'きゃらつき',
+      options: const ConversionOptions(learning: {'きゃら\tキャラ': 8}),
+    );
+    expect(learned.map((candidate) => candidate.text), contains('キャラ付き'));
+    final registered = converter.candidates(
+      input: 'とうろくごつき',
+      options: const ConversionOptions(
+        userDictionary: [
+          ConversionDictionaryEntry(reading: 'とうろくご', value: '登録語'),
+        ],
+      ),
+    );
+    expect(registered.first.text, '登録語付き');
+  });
+
   test('does not join built-in words through unmatched kana', () {
     final candidates = converter.candidates(input: 'きょうぴょあめ');
     expect(

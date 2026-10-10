@@ -336,6 +336,8 @@ class JapaneseConverter {
     'ふゆ': ['冬'],
     'へんかん': ['変換'],
     'へや': ['部屋'],
+    'ぼいす': ['ボイス'],
+    'ほしょう': ['保証', '補償'],
     'ほしい': ['欲しい'],
     'ほん': ['本'],
     'ほんじつ': ['本日'],
@@ -616,6 +618,42 @@ class JapaneseConverter {
         ),
       );
     }
+    // Treat 「付き」 as a suffix of a converted noun. The earlier words may
+    // themselves be a dictionary or learned combination.
+    if (reading.endsWith('つき') && reading.length > 2) {
+      final prefix = reading.substring(0, reading.length - 2);
+      final preceding = candidates(
+        input: prefix,
+        predictionLimit: 0,
+        options: options,
+      );
+      for (final candidate in preceding.take(12)) {
+        if (!const {
+          'system',
+          'system-combination',
+          'user',
+          'user-combination',
+          'learned',
+          'learned-combination',
+          'context-learned',
+        }.contains(candidate.source)) {
+          continue;
+        }
+        final last = candidate.text.runes.last;
+        if (!(last >= 0x30a1 && last <= 0x30ff ||
+            last >= 0x4e00 && last <= 0x9fff)) {
+          continue;
+        }
+        values.add(
+          ConversionCandidate(
+            text: '${candidate.text}付き',
+            reading: reading,
+            source: 'attached-suffix',
+            score: 285,
+          ),
+        );
+      }
+    }
     // Complete everyday phrases can be assembled even without a registered
     // word. Only the preferred spelling of each built-in word participates.
     for (final path in _dictionaryCombinations(
@@ -889,6 +927,7 @@ class JapaneseConverter {
                 'learned-combination',
                 'context-learned',
                 'system-combination',
+                'attached-suffix',
                 'system',
                 'learned',
                 'special',
@@ -997,7 +1036,7 @@ class JapaneseConverter {
       switch (candidate.source) {
         'user' || 'user-combination' || 'context-learned' => 1,
         'learned' || 'learned-combination' => 2,
-        'system-combination' => 3,
+        'system-combination' || 'attached-suffix' => 3,
         'user-prefix' || 'user-prediction' => 4,
         'learned-prediction' => 5,
         _ when candidate.source.contains('prediction') => 3,
