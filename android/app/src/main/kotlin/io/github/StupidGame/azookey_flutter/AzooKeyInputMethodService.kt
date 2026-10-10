@@ -3562,6 +3562,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         invalidateCandidateLookup()
         pendingQuickWordDelete = null
         composing = ""
+        displayedComposingText = ""
         rawRoman = ""
         candidates.clear()
         selectedCandidate = 0
@@ -4272,6 +4273,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         currentInputConnection?.commitText(converted, 1)
         composing = ""
+        displayedComposingText = ""
         rawRoman = ""
         renderCandidates()
     }
