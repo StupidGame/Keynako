@@ -2813,7 +2813,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun completeStableFirstClauseIfNeeded(reading: String): Boolean {
-        if (mode != "japanese" || !settings.optBoolean("live_conversion", true)) {
+        if (mode != "japanese" || !settings.optBoolean("live_conversion", true) ||
+            reading.length < 16) {
             stableClauseCompletion.reset()
             return false
         }
@@ -2841,7 +2842,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             reading,
             candidate,
             entries,
-            settings.optInt("automatic_completion_strength", 1),
+            settings.optInt("automatic_completion_strength", 0),
             rawInput = if (layout == "qwerty") rawRoman else reading,
         ) ?: return false
         val remaining = reading.removePrefix(clause.reading)

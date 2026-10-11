@@ -28,12 +28,17 @@ class StableClauseCompletion {
             4 -> 6
             else -> Int.MAX_VALUE
         }
-        if (threshold == Int.MAX_VALUE || reading.isBlank() || candidate.isBlank()) {
+        // A short phrase must stay editable as one composition, even at the
+        // strongest setting. Counting Roman key presses alone can otherwise
+        // complete its first word before the user finishes typing it.
+        if (threshold == Int.MAX_VALUE || reading.length < 16 ||
+            reading.isBlank() || candidate.isBlank()) {
             reset()
             return null
         }
         val clause = entries.asSequence().filter { entry ->
-            entry.reading.length >= 2 && entry.reading.length < reading.length && entry.text.isNotBlank() &&
+            entry.reading.length >= 2 && reading.length - entry.reading.length >= 8 &&
+                entry.text.isNotBlank() &&
                 reading.startsWith(entry.reading) && entry.text != entry.reading &&
                 candidate.length > entry.text.length && candidate.startsWith(entry.text)
         }.maxWithOrNull(compareBy<CompletedClause> { it.reading.length }.thenBy { it.text.length })

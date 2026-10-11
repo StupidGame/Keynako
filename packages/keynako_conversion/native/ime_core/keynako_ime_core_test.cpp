@@ -587,6 +587,8 @@ int main() {
         }));
     ImeSession stable_clause;
     assert(stable_clause.set_bundled_dictionary_path(dictionary_path));
+    assert(stable_clause.automatic_completion_strength() == 0);
+    stable_clause.set_automatic_completion_strength(1);
     std::string committed_prefix;
     for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
         stable_clause.append_ascii(value);
@@ -609,6 +611,14 @@ int main() {
         }
     }
     assert(strong_completed_at > 0 && strong_completed_at < phrase.size());
+    ImeSession short_clause;
+    assert(short_clause.set_bundled_dictionary_path(dictionary_path));
+    short_clause.set_automatic_completion_strength(4);
+    for (const char value : std::string("honrainomokuteki")) {
+        short_clause.append_ascii(value);
+        assert(short_clause.take_completed_clause().empty());
+    }
+    assert(short_clause.reading() == "ほんらいのもくてき");
     ImeSession disabled_clause;
     assert(disabled_clause.set_bundled_dictionary_path(dictionary_path));
     disabled_clause.set_automatic_completion_strength(0);

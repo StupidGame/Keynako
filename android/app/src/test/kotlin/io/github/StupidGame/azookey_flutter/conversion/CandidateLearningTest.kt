@@ -94,4 +94,19 @@ class CandidateLearningTest {
         assertEquals(listOf("雨", "飴"),
             prioritizeContextualJapaneseCandidates("あい", listOf("雨", "飴"), learning, "今日は"))
     }
+
+    @Test
+    fun longerContextDistinguishesPhrasesWithTheSameEnding() {
+        val learning = mutableMapOf<String, Int>()
+        recordContextCandidateLearning(learning, "朝から今日は", "あめ", "雨")
+        recordContextCandidateLearning(learning, "夜から今日は", "あめ", "雨")
+        recordContextCandidateLearning(learning, "朝から今日は", "あめ", "飴")
+        val candidates = listOf("雨", "飴")
+        assertEquals("飴", prioritizeContextualJapaneseCandidates(
+            "あめ", candidates, learning, "朝から今日は",
+        ).first())
+        assertEquals("雨", prioritizeContextualJapaneseCandidates(
+            "あめ", candidates, learning, "夜から今日は",
+        ).first())
+    }
 }

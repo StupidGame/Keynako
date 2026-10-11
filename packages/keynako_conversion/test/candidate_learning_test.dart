@@ -190,4 +190,59 @@ void main() {
       isEmpty,
     );
   });
+
+  test('a corrected context choice outranks the former favorite', () {
+    final learning = <String, int>{};
+    for (var i = 0; i < 8; i++) {
+      CandidateLearning.recordContext(
+        learning,
+        leftContext: '今日は',
+        reading: 'あめ',
+        text: '雨',
+      );
+    }
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    final scores = CandidateLearning.contextScores(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+    );
+    expect(scores['飴'], greaterThan(scores['雨']!));
+    expect(CandidateLearning.entries(learning), isEmpty);
+  });
+
+  test('longer context distinguishes phrases with the same ending', () {
+    final learning = <String, int>{};
+    for (final context in ['朝から今日は', '夜から今日は']) {
+      CandidateLearning.recordContext(
+        learning,
+        leftContext: context,
+        reading: 'あめ',
+        text: '雨',
+      );
+    }
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '朝から今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    final morning = CandidateLearning.contextScores(
+      learning,
+      leftContext: '朝から今日は',
+      reading: 'あめ',
+    );
+    final evening = CandidateLearning.contextScores(
+      learning,
+      leftContext: '夜から今日は',
+      reading: 'あめ',
+    );
+    expect(morning['飴'], greaterThan(morning['雨']!));
+    expect(evening['雨'], greaterThan(evening['飴'] ?? 0));
+  });
 }

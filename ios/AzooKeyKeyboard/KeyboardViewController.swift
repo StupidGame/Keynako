@@ -2682,7 +2682,7 @@ final class KeyboardViewController: UIInputViewController {
             inferenceLimit: zenzai?.inferenceLimit ?? 1,
             learningMode: intSetting("memory_learining_styple_setting", fallback: 0),
             automaticCompletionStrength: boolSetting("live_conversion", fallback: true)
-                ? intSetting("automatic_completion_strength", fallback: 1) : 0,
+                ? intSetting("automatic_completion_strength", fallback: 0) : 0,
             englishCandidateInRoman2KanaInput: boolSetting("roman_english_candidate", fallback: true),
             typographyCandidate: boolSetting("typography_roman_candidate", fallback: true),
             fullWidthRomanCandidate: boolSetting("full_roman_candidate", fallback: true),

@@ -186,6 +186,10 @@ void main() {
     final longer = converter.candidates(input: 'にほんごをつかう');
     expect(longer.first.text, '日本語を使う');
     expect(longer.first.source, 'system-combination');
+
+    final purpose = converter.candidates(input: 'ほんらいのもくてき');
+    expect(purpose.first.text, '本来の目的');
+    expect(purpose.first.source, 'system-combination');
   });
 
   test('attaches 付き to preceding dictionary and learned word groups', () {

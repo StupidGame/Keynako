@@ -588,14 +588,21 @@ void ImeSession::observe_stable_clause() {
         reset_stable_clause();
         return;
     }
+    const auto reading_count = utf8_character_count(reading_);
+    if (reading_count < 16) {
+        reset_stable_clause();
+        return;
+    }
     if (raw_input_ == stable_raw_input_) return;
     const std::string &candidate = candidates_.front().text;
     std::string clause_reading;
     std::string clause_text;
     const auto consider = [&](const std::string &ruby, const std::string &word) {
-        if (word.empty() || utf8_character_count(ruby) < 2 || ruby.size() >= reading_.size() ||
+        if (word.empty() || ruby.size() >= reading_.size() ||
             reading_.compare(0, ruby.size(), ruby) != 0 || word == ruby ||
             word.size() >= candidate.size() || candidate.compare(0, word.size(), word) != 0) return;
+        const auto ruby_count = utf8_character_count(ruby);
+        if (ruby_count < 2 || reading_count - ruby_count < 8) return;
         if (ruby.size() > clause_reading.size()) {
             clause_reading = ruby;
             clause_text = word;

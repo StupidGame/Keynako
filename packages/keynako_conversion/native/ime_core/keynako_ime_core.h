@@ -83,7 +83,7 @@ private:
 
     InputMode mode_ = InputMode::japanese;
     bool live_conversion_ = true;
-    int automatic_completion_strength_ = 1;
+    int automatic_completion_strength_ = 0;
     bool converting_ = false;
     bool live_conversion_suspended_ = false;
     std::string raw_input_;

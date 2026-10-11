@@ -69,14 +69,22 @@ class CandidateLearning {
     return result;
   }
 
-  static String? _contextPrefix(String leftContext, String reading) {
+  static List<String> _contextPrefixes(String leftContext, String reading) {
     final preceding = leftContext.trimRight().runes.toList();
-    if (preceding.isEmpty || reading.trim().isEmpty) return null;
-    final suffix = String.fromCharCodes(
-      preceding.sublist(preceding.length > 4 ? preceding.length - 4 : 0),
-    );
-    return 'context:${Uri.encodeComponent(suffix)}\t'
-        '${normalizeReading(reading)}\t';
+    if (preceding.isEmpty || reading.trim().isEmpty) return const [];
+    final prefixes = <String>{};
+    for (final length in [8, 4]) {
+      final suffix = String.fromCharCodes(
+        preceding.sublist(
+          preceding.length > length ? preceding.length - length : 0,
+        ),
+      );
+      prefixes.add(
+        'context:${Uri.encodeComponent(suffix)}\t'
+        '${normalizeReading(reading)}\t',
+      );
+    }
+    return prefixes.toList();
   }
 
   /// Recalls deliberate choices only when the same preceding text reappears.
@@ -85,15 +93,18 @@ class CandidateLearning {
     required String leftContext,
     required String reading,
   }) {
-    final prefix = _contextPrefix(leftContext, reading);
-    if (prefix == null) return const {};
-    final result = <String, int>{};
-    for (final entry in learning.entries) {
-      if (!entry.key.startsWith(prefix) || entry.value <= 0) continue;
-      final text = entry.key.substring(prefix.length);
-      if (text.trim().isNotEmpty) result[text] = entry.value.clamp(1, maxScore);
+    for (final prefix in _contextPrefixes(leftContext, reading)) {
+      final result = <String, int>{};
+      for (final entry in learning.entries) {
+        if (!entry.key.startsWith(prefix) || entry.value <= 0) continue;
+        final text = entry.key.substring(prefix.length);
+        if (text.trim().isNotEmpty) {
+          result[text] = entry.value.clamp(1, maxScore);
+        }
+      }
+      if (result.isNotEmpty) return result;
     }
-    return result;
+    return const {};
   }
 
   static void recordContext(
@@ -103,18 +114,31 @@ class CandidateLearning {
     required String text,
   }) {
     if (reading.contains('\t') || text.trim().isEmpty) return;
-    final prefix = _contextPrefix(leftContext, reading);
-    if (prefix == null) return;
-    for (final key
-        in learning.keys.where((key) => key.startsWith(prefix)).toList()) {
-      if (key != '$prefix$text') learning[key] = learning[key]! ~/ 2;
+    final prefixes = _contextPrefixes(leftContext, reading);
+    if (prefixes.isEmpty) return;
+    for (final prefix in prefixes) {
+      final choices = learning.keys
+          .where((key) => key.startsWith(prefix))
+          .toList();
+      final strongest = choices.fold<int>(
+        0,
+        (score, key) => learning[key]! > score ? learning[key]! : score,
+      );
+      for (final key in choices) {
+        if (key != '$prefix$text') learning[key] = learning[key]! ~/ 2;
+      }
+      final key = '$prefix$text';
+      // A deliberate correction must outrank the former favorite immediately.
+      learning[key] = (strongest + 4).clamp(1, maxScore);
     }
-    final key = '$prefix$text';
-    learning[key] = ((learning[key] ?? 0) + 4).clamp(1, maxScore);
-    final contextKeys = learning.keys.where(
-      (key) => key.startsWith('context:'),
-    );
-    if (contextKeys.length > 512) learning.remove(contextKeys.first);
+    final contextKeys = learning.keys
+        .where((key) => key.startsWith('context:'))
+        .toList();
+    for (final stale in contextKeys.take(
+      contextKeys.length > 512 ? contextKeys.length - 512 : 0,
+    )) {
+      learning.remove(stale);
+    }
   }
 
   static void record(
