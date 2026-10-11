@@ -9,11 +9,11 @@ class StableClauseCompletionTest {
         val completion = StableClauseCompletion()
         val entries = listOf(CompletedClause("わたし", "私"))
         val first = "わたしはきょうとうきょうのえきで"
-        for (reading in listOf(first, "$firstと", "$firstとも", "$firstともだ", "$firstともだち")) {
+        for (reading in listOf(first, "${first}と", "${first}とも", "${first}ともだ", "${first}ともだち")) {
             assertNull(completion.observe(reading, "私は今日東京の駅で友達", entries, 4))
         }
         assertEquals(CompletedClause("わたし", "私"), completion.observe(
-            "$firstともだちと", "私は今日東京の駅で友達と", entries, 4,
+            "${first}ともだちと", "私は今日東京の駅で友達と", entries, 4,
         ))
     }
 
@@ -22,15 +22,15 @@ class StableClauseCompletionTest {
         val entries = listOf(CompletedClause("わたし", "私"))
         val first = "わたしはきょうとうきょうのえきで"
         assertNull(completion.observe(first, "私は今日東京の駅で", entries, 4))
-        assertNull(completion.observe("$firstと", "別の候補", entries, 4))
-        assertNull(completion.observe("$firstとも", "私は今日東京の駅で友", entries, 0))
+        assertNull(completion.observe("${first}と", "別の候補", entries, 4))
+        assertNull(completion.observe("${first}とも", "私は今日東京の駅で友", entries, 0))
     }
 
     @Test fun neverCompletesAnEmptyDictionaryWord() {
         val completion = StableClauseCompletion()
         val entries = listOf(CompletedClause("わたし", ""))
         val first = "わたしはきょうとうきょうのえきで"
-        for (reading in listOf(first, "$firstと", "$firstとも", "$firstともだ", "$firstともだち", "$firstともだちと")) {
+        for (reading in listOf(first, "${first}と", "${first}とも", "${first}ともだ", "${first}ともだち", "${first}ともだちと")) {
             assertNull(completion.observe(reading, "私は今日東京の駅で友達と", entries, 4))
         }
     }
