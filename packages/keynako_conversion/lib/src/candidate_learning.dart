@@ -79,6 +79,11 @@ class CandidateLearning {
           preceding.length > length ? preceding.length - length : 0,
         ),
       );
+      final portable = suffix.runes
+          .map((code) => code.toRadixString(16))
+          .join('.');
+      prefixes.add('context:$portable\t${normalizeReading(reading)}\t');
+      // Backups made before the portable key format used URI escaping.
       prefixes.add(
         'context:${Uri.encodeComponent(suffix)}\t'
         '${normalizeReading(reading)}\t',
@@ -116,7 +121,7 @@ class CandidateLearning {
     if (reading.contains('\t') || text.trim().isEmpty) return;
     final prefixes = _contextPrefixes(leftContext, reading);
     if (prefixes.isEmpty) return;
-    for (final prefix in prefixes) {
+    for (final prefix in prefixes.where((value) => !value.contains('%'))) {
       final choices = learning.keys
           .where((key) => key.startsWith(prefix))
           .toList();

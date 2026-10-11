@@ -13,40 +13,60 @@ class DesktopLearningRepository implements LearningRepository {
   final File? file;
   static int _temporaryFileId = 0;
 
-  File get _learningFile {
+  File get storageFile {
     if (file != null) return file!;
     final environment = Platform.environment;
     if (Platform.isWindows) {
       final root = environment['LOCALAPPDATA'];
       if (root != null && root.isNotEmpty) {
-        return File('$root\\Keynako\\learning.json');
+        return File('$root\\Keynako\\learning.tsv');
       }
     } else if (Platform.isMacOS) {
       final root = environment['HOME'];
       if (root != null && root.isNotEmpty) {
-        return File('$root/Library/Application Support/Keynako/learning.json');
+        return File('$root/Library/Application Support/Keynako/learning.tsv');
       }
     } else {
       final root = environment['XDG_DATA_HOME'];
       if (root != null && root.isNotEmpty) {
-        return File('$root/keynako/learning.json');
+        return File('$root/keynako/learning.tsv');
       }
       final home = environment['HOME'];
       if (home != null && home.isNotEmpty) {
-        return File('$home/.local/share/keynako/learning.json');
+        return File('$home/.local/share/keynako/learning.tsv');
       }
     }
-    return File('${Directory.systemTemp.path}/Keynako/learning.json');
+    return File('${Directory.systemTemp.path}/Keynako/learning.tsv');
   }
 
   @override
   Future<Map<String, int>> load() async {
-    final active = _learningFile;
-    if (!await active.exists()) return {};
-    if (await active.length() > 1024 * 1024) {
+    final active = storageFile;
+    if (!await active.exists()) {
+      if (file != null) return {};
+      final legacy = File(
+        '${active.parent.path}${Platform.pathSeparator}learning.json',
+      );
+      if (!await legacy.exists()) return {};
+      final migrated = _decodeJson(await legacy.readAsString());
+      try {
+        await save(migrated);
+      } on FileSystemException {
+        // Leave the old file intact so it can be retried on the next launch.
+      }
+      return migrated;
+    }
+    if (await active.length() > 4 * 1024 * 1024) {
       throw const FormatException('Learning file is too large');
     }
-    final decoded = jsonDecode(await active.readAsString());
+    final source = await active.readAsString();
+    return active.path.endsWith('.json')
+        ? _decodeJson(source)
+        : _decodeTsv(source);
+  }
+
+  static Map<String, int> _decodeJson(String source) {
+    final decoded = jsonDecode(source);
     if (decoded is! Map ||
         decoded['version'] != 1 ||
         decoded['scores'] is! Map) {
@@ -66,18 +86,53 @@ class DesktopLearningRepository implements LearningRepository {
     return result;
   }
 
+  static Map<String, int> _decodeTsv(String source) {
+    final result = <String, int>{};
+    for (final line in const LineSplitter().convert(source)) {
+      if (line.isEmpty) continue;
+      final separator = line.lastIndexOf('\t');
+      if (separator <= 0) {
+        throw const FormatException('Learning file is malformed');
+      }
+      final key = line.substring(0, separator);
+      final score = int.tryParse(line.substring(separator + 1));
+      if (key.length > 256 ||
+          !key.contains('\t') ||
+          score == null ||
+          score < 1) {
+        throw const FormatException('Learning file is malformed');
+      }
+      result[key] = score.clamp(1, 32);
+      if (result.length > 4096) {
+        throw const FormatException('Learning file is too large');
+      }
+    }
+    return result;
+  }
+
   @override
   Future<void> save(Map<String, int> scores) async {
-    final active = _learningFile;
+    final active = storageFile;
     await active.parent.create(recursive: true);
     final bounded = scores.entries.toList();
     final retained = bounded.skip(
       bounded.length > 4096 ? bounded.length - 4096 : 0,
     );
-    final content = jsonEncode({
-      'version': 1,
-      'scores': {for (final entry in retained) entry.key: entry.value},
-    });
+    final content = active.path.endsWith('.json')
+        ? jsonEncode({
+            'version': 1,
+            'scores': {for (final entry in retained) entry.key: entry.value},
+          })
+        : retained
+              .where(
+                (entry) =>
+                    entry.key.contains('\t') &&
+                    !entry.key.contains('\n') &&
+                    !entry.key.contains('\r') &&
+                    entry.value > 0,
+              )
+              .map((entry) => '${entry.key}\t${entry.value.clamp(1, 32)}\n')
+              .join();
     final temporary = File('${active.path}.tmp.$pid.${_temporaryFileId++}');
     try {
       await temporary.writeAsString(content, flush: true);

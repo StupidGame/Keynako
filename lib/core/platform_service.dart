@@ -115,6 +115,18 @@ class PlatformService implements StateStorage {
     }
   }
 
+  Future<String?> openBackupFile() async {
+    try {
+      return await _channel.invokeMethod<String>('openBackupFile');
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  Future<void> saveBackupFile(String text) async {
+    await _channel.invokeMethod<void>('saveBackupFile', {'text': text});
+  }
+
   Future<List<Map<String, String>>> importContacts() async {
     try {
       final result = await _channel.invokeListMethod<Object?>('importContacts');

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../input/desktop_input_controller.dart';
 import 'personal_dictionary_page.dart';
+import 'portable_profile_page.dart';
 
 enum _DictionaryDestination { shared, personal }
 
@@ -310,6 +311,17 @@ class _Header extends StatelessWidget {
                             ),
                           );
                         },
+                      ),
+                      IconButton(
+                        key: const Key('portable-profile-open'),
+                        tooltip: 'バックアップと復元',
+                        icon: const Icon(Icons.import_export, size: 20),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                PortableProfilePage(controller: controller),
+                          ),
+                        ),
                       ),
                     ],
                   ),

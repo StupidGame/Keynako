@@ -40,6 +40,7 @@ class NativeSession:
         self.library.keynako_ime_clear.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_learn_selected.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_learn_selected.restype = None
+        self.library.keynako_ime_configure_storage.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.library.keynako_ime_begin_conversion.argtypes = [ctypes.c_void_p]
         self.library.keynako_ime_begin_conversion.restype = ctypes.c_int
         self.library.keynako_ime_cancel_conversion.argtypes = [ctypes.c_void_p]
@@ -77,6 +78,9 @@ class NativeSession:
         self.handle = self.library.keynako_ime_create()
         if not self.handle:
             raise RuntimeError("could not create Keynako IME session")
+        data_home = os.environ.get("XDG_DATA_HOME")
+        storage = Path(data_home) / "keynako" if data_home else Path.home() / ".local/share/keynako"
+        self.library.keynako_ime_configure_storage(self.handle, os.fsencode(storage))
         dictionary_root = Path(__file__).resolve().parent / "azookey_dictionary" / "Dictionary"
         self.library.keynako_ime_set_bundled_dictionary_path(
             self.handle, os.fsencode(dictionary_root),

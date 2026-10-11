@@ -26,6 +26,7 @@ KEYNAKO_IME_EXPORT void keynako_ime_backspace(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_backspace_word(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_clear(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_learn_selected(keynako_ime_session session);
+KEYNAKO_IME_EXPORT void keynako_ime_configure_storage(keynako_ime_session session, const char *utf8_directory);
 KEYNAKO_IME_EXPORT int keynako_ime_begin_conversion(keynako_ime_session session);
 KEYNAKO_IME_EXPORT int keynako_ime_cancel_conversion(keynako_ime_session session);
 KEYNAKO_IME_EXPORT int keynako_ime_is_converting(keynako_ime_session session);

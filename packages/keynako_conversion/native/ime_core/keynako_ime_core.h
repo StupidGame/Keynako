@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <chrono>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -47,6 +49,7 @@ public:
     void backspace_word();
     void clear();
     void learn_selected();
+    void configure_storage(const std::filesystem::path &directory);
     bool begin_conversion();
     bool cancel_conversion();
     bool select_candidate(std::size_t index);
@@ -79,6 +82,10 @@ private:
     void prioritize_learning();
     void observe_stable_clause();
     void reset_stable_clause();
+    void refresh_learning(bool force = false);
+    void refresh_settings(bool force = false);
+    void save_learning();
+    void save_settings() const;
     bool is_incomplete_combination_candidate(const std::string &value) const;
 
     InputMode mode_ = InputMode::japanese;
@@ -88,6 +95,7 @@ private:
     bool live_conversion_suspended_ = false;
     std::string raw_input_;
     std::string reading_;
+    std::string left_context_;
     std::size_t literal_suffix_start_ = std::string::npos;
     std::size_t pending_word_delete_start_ = std::string::npos;
     std::vector<Candidate> candidates_;
@@ -99,9 +107,14 @@ private:
     bool allow_trusted_complete_combination_ = false;
     std::unique_ptr<AzooKeyDictionary> bundled_dictionary_;
     std::size_t selected_index_ = 0;
-    // Session-local preferences are bounded and never include surrounding text.
+    // Preferences use the same flat reading<TAB>word score keys as mobile.
     std::map<std::string, std::map<std::string, int>> learning_;
     std::deque<std::string> learning_order_;
+    std::filesystem::path storage_directory_;
+    std::filesystem::file_time_type learning_write_time_{};
+    std::chrono::steady_clock::time_point last_learning_check_{};
+    std::filesystem::file_time_type settings_write_time_{};
+    std::chrono::steady_clock::time_point last_settings_check_{};
     std::string stable_raw_input_;
     std::string stable_clause_reading_;
     std::string stable_clause_text_;

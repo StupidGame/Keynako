@@ -2843,6 +2843,12 @@ final class KeyboardViewController: UIInputViewController {
             return seen.insert(candidate).inserted
         }
         let ordered = keepKanaCandidatesVisible(reading: reading, candidates: filtered)
+        let contextual = prioritizeContextualCandidates(
+            ordered, learning: learningScores(), reading: reading,
+            leftContext: textDocumentProxy.documentContextBeforeInput ?? "",
+            completeTexts: completeTexts
+        )
+        if contextual.first != ordered.first { return contextual }
         let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
         let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
             activeConversionEntries.contains { katakanaToHiragana($0.ruby) == reading }
@@ -3115,10 +3121,17 @@ final class KeyboardViewController: UIInputViewController {
         guard effectiveLearningMode() == 0 else { return }
         if !english, unknownPredictionTexts.contains(candidate) { return }
         let learningReading = english ? input : (candidatePredictionReadings[candidate] ?? input)
-        state["learning"] = recordCandidateLearning(
+        var updated = recordCandidateLearning(
             learningScores(), reading: learningReading, text: candidate,
             english: english, explicitSelection: explicitSelection
         )
+        if !english, explicitSelection {
+            updated = recordContextCandidateLearning(
+                updated, leftContext: textDocumentProxy.documentContextBeforeInput ?? "",
+                reading: learningReading, text: candidate
+            )
+        }
+        state["learning"] = updated
         saveState()
     }
 
@@ -4865,6 +4878,63 @@ private struct LearnedCandidateEntry {
     let reading: String
     let text: String
     let score: Int
+}
+
+private func contextLearningPrefixes(_ leftContext: String, reading: String) -> [String] {
+    var scalars = Array(leftContext.unicodeScalars)
+    while let last = scalars.last, CharacterSet.whitespacesAndNewlines.contains(last) {
+        scalars.removeLast()
+    }
+    guard !scalars.isEmpty, !reading.isEmpty, !reading.contains("\t") else { return [] }
+    let normalized = katakanaToHiragana(reading)
+    var result: [String] = []
+    for length in [8, 4] {
+        let suffix = scalars.suffix(length).map { String($0.value, radix: 16) }.joined(separator: ".")
+        let prefix = "context:\(suffix)\t\(normalized)\t"
+        if !result.contains(prefix) { result.append(prefix) }
+    }
+    return result
+}
+
+private func recordContextCandidateLearning(
+    _ learning: [String: Any], leftContext: String, reading: String, text: String
+) -> [String: Any] {
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          !text.contains("\t") else { return learning }
+    var result = learning
+    for prefix in contextLearningPrefixes(leftContext, reading: reading) {
+        let choices = result.keys.filter { $0.hasPrefix(prefix) }
+        let strongest = choices.map { (result[$0] as? NSNumber)?.intValue ?? 0 }.max() ?? 0
+        for key in choices where key != prefix + text {
+            result[key] = ((result[key] as? NSNumber)?.intValue ?? 0) / 2
+        }
+        result[prefix + text] = min(32, strongest + 4)
+    }
+    let contextKeys = result.keys.filter { $0.hasPrefix("context:") }.sorted()
+    if contextKeys.count > 512 {
+        for key in contextKeys.prefix(contextKeys.count - 512) { result.removeValue(forKey: key) }
+    }
+    return result
+}
+
+private func prioritizeContextualCandidates(
+    _ candidates: [String], learning: [String: Any], reading: String,
+    leftContext: String, completeTexts: Set<String>
+) -> [String] {
+    for prefix in contextLearningPrefixes(leftContext, reading: reading) {
+        let scores = Dictionary(uniqueKeysWithValues: candidates.compactMap { candidate -> (String, Int)? in
+            guard completeTexts.contains(candidate) else { return nil }
+            let score = (learning[prefix + candidate] as? NSNumber)?.intValue ?? 0
+            return score > 0 ? (candidate, score) : nil
+        })
+        if scores.isEmpty { continue }
+        return candidates.enumerated().sorted {
+            let left = scores[$0.element] ?? 0
+            let right = scores[$1.element] ?? 0
+            return left == right ? $0.offset < $1.offset : left > right
+        }.map(\.element)
+    }
+    return candidates
 }
 
 private func learnedCandidateEntries(_ learning: [String: Any], english: Bool) -> [LearnedCandidateEntry] {

@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -80,6 +83,38 @@ std::string hiragana_to_katakana(const std::string &value) {
 std::size_t utf8_character_count(const std::string &value) {
     return static_cast<std::size_t>(std::count_if(value.begin(), value.end(),
         [](unsigned char byte) { return (byte & 0xc0) != 0x80; }));
+}
+
+std::vector<std::string> context_buckets(const std::string &context) {
+    std::vector<unsigned int> points;
+    for (std::size_t index = 0; index < context.size();) {
+        const auto first = static_cast<unsigned char>(context[index]);
+        std::size_t length = first < 0x80 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
+        if (index + length > context.size()) break;
+        unsigned int code = first & (length == 1 ? 0x7f : length == 2 ? 0x1f : length == 3 ? 0x0f : 0x07);
+        bool valid = true;
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const auto byte = static_cast<unsigned char>(context[index + offset]);
+            if ((byte & 0xc0) != 0x80) { valid = false; break; }
+            code = (code << 6) | (byte & 0x3f);
+        }
+        if (valid) points.push_back(code);
+        index += valid ? length : 1;
+    }
+    while (!points.empty() && points.back() <= 0x20) points.pop_back();
+    if (points.empty()) return {};
+    std::vector<std::string> buckets;
+    for (const std::size_t length : {8u, 4u}) {
+        std::ostringstream encoded;
+        encoded << "context:";
+        for (std::size_t index = points.size() > length ? points.size() - length : 0;
+             index < points.size(); ++index) {
+            if (index > (points.size() > length ? points.size() - length : 0)) encoded << '.';
+            encoded << std::hex << points[index];
+        }
+        if (buckets.empty() || buckets.back() != encoded.str()) buckets.push_back(encoded.str());
+    }
+    return buckets;
 }
 
 bool is_single_hiragana_kana(const std::string &value) {
@@ -514,10 +549,142 @@ void ImeSession::set_mode(InputMode mode) {
     rebuild_candidates();
     converting_ = was_converting && !candidates_.empty();
 }
-void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; reset_stable_clause(); }
+void ImeSession::set_live_conversion(bool enabled) { live_conversion_ = enabled; live_conversion_suspended_ = false; reset_stable_clause(); save_settings(); }
 void ImeSession::set_automatic_completion_strength(int strength) {
     automatic_completion_strength_ = std::clamp(strength, 0, 4);
     reset_stable_clause();
+    save_settings();
+}
+
+void ImeSession::configure_storage(const std::filesystem::path &directory) {
+    storage_directory_ = directory;
+    refresh_settings(true);
+    refresh_learning(true);
+}
+
+void ImeSession::refresh_settings(bool force) {
+    if (storage_directory_.empty()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && last_settings_check_.time_since_epoch().count() != 0 &&
+        now - last_settings_check_ < std::chrono::seconds(5)) return;
+    last_settings_check_ = now;
+    const auto path = storage_directory_ / "ime_settings.tsv";
+    std::error_code error;
+    if (!std::filesystem::exists(path, error) || error) return;
+    const auto modified = std::filesystem::last_write_time(path, error);
+    if (error || (!force && modified == settings_write_time_)) return;
+    if (std::filesystem::file_size(path, error) > 1024 || error) return;
+    std::ifstream input(path);
+    if (!input) return;
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        const auto key = line.substr(0, tab);
+        const auto value = line.substr(tab + 1);
+        if (key == "live_conversion") live_conversion_ = value != "0";
+        if (key == "automatic_completion_strength" && value.size() == 1 &&
+            value[0] >= '0' && value[0] <= '4') automatic_completion_strength_ = value[0] - '0';
+    }
+    settings_write_time_ = modified;
+}
+
+void ImeSession::save_settings() const {
+    if (storage_directory_.empty()) return;
+    std::error_code error;
+    std::filesystem::create_directories(storage_directory_, error);
+    if (error) return;
+    std::ofstream output(storage_directory_ / "ime_settings.tsv", std::ios::binary | std::ios::trunc);
+    if (!output) return;
+    output << "live_conversion\t" << (live_conversion_ ? 1 : 0) << '\n'
+           << "automatic_completion_strength\t" << automatic_completion_strength_ << '\n';
+}
+
+void ImeSession::refresh_learning(bool force) {
+    if (storage_directory_.empty()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && last_learning_check_.time_since_epoch().count() != 0 &&
+        now - last_learning_check_ < std::chrono::seconds(5)) return;
+    last_learning_check_ = now;
+    const auto path = storage_directory_ / "learning.tsv";
+    std::error_code error;
+    if (!std::filesystem::exists(path, error) || error) return;
+    const auto modified = std::filesystem::last_write_time(path, error);
+    if (error || (!force && modified == learning_write_time_)) return;
+    const auto bytes = std::filesystem::file_size(path, error);
+    if (error || bytes > 4 * 1024 * 1024) return;
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return;
+    std::map<std::string, std::map<std::string, int>> restored;
+    std::string line;
+    std::size_t count = 0;
+    while (std::getline(input, line)) {
+        if (line.empty()) continue;
+        const auto first = line.find('\t');
+        const auto last = line.rfind('\t');
+        if (first == std::string::npos || first == 0 || last == first ||
+            last + 1 >= line.size() || line.size() > 1024 || ++count > 4096) return;
+        const auto score = line.substr(last + 1);
+        if (score.size() > 2 || !std::all_of(score.begin(), score.end(), [](unsigned char c) { return std::isdigit(c); })) return;
+        const int value = std::stoi(score);
+        if (value < 1) return;
+        restored[line.substr(0, first)][line.substr(first + 1, last - first - 1)] = std::min(32, value);
+    }
+    if (input.bad()) return;
+    learning_ = std::move(restored);
+    learning_order_.clear();
+    for (const auto &[reading, unused] : learning_) learning_order_.push_back(reading);
+    learning_write_time_ = modified;
+}
+
+void ImeSession::save_learning() {
+    if (storage_directory_.empty()) return;
+    std::size_t entry_count = 0;
+    for (const auto &[reading, values] : learning_) entry_count += values.size();
+    while (entry_count > 4096 && !learning_order_.empty()) {
+        const auto oldest = learning_order_.front();
+        learning_order_.pop_front();
+        const auto found = learning_.find(oldest);
+        if (found == learning_.end()) continue;
+        entry_count -= found->second.size();
+        learning_.erase(found);
+    }
+    while (entry_count > 4096 && !learning_.empty()) {
+        entry_count -= learning_.begin()->second.size();
+        learning_.erase(learning_.begin());
+    }
+    std::error_code error;
+    std::filesystem::create_directories(storage_directory_, error);
+    if (error) return;
+    const auto path = storage_directory_ / "learning.tsv";
+    auto temporary = path;
+    temporary += ".tmp." + std::to_string(reinterpret_cast<std::uintptr_t>(this));
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) return;
+        for (const auto &[reading, values] : learning_) {
+            for (const auto &[text, score] : values) {
+                if (score > 0 && reading.find_first_of("\r\n") == std::string::npos &&
+                    text.find_first_of("\r\n") == std::string::npos)
+                    output << reading << '\t' << text << '\t' << score << '\n';
+            }
+        }
+        if (!output) return;
+    }
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        // Windows does not replace an existing file with rename.
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        error.clear();
+        std::filesystem::rename(temporary, path, error);
+    }
+    if (error) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+    } else {
+        learning_write_time_ = std::filesystem::last_write_time(path, error);
+    }
 }
 void ImeSession::append_ascii(char value) {
     append_ascii_internal(value, is_literal_candidate_suffix(value), false);
@@ -744,6 +911,7 @@ std::string ImeSession::learning_key() const {
 }
 
 void ImeSession::learn_selected() {
+    refresh_learning(true);
     if (mode_ != InputMode::japanese || raw_input_.empty() || candidates_.empty()) return;
     auto key = learning_key();
     const auto &selected = candidates_[selected_index_];
@@ -754,8 +922,9 @@ void ImeSession::learn_selected() {
         if (full_reading == key) return;
         key = full_reading;
     }
+    const bool explicit_selection = converting_ || selected_index_ != 0;
     auto &scores = learning_[key];
-    if (converting_ || selected_index_ != 0) {
+    if (explicit_selection) {
         int highest = 0;
         for (auto &[word, score] : scores) {
             if (word != text) score /= 2;
@@ -772,17 +941,64 @@ void ImeSession::learn_selected() {
         learning_.erase(learning_order_.front());
         learning_order_.pop_front();
     }
+    if (explicit_selection && text.find('\t') == std::string::npos) {
+        for (const auto &bucket : context_buckets(left_context_)) {
+            auto &choices = learning_[bucket];
+            const auto prefix = key + "\t";
+            int strongest = 0;
+            for (const auto &[choice, score] : choices) {
+                if (choice.rfind(prefix, 0) == 0) strongest = std::max(strongest, score);
+            }
+            for (auto &[choice, score] : choices) {
+                if (choice.rfind(prefix, 0) == 0 && choice != prefix + text) score /= 2;
+            }
+            choices[prefix + text] = std::min(32, strongest + 4);
+        }
+        std::size_t contexts = 0;
+        for (const auto &[reading, values] : learning_) {
+            if (reading.rfind("context:", 0) == 0) contexts += values.size();
+        }
+        for (auto it = learning_.begin(); contexts > 512 && it != learning_.end();) {
+            if (it->first.rfind("context:", 0) == 0) {
+                contexts -= it->second.size();
+                it = learning_.erase(it);
+            } else ++it;
+        }
+    }
+    left_context_ += text;
+    if (left_context_.size() > 256) {
+        std::size_t start = left_context_.size() - 256;
+        while (start < left_context_.size() &&
+               (static_cast<unsigned char>(left_context_[start]) & 0xc0) == 0x80) ++start;
+        left_context_.erase(0, start);
+    }
+    save_learning();
 }
 
 void ImeSession::prioritize_learning() {
     const auto found = learning_.find(learning_key());
+    std::map<std::string, int> contextual;
+    for (const auto &bucket : context_buckets(left_context_)) {
+        const auto choices = learning_.find(bucket);
+        if (choices == learning_.end()) continue;
+        for (const auto &candidate : candidates_) {
+            const auto choice = choices->second.find(reading_ + "\t" + candidate.text);
+            if (choice != choices->second.end() && choice->second > 0)
+                contextual[candidate.text] = choice->second;
+        }
+        if (!contextual.empty()) break;
+    }
     const auto score = [&](const Candidate &candidate) {
         // A selected completion must never become live conversion for an
         // unfinished reading on the next keystroke.
         if (candidate.source.find("prediction") != std::string::npos) return 0;
-        if (found == learning_.end()) return 0;
-        const auto entry = found->second.find(candidate.text);
-        return entry == found->second.end() ? 0 : entry->second;
+        int general = 0;
+        if (found != learning_.end()) {
+            const auto entry = found->second.find(candidate.text);
+            if (entry != found->second.end()) general = entry->second;
+        }
+        const auto local = contextual.find(candidate.text);
+        return general + (local == contextual.end() ? 0 : local->second * 16);
     };
     const auto priority = [](const Candidate &candidate) {
         if (candidate.source == "zenzai") return -1;
@@ -803,8 +1019,17 @@ void ImeSession::prioritize_learning() {
         const int left_phase = fallback(left) ? 2 : left_prediction ? 1 : 0;
         const int right_phase = fallback(right) ? 2 : right_prediction ? 1 : 0;
         if (left_phase != right_phase) return left_phase < right_phase;
-        if (priority(left) != priority(right)) return priority(left) < priority(right);
-        return priority(left) == 1 && score(left) > score(right);
+        const int left_score = score(left);
+        const int right_score = score(right);
+        const int left_priority = priority(left);
+        const int right_priority = priority(right);
+        if ((left_priority == 1 || right_priority == 1) && left_priority != right_priority)
+            return left_priority < right_priority;
+        const int threshold = left_priority == -1 || right_priority == -1 ? 8 : 4;
+        if ((left_score >= threshold || right_score >= threshold) && left_score != right_score)
+            return left_score > right_score;
+        if (left_priority != right_priority) return left_priority < right_priority;
+        return left_priority == 1 && left_score > right_score;
     });
     const bool exact_registration = std::any_of(user_dictionary_.begin(), user_dictionary_.end(), [this](const auto &entry) {
             return entry.reading == reading_;
@@ -1009,6 +1234,8 @@ std::string ImeSession::roman_to_hiragana(const std::string &input) {
 }
 
 void ImeSession::rebuild_candidates() {
+    refresh_settings();
+    refresh_learning();
     candidates_.clear(); selected_index_ = 0; converting_ = false;
     if (raw_input_.empty()) { reading_.clear(); return; }
     std::unordered_set<std::string> seen;
@@ -1083,7 +1310,8 @@ void ImeSession::rebuild_candidates() {
     std::vector<std::string> learned_exact;
     std::vector<DictionaryEntry> learned_combination_entries;
     for (const auto &[ruby, scores] : learning_) {
-        if (ruby.rfind("english:", 0) == 0 || conversion_reading.empty()) continue;
+        if (ruby.rfind("english:", 0) == 0 || ruby.rfind("context:", 0) == 0 ||
+            conversion_reading.empty()) continue;
         if (conversion_reading.find(ruby) != std::string::npos) {
             for (const auto &[word, score] : scores) {
                 if (score > 0 && !word.empty()) {

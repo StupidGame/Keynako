@@ -172,6 +172,7 @@ void main() {
       reading: 'あめ',
       text: '飴',
     );
+    expect(learning['context:4eca.65e5.306f\tあめ\t飴'], 4);
     expect(CandidateLearning.entries(learning), isEmpty);
     expect(
       CandidateLearning.contextScores(
@@ -188,6 +189,18 @@ void main() {
         reading: 'あめ',
       ),
       isEmpty,
+    );
+  });
+
+  test('older URI-encoded context scores remain readable', () {
+    final legacy = {'context:${Uri.encodeComponent('今日は')}\tあめ\t飴': 6};
+    expect(
+      CandidateLearning.contextScores(
+        legacy,
+        leftContext: '今日は',
+        reading: 'あめ',
+      ),
+      {'飴': 6},
     );
   });
 
