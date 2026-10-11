@@ -41,8 +41,8 @@ int main() {
         assert(restored.candidates().front().text == "藍");
     }
     {
-        std::ofstream imported(storage / "learning.tsv", std::ios::trunc);
-        imported << "あい\t愛\t12\ncontext:4eca.65e5\tあい\t藍\t8\n";
+        std::ofstream imported(storage / "learning.tsv", std::ios::binary | std::ios::trunc);
+        imported << "あい\t愛\t12\r\ncontext:4eca.65e5\tあい\t藍\t8\r\n";
     }
     {
         ImeSession contextual;

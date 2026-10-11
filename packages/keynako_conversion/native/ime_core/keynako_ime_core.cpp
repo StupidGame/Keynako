@@ -619,6 +619,9 @@ void ImeSession::refresh_learning(bool force) {
     std::string line;
     std::size_t count = 0;
     while (std::getline(input, line)) {
+        // A profile imported from a Windows text file may use CRLF even
+        // though the portable learning file is read as binary UTF-8.
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
         const auto first = line.find('\t');
         const auto last = line.rfind('\t');
