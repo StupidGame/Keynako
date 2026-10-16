@@ -348,18 +348,21 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderFlick() {
+        let spaceLabel = boolSetting("use_next_candidate_key", fallback: false)
+            ? "次候補" : "空白"
+        let pasteOnCursorKey = boolSetting("enable_paste_button_on_flick_cursorbar_key", fallback: false)
         let rows: [[FlickDefinition]]
         if mode == "english" {
             rows = [
                 [.action("☆123", "symbols", target: "symbols_tab"), .init("@#/&_", ["@", "#", "/", "&", "_"]), .init("ABC", ["a", "b", "c", "2", ""]), .init("DEF", ["d", "e", "f", "3", ""]), .delete("⌫")],
-                [.action("ABC", "english", target: "abc_tab"), .init("GHI", ["g", "h", "i", "4", ""]), .init("JKL", ["j", "k", "l", "5", ""]), .init("MNO", ["m", "n", "o", "6", ""]), .space("空白")],
+                [.action("ABC", "english", target: "abc_tab"), .init("GHI", ["g", "h", "i", "4", ""]), .init("JKL", ["j", "k", "l", "5", ""]), .init("MNO", ["m", "n", "o", "6", ""]), .space(spaceLabel, pasteOnCursorKey: pasteOnCursorKey)],
                 [.action("あいう", "japanese", target: "hira_tab"), .init("PQRS", ["p", "q", "r", "s", "7"]), .init("TUV", ["t", "u", "v", "8", ""]), .init("WXYZ", ["w", "x", "y", "z", "9"]), .action("改行", "enter")],
-                [.action("🌐", "nextKeyboard"), .action("a/A", "shiftEnglish"), .init("'\"()", ["'", "\"", "(", ")", ""]), .init(".,?!", [".", ",", "?", "!", "'"], target: "kana_symbols"), .action("改行", "enter")],
+                [.action("🌐", "nextKeyboard"), .action("a/A", "upperLowerEnglish"), .init("'\"()", ["'", "\"", "(", ")", ""]), .init(".,?!", [".", ",", "?", "!", "'"], target: "kana_symbols"), .action("改行", "enter")],
             ]
         } else {
             rows = [
                 [.action("☆123", "symbols", target: "symbols_tab"), .init("あ", ["あ", "い", "う", "え", "お"]), .init("か", ["か", "き", "く", "け", "こ"]), .init("さ", ["さ", "し", "す", "せ", "そ"]), .delete("⌫")],
-                [.action("ABC", "english", target: "abc_tab"), .init("た", ["た", "ち", "つ", "て", "と"]), .init("な", ["な", "に", "ぬ", "ね", "の"]), .init("は", ["は", "ひ", "ふ", "へ", "ほ"]), .space("空白")],
+                [.action("ABC", "english", target: "abc_tab"), .init("た", ["た", "ち", "つ", "て", "と"]), .init("な", ["な", "に", "ぬ", "ね", "の"]), .init("は", ["は", "ひ", "ふ", "へ", "ほ"]), .space(spaceLabel, pasteOnCursorKey: pasteOnCursorKey)],
                 [.action("あいう", "japanese", target: "hira_tab"), .init("ま", ["ま", "み", "む", "め", "も"]), .init("や", ["や", "「", "ゆ", "」", "よ"]), .init("ら", ["ら", "り", "る", "れ", "ろ"]), .action("改行", "enter")],
                 [.action("🌐", "nextKeyboard"), .action("小ﾞﾟ", "kogana", target: "kogana"), .init("わ", ["わ", "を", "ん", "ー", "〜"]), .init("､｡?!", ["、", "。", "？", "！", ""], target: "kana_symbols"), .action("改行", "enter")],
             ]
@@ -380,9 +383,17 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func renderQwerty() {
+        let english = mode == "english"
+        let useShift = english && boolSetting("use_shift_key", fallback: false)
+        let legacyShift: Bool
+        if #available(iOS 18, *) {
+            legacyShift = false
+        } else {
+            legacyShift = useShift && boolSetting("keep_deprecated_shift_key_behavior", fallback: true)
+        }
         for (index, letters) in ["qwertyuiop", "asdfghjkl", "zxcvbnm"].enumerated() {
             let row = makeRow()
-            if index == 2 {
+            if index == 1, legacyShift {
                 row.addArrangedSubview(makeButton(capsLock ? "⇪" : "⇧", special: true, action: toggleShift))
             }
             for character in letters {
@@ -395,15 +406,31 @@ final class KeyboardViewController: UIInputViewController {
                 row.addArrangedSubview(
                     makeButton("⌫", special: true, quickWordDelete: true, action: delete)
                 )
+            } else if index == 1, english {
+                if useShift {
+                    row.addArrangedSubview(makeButton(".") { [weak self] in self?.input(".") })
+                } else {
+                    let aaKey = makeButton(capsLock ? "⇪" : "Aa", special: true) { [weak self] in
+                        self?.pressAa()
+                    }
+                    aaKey.addGestureRecognizer(UILongPressGestureRecognizer(
+                        target: self, action: #selector(toggleCapsLockFromAa(_:))
+                    ))
+                    row.addArrangedSubview(aaKey)
+                }
             }
             keyboardStack.addArrangedSubview(row)
         }
         let bottom = makeRow()
+        bottom.distribution = .fill
         bottom.addArrangedSubview(makeButton("☆123", special: true) { [weak self] in self?.setMode("symbols") })
         bottom.addArrangedSubview(makeButton("🌐", special: true, action: advanceToNextInputMode))
+        if useShift && !legacyShift {
+            bottom.addArrangedSubview(makeButton(capsLock ? "⇪" : "⇧", special: true, action: toggleShift))
+        }
         let space = makeButton("space", action: self.space)
         bottom.addArrangedSubview(space)
-        space.widthAnchor.constraint(equalTo: bottom.widthAnchor, multiplier: 0.42).isActive = true
+        space.widthAnchor.constraint(equalTo: bottom.widthAnchor, multiplier: useShift && !legacyShift ? 0.35 : 0.42).isActive = true
         bottom.addArrangedSubview(makeButton("return", special: true, action: enter))
         keyboardStack.addArrangedSubview(bottom)
     }
@@ -761,7 +788,7 @@ final class KeyboardViewController: UIInputViewController {
         case "enter": return makeButton("改行", special: true, action: enter)
         case "upper_lower": return makeButton("Aa", special: true) { [weak self] in
             guard let self else { return }
-            mode == "english" ? toggleShift() : transformLastCharacter()
+            mode == "english" ? pressAa() : transformLastCharacter()
         }
         case "next_candidate": return makeButton(composing.isEmpty ? "空白" : "次候補", special: true) { [weak self] in self?.selectNextCandidate() }
         case "flick_kogaki": return makeButton("小ﾞﾟ", special: true, action: transformLastCharacter)
@@ -786,7 +813,7 @@ final class KeyboardViewController: UIInputViewController {
         let next = (current + 1) % candidates.count
         selectedCandidateText = candidates[next]
         replaceDisplayed(with: candidates[next], commit: false)
-        renderCandidates(showTabs: false)
+        renderCandidates(showTabs: false, refreshCandidates: false)
     }
 
     private func custardLabel(
@@ -1006,7 +1033,7 @@ final class KeyboardViewController: UIInputViewController {
         return button
     }
 
-    private func renderCandidates(showTabs: Bool? = nil) {
+    private func renderCandidates(showTabs: Bool? = nil, refreshCandidates: Bool = true) {
         if dictionaryMode != .closed { return }
         let tabsVisible = showTabs ?? (composing.isEmpty && rawRoman.isEmpty)
         if tabsVisible != candidateBarShowsTabs {
@@ -1034,14 +1061,24 @@ final class KeyboardViewController: UIInputViewController {
             }
             return
         }
-        candidates = buildCandidates()
+        if refreshCandidates { candidates = buildCandidates() }
         let dictionaryShortcut = makeCandidateButton("＋辞書") { [weak self] in
             guard let self else { return }
             let word = self.selectedCandidateText ?? self.candidates.first ?? ""
             self.showDictionaryEditor(reading: self.candidatePredictionReadings[word] ?? self.composing, word: word)
         }
         candidateStack.addArrangedSubview(dictionaryShortcut)
-        for (index, candidate) in candidates.enumerated() {
+        // The expanded grid keeps the full list. The horizontal bar only
+        // needs the leading results and the explicitly selected candidate.
+        var visibleIndices = Array(candidates.indices.prefix(12))
+        if let selectedCandidateText,
+           let selectedIndex = candidates.firstIndex(of: selectedCandidateText),
+           !visibleIndices.contains(selectedIndex) {
+            visibleIndices.append(selectedIndex)
+        }
+        let visibleCandidateIndices = visibleIndices
+        for index in visibleCandidateIndices {
+            let candidate = candidates[index]
             let button = makeCandidateButton(candidate) { [weak self] in self?.commitCandidate(index) }
             button.longPressAction = { [weak self] in self?.showCandidatePreview(candidate, index: index) }
             button.setTitleColor(index == 0 ? palette.accent : palette.text, for: .normal)
@@ -1052,9 +1089,10 @@ final class KeyboardViewController: UIInputViewController {
                   self.candidateStack.arrangedSubviews.first === dictionaryShortcut,
                   !self.candidates.isEmpty else { return }
             let index = self.selectedCandidateText.flatMap { self.candidates.firstIndex(of: $0) } ?? 0
-            guard self.candidateStack.arrangedSubviews.count > index + 1 else { return }
+            guard let visibleIndex = visibleCandidateIndices.firstIndex(of: index),
+                  self.candidateStack.arrangedSubviews.count > visibleIndex + 1 else { return }
             self.candidateScroll.layoutIfNeeded()
-            let selectedView = self.candidateStack.arrangedSubviews[index + 1]
+            let selectedView = self.candidateStack.arrangedSubviews[visibleIndex + 1]
             let frame = self.candidateStack.convert(selectedView.frame, to: self.candidateScroll)
             self.candidateScroll.scrollRectToVisible(frame, animated: false)
         }
@@ -1397,7 +1435,9 @@ final class KeyboardViewController: UIInputViewController {
     private func showResizeControls() {
         candidateStack.removeAllArrangedSubviews()
         candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "left" ? "✓ 左寄せ" : "← 左寄せ") { [weak self] in self?.setOneHandedMode("left") })
-        candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "full" ? "✓ 標準" : "↔ 標準") { [weak self] in self?.setOneHandedMode("full") })
+        if oneHandedMode == "full" || !boolSetting("hide_reset_button_in_one_handed_mode", fallback: false) {
+            candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "full" ? "✓ 標準" : "↔ 標準") { [weak self] in self?.setOneHandedMode("full") })
+        }
         candidateStack.addArrangedSubview(makeCandidateButton(oneHandedMode == "right" ? "✓ 右寄せ" : "右寄せ →") { [weak self] in self?.setOneHandedMode("right") })
         candidateStack.addArrangedSubview(makeCandidateButton("閉じる") { [weak self] in self?.renderCandidates() })
     }
@@ -1486,7 +1526,7 @@ final class KeyboardViewController: UIInputViewController {
             // A host can commit uppercase text as soon as it arrives. Avoid
             // rewriting that text as an active composition on the next key.
             directCommit(resolved)
-        } else if isWordInput {
+        } else if isWordInput || canContinueEmailComposition(resolved) {
             composing += resolved
             updateComposition()
         } else {
@@ -1501,16 +1541,41 @@ final class KeyboardViewController: UIInputViewController {
     private func updateComposition() {
         selectedCandidateText = nil
         candidates = buildCandidates()
+        if completeStableFirstClauseIfNeeded() { return }
         let displayed: String
         if mode == "english" {
             displayed = composing
         } else if boolSetting("live_conversion", fallback: true) {
-            displayed = candidates.first ?? composing
+            displayed = candidates.first(where: { candidatePredictionReadings[$0] == nil }) ?? composing
         } else {
             displayed = composing
         }
         replaceDisplayed(with: displayed, commit: false)
-        renderCandidates(showTabs: false)
+        renderCandidates(showTabs: false, refreshCandidates: false)
+    }
+
+    private func completeStableFirstClauseIfNeeded() -> Bool {
+        guard mode == "japanese", boolSetting("live_conversion", fallback: true),
+              let clause = conversionEngine?.completedClause,
+              composing.hasPrefix(clause.reading),
+              composing.count > clause.reading.count,
+              let first = candidates.first(where: { candidatePredictionReadings[$0] == nil }),
+              first.hasPrefix(clause.text) else { return false }
+        let remaining = String(composing.dropFirst(clause.reading.count))
+        var remainingRoman = ""
+        if layout == "qwerty" {
+            guard let split = rawRoman.indices.first(where: { index in
+                romanToHiragana(String(rawRoman[..<index])) == clause.reading &&
+                    romanToHiragana(String(rawRoman[index...])) == remaining
+            }) else { return false }
+            remainingRoman = String(rawRoman[split...])
+        }
+        replaceDisplayed(with: clause.text, commit: true)
+        conversionEngine?.commit(candidateText: clause.text, learningMode: effectiveLearningMode())
+        composing = remaining
+        rawRoman = remainingRoman
+        updateComposition()
+        return true
     }
 
     private func replaceDisplayed(with value: String, commit: Bool) {
@@ -1540,7 +1605,7 @@ final class KeyboardViewController: UIInputViewController {
         if englishInput == nil {
             conversionEngine?.commit(
                 candidateText: selected,
-                learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
+                learningMode: effectiveLearningMode()
             )
         }
         resetComposition()
@@ -1551,7 +1616,10 @@ final class KeyboardViewController: UIInputViewController {
     private func commitComposition(useCandidate: Bool = true) {
         guard !composing.isEmpty || !rawRoman.isEmpty else { return }
         let explicitSelection = selectedCandidateText != nil
-        let selected = useCandidate ? (selectedCandidateText ?? candidates.first ?? buildCandidates().first ?? composing) : composing
+        let available = candidates.isEmpty ? buildCandidates() : candidates
+        let selected = useCandidate
+            ? (selectedCandidateText ?? available.first(where: { candidatePredictionReadings[$0] == nil }) ?? composing)
+            : composing
         let englishInput = mode == "english" ? composing : nil
         replaceDisplayed(with: selected, commit: true)
         if useCandidate {
@@ -1560,7 +1628,7 @@ final class KeyboardViewController: UIInputViewController {
         if useCandidate, englishInput == nil {
             conversionEngine?.commit(
                 candidateText: selected,
-                learningMode: intSetting("memory_learining_styple_setting", fallback: 0)
+                learningMode: effectiveLearningMode()
             )
         }
         resetComposition()
@@ -1623,6 +1691,9 @@ final class KeyboardViewController: UIInputViewController {
         if dictionaryMode == .edit { deleteDictionaryText(); return }
         if deleteSelectedText() { return }
         let now = CACurrentMediaTime()
+        let intervalMilliseconds = min(1000, max(100,
+            intSetting("quick_word_delete_interval_ms", fallback: 350)))
+        let interval = Double(intervalMilliseconds) / 1000
         if let pending = pendingQuickWordDelete, now <= pending.deadline {
             let applied: Bool
             if pending.composition {
@@ -1666,7 +1737,7 @@ final class KeyboardViewController: UIInputViewController {
                 : (rawRomanPrefix(forComposition: targetComposing) ?? "")
             delete()
             pendingQuickWordDelete = PendingQuickWordDelete(
-                deadline: now + 0.35,
+                deadline: now + interval,
                 composition: true,
                 expectedComposing: composing,
                 expectedRawRoman: rawRoman,
@@ -1687,7 +1758,7 @@ final class KeyboardViewController: UIInputViewController {
         let count = backwardWordDeleteCount(in: originalContext)
         delete()
         pendingQuickWordDelete = PendingQuickWordDelete(
-            deadline: now + 0.35,
+            deadline: now + interval,
             composition: false,
             expectedContext: String(originalContext.dropLast()),
             remainingContextCount: max(0, count - 1)
@@ -1708,6 +1779,8 @@ final class KeyboardViewController: UIInputViewController {
         if dictionaryMode == .edit { editDictionaryText(" "); return }
         if composing.isEmpty, rawRoman.isEmpty {
             directCommit(" ")
+        } else if layout == "flick", boolSetting("use_next_candidate_key", fallback: false), candidates.count > 1 {
+            selectNextCandidate()
         } else if mode == "english" {
             commitComposition()
             directCommit(" ")
@@ -1735,6 +1808,23 @@ final class KeyboardViewController: UIInputViewController {
         renderKeyboard()
     }
 
+    private func pressAa() {
+        if capsLock {
+            capsLock = false
+            shift = false
+            renderKeyboard()
+        } else {
+            transformLastCharacter()
+        }
+    }
+
+    @objc private func toggleCapsLockFromAa(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        capsLock.toggle()
+        shift = capsLock
+        renderKeyboard()
+    }
+
     private func setMode(_ newMode: String) {
         if dictionaryMode != .edit, mode != "english" || newMode != "english" { commitComposition() }
         mode = newMode
@@ -1750,6 +1840,12 @@ final class KeyboardViewController: UIInputViewController {
 
     private func handleFlickValue(_ value: String, definition: FlickDefinition) {
         feedback()
+        if definition.action == "upperLowerEnglish", value == "__capslock__" {
+            capsLock.toggle()
+            shift = capsLock
+            renderKeyboard()
+            return
+        }
         if definition.action == "space", value == "__space_longpress__" {
             if candidates.isEmpty {
                 if !cursorBarVisible { toggleCursorBar() }
@@ -1787,6 +1883,10 @@ final class KeyboardViewController: UIInputViewController {
         case "space":
             switch value {
             case "←": textDocumentProxy.adjustTextPosition(byCharacterOffset: -1); refreshCursorBar()
+            case "貼付":
+                if boolSetting("enable_paste_button_on_flick_cursorbar_key", fallback: false) {
+                    if hasFullAccess, let text = UIPasteboard.general.string { directCommit(text) }
+                }
             case "　": input("　")
             case "\t": input("\t")
             default: space()
@@ -1797,17 +1897,36 @@ final class KeyboardViewController: UIInputViewController {
         case "english": setMode("english")
         case "kogana": transformLastCharacter()
         case "shiftEnglish": toggleShift()
+        case "upperLowerEnglish": pressAa()
         case "nextKeyboard": advanceToNextInputMode()
         default: break
         }
     }
 
     private func transformLastCharacter() {
-        guard let last = composing.last else { return }
-        let value = kanaCharacterForms[String(last)] ?? String(last)
-        composing.removeLast()
-        composing += value
-        updateComposition()
+        if let last = composing.last {
+            let character = String(last)
+            let value: String
+            if mode == "english", character.range(of: #"^[A-Za-z]$"#, options: .regularExpression) != nil {
+                value = character == character.uppercased() ? character.lowercased() : character.uppercased()
+            } else {
+                value = kanaCharacterForms[character] ?? character
+            }
+            composing.removeLast()
+            composing += value
+            updateComposition()
+        } else if let last = textDocumentProxy.documentContextBeforeInput?.last {
+            let character = String(last)
+            let value: String
+            if mode == "english", character.range(of: #"^[A-Za-z]$"#, options: .regularExpression) != nil {
+                value = character == character.uppercased() ? character.lowercased() : character.uppercased()
+            } else {
+                guard let transformed = kanaCharacterForms[character] else { return }
+                value = transformed
+            }
+            textDocumentProxy.deleteBackward()
+            textDocumentProxy.insertText(value)
+        }
     }
 
     private func dispatch(
@@ -2473,14 +2592,21 @@ final class KeyboardViewController: UIInputViewController {
         guard !composing.isEmpty else { return [] }
         if mode == "english" { return buildEnglishCandidates(composing) }
         let reading = katakanaToHiragana(composing)
+        let activeConversionEntries = conversionDictionaryEntries.filter { entry in
+            let ruby = katakanaToHiragana(entry.ruby)
+            return !ruby.isEmpty && (reading.contains(ruby) || ruby.hasPrefix(reading))
+        }
         var result: [String] = []
         var exactUserTexts: [String] = []
-        let learned = learnedCandidateEntries(learningScores(), english: false)
+        let allLearned = learnedCandidateEntries(learningScores(), english: false)
+        let learned = allLearned
             .filter { $0.reading.hasPrefix(reading) }
             .sorted { $0.score > $1.score }
-        var prefixPredictions = learned.filter { $0.reading != reading }.map(\.text)
+        let learnedPrefixes = learned.filter { $0.reading != reading }
+        var prefixPredictions = learnedPrefixes.map(\.text)
+        var registeredPrefixPredictions: [(text: String, ruby: String, importance: Int)] = []
         var predictionReadings: [String: String] = [:]
-        for entry in learned where entry.reading != reading {
+        for entry in learnedPrefixes {
             if predictionReadings[entry.text] == nil { predictionReadings[entry.text] = entry.reading }
         }
         if let dictionary = state["userDictionary"] as? [[String: Any]] {
@@ -2513,12 +2639,41 @@ final class KeyboardViewController: UIInputViewController {
                     exactUserTexts.append(value)
                 } else {
                     prefixPredictions.append(value)
+                    registeredPrefixPredictions.append((
+                        text: value,
+                        ruby: ruby,
+                        importance: entry["importance"] as? Int ?? 3
+                    ))
                     if predictionReadings[value] == nil { predictionReadings[value] = ruby }
                 }
             }
         }
+        let sharedPrefixEntries = activeConversionEntries.filter {
+            let ruby = katakanaToHiragana($0.ruby)
+            return ruby.count > reading.count && ruby.hasPrefix(reading) && !$0.word.isEmpty
+        }.sorted {
+            let left = katakanaToHiragana($0.ruby)
+            let right = katakanaToHiragana($1.ruby)
+            if left.count != right.count { return left.count < right.count }
+            return $0.wordWeight > $1.wordWeight
+        }
+        for entry in sharedPrefixEntries.prefix(32) {
+            let ruby = katakanaToHiragana(entry.ruby)
+            guard ruby.count > reading.count, ruby.hasPrefix(reading), !entry.word.isEmpty else { continue }
+            let weightImportance = (entry.wordWeight + 9) / 2 + 3
+            let importance = weightImportance.isFinite
+                ? Int(min(5, max(1, weightImportance))) : 3
+            registeredPrefixPredictions.append((
+                text: entry.word,
+                ruby: ruby,
+                importance: importance
+            ))
+            prefixPredictions.append(entry.word)
+            if predictionReadings[entry.word] == nil { predictionReadings[entry.word] = ruby }
+        }
         let zenzai = zenzaiConfiguration()
-        let engineCandidates = conversionEngine?.candidates(
+        let blockedEmoji = blockedAdditionalEmoji()
+        let engineCandidates = (conversionEngine?.candidates(
             reading: composing,
             rawRoman: layout == "qwerty" ? rawRoman : nil,
             leftContext: textDocumentProxy.documentContextBeforeInput,
@@ -2526,15 +2681,66 @@ final class KeyboardViewController: UIInputViewController {
             modelURL: zenzai?.url,
             inferenceLimit: zenzai?.inferenceLimit ?? 1,
             learningMode: intSetting("memory_learining_styple_setting", fallback: 0),
+            automaticCompletionStrength: boolSetting("live_conversion", fallback: true)
+                ? intSetting("automatic_completion_strength", fallback: 1) : 0,
+            englishCandidateInRoman2KanaInput: boolSetting("roman_english_candidate", fallback: true),
+            typographyCandidate: boolSetting("typography_roman_candidate", fallback: true),
             fullWidthRomanCandidate: boolSetting("full_roman_candidate", fallback: true),
             halfWidthKanaCandidate: boolSetting("half_kana_candidate", fallback: true),
             unicodeCandidate: boolSetting("unicode_candidate", fallback: true),
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.1.0"
-        ) ?? []
+        ) ?? []).filter { !blockedEmoji.contains(Self.normalizedEmoji($0)) || exactUserTexts.contains($0) }
         let enginePredictionTexts = conversionEngine?.predictionTexts ?? []
         result.append(contentsOf: engineCandidates.filter { !enginePredictionTexts.contains($0) })
-        let combinedTexts = dictionaryCombinations(reading)
+        let registeredCombinationEntries = activeConversionEntries.map {
+            (ruby: $0.ruby, word: $0.word, importance: 3)
+        }
+        let registeredCombinations = dictionaryCombinations(
+            reading, entries: registeredCombinationEntries, limit: 32
+        )
+        let combinedTexts = Array(registeredCombinations.prefix(8))
+        let learnedCombinationEntries = allLearned.filter { reading.contains($0.reading) }
+            .map { (ruby: $0.reading, word: $0.text, importance: min(5, 3 + $0.score / 16)) }
+        let allCombinationEntries = registeredCombinationEntries + learnedCombinationEntries
+        let activeCombinationEntries = allCombinationEntries.filter {
+            !$0.ruby.isEmpty && !$0.word.isEmpty &&
+                reading.contains(katakanaToHiragana($0.ruby))
+        }
+        let exactRegisteredTexts = Set(exactUserTexts + allLearned.filter {
+            $0.reading == reading
+        }.map(\.text))
+        let trustedCompleteTexts: Set<String> = hasLongOrdinaryGapBetweenRegisteredWords(
+            reading, entries: activeCombinationEntries
+        ) ? Set(conversionEngine?.baselineTexts ?? []) : []
+        let hasExactPair = activeCombinationEntries.count >= 2 && !dictionaryCombinations(
+            reading, entries: activeCombinationEntries, limit: 1, minimumRegisteredWords: 2
+        ).isEmpty
+        let blockedCombinedValues: [String] = hasExactPair ? [] :
+            Array(Set(activeCombinationEntries.map(\.word)))
+        let incompleteCombinationTexts: Set<String> = activeCombinationEntries.count < 2 ? [] :
+            Set(dictionaryCombinations(
+                reading, entries: activeCombinationEntries, limit: 128,
+                requireBoundaryMatches: false, minimumRegisteredWords: 2
+            )).subtracting(dictionaryCombinations(
+                reading, entries: activeCombinationEntries, limit: 128,
+                minimumRegisteredWords: 2
+            )).subtracting(exactRegisteredTexts)
+        let normalizedIncompleteCombinationTexts = Set(
+            incompleteCombinationTexts.map(katakanaToHiragana)
+        )
+        let registeredTexts = Set(registeredCombinations)
+        var learnedCombinationTexts = dictionaryCombinations(
+            reading, entries: learnedCombinationEntries
+        )
+        learnedCombinationTexts.append(contentsOf: dictionaryCombinations(
+            reading, entries: registeredCombinationEntries + learnedCombinationEntries, limit: 32
+        ).filter { !registeredTexts.contains($0) })
+        var seenLearnedCombination = Set<String>()
+        learnedCombinationTexts = Array(learnedCombinationTexts.filter {
+            seenLearnedCombination.insert($0).inserted
+        }.prefix(8))
         result.append(contentsOf: combinedTexts)
+        result.append(contentsOf: learnedCombinationTexts)
         prefixPredictions.append(contentsOf: engineCandidates.filter { enginePredictionTexts.contains($0) })
         if boolSetting("use_OS_user_dict", fallback: true) {
             for ruby in osLexicon.keys.sorted(by: {
@@ -2560,10 +2766,15 @@ final class KeyboardViewController: UIInputViewController {
                 if predictionReadings[value] == nil { predictionReadings[value] = ruby }
             }
         }
-        // A local completion must not displace an existing engine candidate or
-        // become a live conversion when no complete conversion is available.
+        // The model may return the same text as a registered or learned
+        // completion. Keep its longer reading when ranking live candidates.
+        let knownPrefixTexts = Set(registeredPrefixPredictions.map(\.text) + learnedPrefixes.map(\.text))
+            .subtracting(exactUserTexts)
+        // A local completion must not become a live conversion while its
+        // reading is unfinished.
         var completeTexts = Set<String>()
         result = result.filter { !$0.isEmpty && completeTexts.insert($0).inserted }
+        completeTexts.subtract(knownPrefixTexts)
         if result.isEmpty {
             result = [reading, hiraganaToKatakana(reading)]
             completeTexts = Set(result)
@@ -2577,7 +2788,9 @@ final class KeyboardViewController: UIInputViewController {
         let katakana = hiraganaToKatakana(composing)
         if katakana != composing { result.append(katakana) }
         if boolSetting("emoji_dictionary_enabled", fallback: true) {
-            result.append(contentsOf: Self.emojiDictionary[composing] ?? [])
+            result.append(contentsOf: (Self.emojiDictionary[composing] ?? []).filter {
+                !blockedEmoji.contains(Self.normalizedEmoji($0))
+            })
         }
         if boolSetting("kaomoji_dictionary_enabled", fallback: false) {
             result.append(contentsOf: Self.kaomojiDictionary[composing] ?? [])
@@ -2587,43 +2800,142 @@ final class KeyboardViewController: UIInputViewController {
         }
         let exactLearning = learned.filter { $0.reading == reading }
         let exactTexts = completeTexts.union(exactLearning.map(\.text))
+            .union(learnedCombinationTexts)
         candidatePredictionReadings = predictionReadings.filter { !exactTexts.contains($0.key) }
         unknownPredictionTexts = enginePredictionTexts.subtracting(exactTexts)
             .subtracting(Set(candidatePredictionReadings.keys))
-        var scores: [String: Int] = [:]
-        for entry in exactLearning {
-            scores[entry.text] = max(scores[entry.text] ?? 0, entry.score)
-        }
-        result.append(contentsOf: exactLearning.map(\.text))
-        result = result.enumerated().sorted {
-            let left = scores[$0.element] ?? 0
-            let right = scores[$1.element] ?? 0
-            return left == right ? $0.offset < $1.offset : left > right
-        }.map(\.element)
         let hiragana = katakanaToHiragana(composing)
         let fullKatakana = hiraganaToKatakana(hiragana)
-        let learnedTexts = exactLearning.map(\.text)
-        let stableEngineCandidate = conversionEngine?.baselineTexts.first {
-            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
-                && $0 != hiragana && $0 != fullKatakana
+        let predictedTexts = Set(candidatePredictionReadings.keys).union(unknownPredictionTexts)
+        let partialTexts = Set(activeConversionEntries.compactMap { entry -> String? in
+            let ruby = katakanaToHiragana(entry.ruby)
+            guard !ruby.isEmpty, reading.count > ruby.count, reading.hasPrefix(ruby) else { return nil }
+            return entry.word + String(reading.dropFirst(ruby.count))
+        })
+        // The official converter already scores registered words, grammar and
+        // learned paths in its lattice. Preserve its result order here.
+        let officialComplete = engineCandidates.filter {
+            !predictedTexts.contains($0) && !knownPrefixTexts.contains($0)
+                && !partialTexts.contains($0)
         }
-        let engineCandidate = stableEngineCandidate ?? engineCandidates.first {
-            !enginePredictionTexts.contains($0) && !learnedTexts.contains($0)
-                && $0 != hiragana && $0 != fullKatakana
+        let localComplete = result.filter {
+            !predictedTexts.contains($0) && !knownPrefixTexts.contains($0)
+                && !partialTexts.contains($0)
         }
-        var prioritized: [String] = []
-        prioritized.append(contentsOf: learnedTexts)
-        prioritized.append(contentsOf: exactUserTexts)
-        if let engineCandidate { prioritized.append(engineCandidate) }
-        prioritized.append(contentsOf: combinedTexts)
-        prioritized.append(contentsOf: Self.systemDictionary[reading] ?? [])
-        prioritized.append(contentsOf: [hiragana, fullKatakana])
-        prioritized.append(contentsOf: result)
+        let prefixCandidates = registeredPrefixPredictions.map(\.text)
+            + learnedPrefixes.map(\.text) + prefixPredictions
+            + result.filter { partialTexts.contains($0) }
         var seen = Set<String>()
-        return prioritized.filter { !$0.isEmpty && seen.insert($0).inserted }
+        let filtered = (officialComplete + exactUserTexts + exactLearning.map(\.text)
+            + combinedTexts + learnedCombinationTexts + localComplete
+            + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter { candidate in
+            guard !candidate.isEmpty else { return false }
+            if candidate != hiragana && candidate != fullKatakana &&
+                !exactRegisteredTexts.contains(candidate) {
+                if normalizedIncompleteCombinationTexts.contains(katakanaToHiragana(candidate)) {
+                    return false
+                }
+                if !trustedCompleteTexts.contains(candidate) &&
+                    blockedCombinedValues.filter({ candidate.contains($0) }).count >= 2 {
+                    return false
+                }
+            }
+            return seen.insert(candidate).inserted
+        }
+        let ordered = keepKanaCandidatesVisible(reading: reading, candidates: filtered)
+        let hasStrongLearning = exactLearning.contains { $0.score >= 4 }
+        let hasExactRegistration = !exactUserTexts.isEmpty || hasStrongLearning ||
+            activeConversionEntries.contains { katakanaToHiragana($0.ruby) == reading }
+        let baselineLeadingTexts = conversionEngine.map {
+            Array($0.baselineTexts.prefix(2))
+        } ?? []
+        let literalReadingFirst = baselineLeadingTexts.first == hiragana ||
+            (reading.count <= 2 && baselineLeadingTexts.first == fullKatakana &&
+             baselineLeadingTexts.contains(hiragana))
+        if !hasExactRegistration, literalReadingFirst, ordered.contains(hiragana) {
+            return [hiragana] + ordered.filter { $0 != hiragana }
+        }
+        if !hasExactRegistration, reading == "ないか", ordered.contains("無いか") {
+            return ["無いか"] + ordered.filter { $0 != "無いか" }
+        }
+        if !hasExactRegistration, let first = ordered.first,
+           (first.unicodeScalars.contains(where: { $0.value >= 65 && $0.value <= 90 }) ||
+            (first.unicodeScalars.contains(where: { $0.value >= 0x3041 && $0.value <= 0x3096 }) &&
+             first.unicodeScalars.contains(where: { $0.value >= 0x30A1 && $0.value <= 0x30F6 }))),
+           officialComplete.contains(fullKatakana) {
+            return [fullKatakana] + ordered.filter { $0 != fullKatakana }
+        }
+        return ordered
     }
 
-    private func dictionaryCombinations(_ reading: String) -> [String] {
+    private func blockedAdditionalEmoji() -> Set<String> {
+        var blocked = Set<String>()
+        if boolSetting("hide_cockroach_emoji", fallback: false) { blocked.insert("🪳") }
+        if boolSetting("hide_mosquito_emoji", fallback: false) { blocked.insert("🦟") }
+        if boolSetting("hide_spider_emoji", fallback: false) { blocked.formUnion(["🕸", "🕷"]) }
+        if boolSetting("hide_worm_emoji", fallback: false) { blocked.insert("🪱") }
+        return blocked
+    }
+
+    private static func normalizedEmoji(_ value: String) -> String {
+        value.replacingOccurrences(of: "\u{FE0F}", with: "")
+            .replacingOccurrences(of: "\u{FE0E}", with: "")
+    }
+
+    private static let combinationConnectors = [
+        "は", "が", "を", "に", "へ", "で", "と", "も", "の", "や", "か", "ね", "よ",
+        "から", "まで", "より", "だけ", "など", "しか", "こそ", "でも",
+        "です", "でした", "だ", "だった", "ます", "ました"
+    ].map { Array($0) }
+    private func isCombinationConnector(_ value: String) -> Bool {
+        if value.isEmpty { return true }
+        let characters = Array(value)
+        var reachable = Array(repeating: false, count: characters.count + 1)
+        reachable[0] = true
+        for index in characters.indices where reachable[index] {
+            for connector in Self.combinationConnectors where index + connector.count <= characters.count {
+                if characters[index..<(index + connector.count)].elementsEqual(connector) {
+                    reachable[index + connector.count] = true
+                }
+            }
+        }
+        return reachable[characters.count]
+    }
+
+    private func hasLongOrdinaryGapBetweenRegisteredWords(
+        _ reading: String, entries: [(ruby: String, word: String, importance: Int)]
+    ) -> Bool {
+        let characters = Array(reading)
+        var spans: [(start: Int, end: Int)] = []
+        for entry in entries where !entry.word.isEmpty {
+            let ruby = Array(katakanaToHiragana(entry.ruby))
+            guard !ruby.isEmpty, ruby.count <= characters.count else { continue }
+            for start in 0...(characters.count - ruby.count) where
+                characters[start..<(start + ruby.count)].elementsEqual(ruby) {
+                spans.append((start, start + ruby.count))
+            }
+        }
+        for first in spans {
+            for second in spans where second.start >= first.end {
+                let gaps = [
+                    String(characters[0..<first.start]),
+                    String(characters[first.end..<second.start]),
+                    String(characters[second.end..<characters.count])
+                ]
+                if gaps.allSatisfy({ isCombinationConnector($0) || $0.count >= 3 }) &&
+                    gaps.contains(where: { $0.count >= 3 && !isCombinationConnector($0) }) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private func dictionaryCombinations(
+        _ reading: String, entries: [(ruby: String, word: String, importance: Int)],
+        limit: Int = 8, requireBoundaryMatches: Bool = true,
+        minimumRegisteredWords: Int = 1
+    ) -> [String] {
         struct Match {
             let end: Int
             let value: String
@@ -2635,9 +2947,12 @@ final class KeyboardViewController: UIInputViewController {
             let score: Int
             let words: Int
             let registeredWords: Int
+            let startsWithWord: Bool
+            let pendingKana: String
+            let validConnectors: Bool
         }
         let characters = Array(reading)
-        if characters.count < 2 || conversionDictionaryEntries.isEmpty { return [] }
+        if characters.count < 2 || entries.isEmpty { return [] }
         var matches = Array(repeating: [Match](), count: characters.count)
         var hasRegisteredMatch = false
         func add(_ rawRuby: String, _ value: String, _ importance: Int, _ registered: Bool) {
@@ -2657,8 +2972,8 @@ final class KeyboardViewController: UIInputViewController {
                 if registered { hasRegisteredMatch = true }
             }
         }
-        for entry in conversionDictionaryEntries {
-            add(entry.ruby, entry.word, 3, true)
+        for entry in entries {
+            add(entry.ruby, entry.word, entry.importance, true)
         }
         if !hasRegisteredMatch { return [] }
         for (ruby, values) in Self.systemDictionary {
@@ -2666,7 +2981,8 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         var beams = Array(repeating: [Path](), count: characters.count + 1)
-        beams[0].append(Path(text: "", score: 0, words: 0, registeredWords: 0))
+        beams[0].append(Path(text: "", score: 0, words: 0, registeredWords: 0,
+                             startsWithWord: false, pendingKana: "", validConnectors: true))
         func push(_ end: Int, _ path: Path) {
             beams[end].append(path)
             if beams[end].count > 48 {
@@ -2682,24 +2998,52 @@ final class KeyboardViewController: UIInputViewController {
                     text: path.text + String(characters[index]),
                     score: path.score - 3,
                     words: path.words,
-                    registeredWords: path.registeredWords
+                    registeredWords: path.registeredWords,
+                    startsWithWord: path.startsWithWord,
+                    pendingKana: path.pendingKana + String(characters[index]),
+                    validConnectors: path.validConnectors
                 ))
                 for match in matches[index] {
                     push(match.end, Path(
                         text: path.text + match.value,
                         score: path.score + match.score,
                         words: path.words + 1,
-                        registeredWords: path.registeredWords + (match.registered ? 1 : 0)
+                        registeredWords: path.registeredWords + (match.registered ? 1 : 0),
+                        startsWithWord: path.startsWithWord || (index == 0 && path.words == 0),
+                        pendingKana: "",
+                        validConnectors: path.validConnectors &&
+                            isCombinationConnector(path.pendingKana)
                     ))
                 }
             }
         }
         var seen = Set<String>()
         return Array(beams.last!.sorted { $0.score > $1.score }
-            .filter { $0.words >= 2 && $0.registeredWords >= 1 && $0.text != reading }
+            .filter { $0.words >= 2 && $0.registeredWords >= minimumRegisteredWords &&
+                $0.text != reading &&
+                (!requireBoundaryMatches || ($0.startsWithWord && $0.validConnectors &&
+                    isCombinationConnector($0.pendingKana))) }
             .map(\.text)
             .filter { seen.insert($0).inserted }
-            .prefix(8))
+            .prefix(limit))
+    }
+
+    private func canContinueEmailComposition(_ value: String) -> Bool {
+        if value == "@", !composing.contains("@") {
+            return composing.range(of: #"^[A-Za-z0-9._+\-]*$"#, options: .regularExpression) != nil
+        }
+        return composing.contains("@") && !value.isEmpty && value.unicodeScalars.allSatisfy {
+            (0x41 ... 0x5a).contains($0.value) || (0x61 ... 0x7a).contains($0.value)
+                || (0x30 ... 0x39).contains($0.value) || $0.value == 0x2e || $0.value == 0x2d
+        }
+    }
+
+    private func emailAddressCandidates(_ input: String) -> [String] {
+        guard let at = input.lastIndex(of: "@") else { return [] }
+        let local = String(input[..<at])
+        guard local.range(of: #"^[A-Za-z0-9._+\-]*$"#, options: .regularExpression) != nil else { return [] }
+        let prefix = input[at...].lowercased()
+        return Self.emailDomains.filter { $0.hasPrefix(prefix) }.map { local + $0 }
     }
 
     private func buildEnglishCandidates(_ input: String) -> [String] {
@@ -2725,16 +3069,19 @@ final class KeyboardViewController: UIInputViewController {
         let learned = learnedCandidateEntries(learningScores(), english: true)
             .filter { $0.reading.hasPrefix(prefix) || $0.text.lowercased().hasPrefix(prefix) }
             .sorted { $0.score > $1.score }
-        preferred.insert(contentsOf: learned.map(\.text), at: 0)
-
-        var result = [input]
-        var seen = Set(result)
+        var result: [String] = []
+        var seen = Set<String>()
         func append(_ candidate: String) {
             guard !candidate.isEmpty else { return }
             let matched = matchEnglishCandidateCase(candidate, input: input)
             if seen.insert(matched).inserted { result.append(matched) }
         }
         preferred.forEach(append)
+        learned.map(\.text).forEach(append)
+        append(input)
+        for email in emailAddressCandidates(input) where seen.insert(email).inserted {
+            result.append(email)
+        }
         Self.englishPredictionWords
             .filter { $0.count > prefix.count && $0.hasPrefix(prefix) }
             .forEach(append)
@@ -2756,8 +3103,16 @@ final class KeyboardViewController: UIInputViewController {
         return state["learning"] as? [String: Any] ?? [:]
     }
 
+    private func effectiveLearningMode() -> Int {
+        if boolSetting("stop_learning_when_search", fallback: false),
+           textDocumentProxy.keyboardType == .webSearch || textDocumentProxy.returnKeyType == .search {
+            return 2
+        }
+        return intSetting("memory_learining_styple_setting", fallback: 0)
+    }
+
     private func learnCandidate(input: String, candidate: String, english: Bool, explicitSelection: Bool) {
-        guard intSetting("memory_learining_styple_setting", fallback: 0) == 0 else { return }
+        guard effectiveLearningMode() == 0 else { return }
         if !english, unknownPredictionTexts.contains(candidate) { return }
         let learningReading = english ? input : (candidatePredictionReadings[candidate] ?? input)
         state["learning"] = recordCandidateLearning(
@@ -2924,7 +3279,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func showEmoji() {
+        setCandidateExpanded(false)
+        candidateExpandButton.isHidden = true
         candidateStack.removeAllArrangedSubviews()
+        candidateScroll.setContentOffset(.zero, animated: false)
+        candidateStack.addArrangedSubview(makeCandidateButton("閉じる") { [weak self] in self?.renderCandidates() })
         for value in ["😀", "😃", "😊", "😂", "🥰", "😍", "😭", "😡", "👍", "🙏", "❤️", "🎉", "✨", "⭐️"] {
             candidateStack.addArrangedSubview(makeCandidateButton(value) { [weak self] in self?.directCommit(value) })
         }
@@ -2974,6 +3333,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func resetComposition() {
+        conversionEngine?.stopComposition()
         selectedCandidateText = nil
         composing = ""
         rawRoman = ""
@@ -3136,8 +3496,18 @@ final class KeyboardViewController: UIInputViewController {
         "かんたん": ["簡単"], "むずかしい": ["難しい"], "おおきい": ["大きい"], "ちいさい": ["小さい"],
         "はやい": ["早い", "速い"], "おそい": ["遅い"], "いい": ["いい", "良い"], "わるい": ["悪い"],
     ]
-    private static let emojiDictionary = ["えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"]]
+    private static let emojiDictionary = [
+        "えがお": ["😊", "😄", "🙂"], "はーと": ["❤️", "💕", "💙"], "ほし": ["⭐️", "🌟", "✨"],
+        "ごきぶり": ["🪳"], "か": ["🦟"], "くも": ["🕷️", "🕸️"], "みみず": ["🪱"],
+    ]
     private static let kaomojiDictionary = ["えがお": ["( ´ ▽ ` )", "(^_^)"], "かなしい": ["( ; _ ; )", "(´；ω；`)"]]
+    private static let emailDomains = [
+        "@gmail.com", "@icloud.com", "@yahoo.co.jp", "@au.com",
+        "@docomo.ne.jp", "@excite.co.jp", "@ezweb.ne.jp", "@googlemail.com",
+        "@hotmail.co.jp", "@hotmail.com", "@i.softbank.jp", "@live.jp",
+        "@me.com", "@mineo.jp", "@nifty.com", "@outlook.com", "@outlook.jp",
+        "@softbank.ne.jp", "@yahoo.ne.jp", "@ybb.ne.jp", "@ymobile.ne.jp",
+    ]
     private static let englishPredictionWords = [
         "a", "about", "after", "again", "all", "also", "always", "am", "an", "and", "any", "are",
         "as", "at", "be", "because", "been", "before", "being", "best", "but", "by", "can", "come",
@@ -3341,8 +3711,8 @@ private struct FlickDefinition {
         Self(label: label, values: [label, "×", label, label, label], action: "delete", customTarget: nil)
     }
 
-    static func space(_ label: String) -> Self {
-        Self(label: label, values: [label, "←", "　", "", "\t"], action: "space", customTarget: nil)
+    static func space(_ label: String, pasteOnCursorKey: Bool = false) -> Self {
+        Self(label: label, values: [label, "←", pasteOnCursorKey ? "貼付" : "　", "", "\t"], action: "space", customTarget: nil)
     }
 
     private init(label: String, values: [String], action: String?, customTarget: String?) {
@@ -3740,11 +4110,13 @@ private final class FlickButton: UIButton {
         cursorDragStep = 0
         deleteDragging = false
         deleteDragCount = 0
-        guard definition.action == "delete" || definition.action == "space" else { return }
+        guard definition.action == "delete" || definition.action == "space" || definition.action == "upperLowerEnglish" else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.didLongPress = true
-            if self.definition.action == "delete" {
+            if self.definition.action == "upperLowerEnglish" {
+                self.callback("__capslock__")
+            } else if self.definition.action == "delete" {
                 self.callback("__delete_repeat__")
                 self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
                     self?.callback("__delete_repeat__")
@@ -4467,6 +4839,21 @@ private func katakanaToHiragana(_ value: String) -> String {
     })
 }
 
+private func keepKanaCandidatesVisible(reading: String, candidates: [String]) -> [String] {
+    let hiragana = katakanaToHiragana(reading)
+    let katakana = hiraganaToKatakana(hiragana)
+    guard !hiragana.isEmpty, hiragana != katakana else { return candidates }
+    var visible = candidates
+    for (literal, latestIndex) in [(hiragana, 3), (katakana, 4)] {
+        if let currentIndex = visible.firstIndex(of: literal) {
+            if currentIndex <= latestIndex { continue }
+            visible.remove(at: currentIndex)
+        }
+        visible.insert(literal, at: min(latestIndex, visible.count))
+    }
+    return visible
+}
+
 private let romanMap: [String: String] = [
     "kya": "きゃ", "kyu": "きゅ", "kyo": "きょ", "gya": "ぎゃ", "gyu": "ぎゅ", "gyo": "ぎょ", "sha": "しゃ", "shu": "しゅ", "sho": "しょ", "cha": "ちゃ", "chu": "ちゅ", "cho": "ちょ", "nya": "にゃ", "nyu": "にゅ", "nyo": "にょ", "hya": "ひゃ", "hyu": "ひゅ", "hyo": "ひょ", "mya": "みゃ", "myu": "みゅ", "myo": "みょ", "rya": "りゃ", "ryu": "りゅ", "ryo": "りょ", "fa": "ふぁ", "fi": "ふぃ", "fe": "ふぇ", "fo": "ふぉ", "shi": "し", "chi": "ち", "tsu": "つ",
     "ka": "か", "ki": "き", "ku": "く", "ke": "け", "ko": "こ", "ga": "が", "gi": "ぎ", "gu": "ぐ", "ge": "げ", "go": "ご", "sa": "さ", "si": "し", "su": "す", "se": "せ", "so": "そ", "za": "ざ", "zi": "じ", "ji": "じ", "zu": "ず", "ze": "ぜ", "zo": "ぞ", "ta": "た", "ti": "ち", "tu": "つ", "te": "て", "to": "と", "da": "だ", "di": "ぢ", "du": "づ", "de": "で", "do": "ど", "na": "な", "ni": "に", "nu": "ぬ", "ne": "ね", "no": "の", "ha": "は", "hi": "ひ", "hu": "ふ", "fu": "ふ", "he": "へ", "ho": "ほ", "ba": "ば", "bi": "び", "bu": "ぶ", "be": "べ", "bo": "ぼ", "pa": "ぱ", "pi": "ぴ", "pu": "ぷ", "pe": "ぺ", "po": "ぽ", "ma": "ま", "mi": "み", "mu": "む", "me": "め", "mo": "も", "ya": "や", "yu": "ゆ", "yo": "よ", "ra": "ら", "ri": "り", "ru": "る", "re": "れ", "ro": "ろ", "wa": "わ", "wo": "を", "nn": "ん", "ltu": "っ", "xtu": "っ", "a": "あ", "i": "い", "u": "う", "e": "え", "o": "お", "-": "ー", ",": "、", ".": "。",
@@ -4519,7 +4906,9 @@ private func recordCandidateLearning(
         for word in Array(scores.keys) where word != text { scores[word] = scores[word]! / 2 }
         scores[text] = min((scores.values.max() ?? 0) + 4, 32)
     } else {
-        scores[text] = min((scores[text] ?? 0) + 1, 32)
+        // Automatic acceptance stays weaker than one deliberate correction.
+        let existing = scores[text] ?? 0
+        scores[text] = existing >= 4 ? existing : min(existing + 1, 3)
     }
     let prefix = english ? "english:\(normalized)" : normalized
     for (word, score) in scores where score > 0 { result["\(prefix)\t\(word)"] = score }

@@ -60,6 +60,12 @@ class JapaneseConverter {
         fullWidthRomanCandidate: data.settings['full_roman_candidate'] == true,
         unicodeCandidate: data.settings['unicode_candidate'] == true,
         emojiCandidate: data.settings['emoji_dictionary_enabled'] == true,
+        emojiDenylist: {
+          if (data.settings['hide_cockroach_emoji'] == true) '🪳',
+          if (data.settings['hide_mosquito_emoji'] == true) '🦟',
+          if (data.settings['hide_spider_emoji'] == true) ...{'🕸', '🕷'},
+          if (data.settings['hide_worm_emoji'] == true) '🪱',
+        },
         kaomojiCandidate: data.settings['kaomoji_dictionary_enabled'] == true,
         romanEnglishCandidate: data.settings['roman_english_candidate'] == true,
         liveConversion: data.settings['live_conversion'] == true,

@@ -53,7 +53,9 @@ internal fun recordCandidateLearning(
         scores.replaceAll { word, score -> if (word == text) score else score / 2 }
         scores[text] = ((scores.values.maxOrNull() ?: 0) + 4).coerceAtMost(MAX_LEARNING_SCORE)
     } else {
-        scores[text] = ((scores[text] ?: 0) + 1).coerceAtMost(MAX_LEARNING_SCORE)
+        // Automatic commits provide weak evidence; a deliberate choice starts at 4.
+        val existing = scores[text] ?: 0
+        scores[text] = if (existing >= 4) existing else (existing + 1).coerceAtMost(3)
     }
     oldKeys.forEach(learning::remove)
     val prefix = if (english) "english:$normalized" else normalized

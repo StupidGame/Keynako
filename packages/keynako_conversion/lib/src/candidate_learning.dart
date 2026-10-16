@@ -108,7 +108,9 @@ class CandidateLearning {
       final highest = scores.values.fold(0, (a, b) => a > b ? a : b);
       scores[text] = (highest + 4).clamp(1, maxScore);
     } else {
-      scores[text] = ((scores[text] ?? 0) + 1).clamp(1, maxScore);
+      // Automatic acceptance stays weaker than one deliberate correction.
+      final existing = scores[text] ?? 0;
+      scores[text] = existing >= 4 ? existing : (existing + 1).clamp(1, 3);
     }
     for (final key in oldKeys) {
       learning.remove(key);

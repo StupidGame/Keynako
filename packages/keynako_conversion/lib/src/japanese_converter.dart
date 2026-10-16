@@ -1,6 +1,28 @@
+import 'azookey_special_candidates.dart';
 import 'candidate_learning.dart';
 import 'conversion_candidate.dart';
 import 'conversion_options.dart';
+
+const _combinationConnectors = [
+  'は', 'が', 'を', 'に', 'へ', 'で', 'と', 'も', 'の', 'や', 'か', 'ね', 'よ',
+  'から', 'まで', 'より', 'だけ', 'など', 'しか', 'こそ', 'でも',
+  'です', 'でした', 'だ', 'だった', 'ます', 'ました',
+];
+
+bool _isCombinationConnector(String value) {
+  if (value.isEmpty) return true;
+  final reachable = List<bool>.filled(value.length + 1, false);
+  reachable[0] = true;
+  for (var index = 0; index < value.length; index++) {
+    if (!reachable[index]) continue;
+    for (final connector in _combinationConnectors) {
+      if (value.startsWith(connector, index)) {
+        reachable[index + connector.length] = true;
+      }
+    }
+  }
+  return reachable.last;
+}
 
 class _DictionaryMatch {
   const _DictionaryMatch(this.end, this.value, this.score, this.registered);
@@ -17,12 +39,18 @@ class _DictionaryPath {
     this.score,
     this.words,
     this.registeredWords,
+    this.startsWithWord,
+    this.pendingKana,
+    this.validConnectors,
   );
 
   final String text;
   final int score;
   final int words;
   final int registeredWords;
+  final bool startsWithWord;
+  final String pendingKana;
+  final bool validConnectors;
 }
 
 /// Stateless, platform-independent Japanese input transforms and candidates.
@@ -240,6 +268,10 @@ class JapaneseConverter {
     'ありがとう': ['🙏', '😊'],
     'ねこ': ['🐈', '🐱'],
     'いぬ': ['🐕', '🐶'],
+    'ごきぶり': ['🪳'],
+    'か': ['🦟'],
+    'くも': ['🕷️', '🕸️'],
+    'みみず': ['🪱'],
   };
 
   static const Map<String, List<String>> _kaomoji = {
@@ -380,7 +412,12 @@ class JapaneseConverter {
     final sourceReading = romanInput ? romanToHiragana(input) : input;
     final reading = katakanaToHiragana(sourceReading);
     final values = <ConversionCandidate>[
-      ConversionCandidate(text: reading, reading: reading, score: 100),
+      ConversionCandidate(
+        text: reading,
+        reading: reading,
+        source: 'hiragana',
+        score: 100,
+      ),
     ];
     final prefixPredictions = <ConversionCandidate>[];
     final exactLearning = <String, int>{};
@@ -454,10 +491,12 @@ class JapaneseConverter {
         ConversionCandidate(text: value, reading: reading, score: 250),
       );
     }
-    for (final path in _dictionaryCombinations(
+    final registeredCombinations = _dictionaryCombinations(
       reading,
       options.userDictionary,
-    )) {
+      limit: 32,
+    );
+    for (final path in registeredCombinations.take(8)) {
       values.add(
         ConversionCandidate(
           text: path.text,
@@ -466,6 +505,62 @@ class JapaneseConverter {
           score: 300 + (path.score ~/ 4).clamp(0, 50),
         ),
       );
+    }
+    if (options.learningEnabled) {
+      final learnedEntries = CandidateLearning.entries(options.learning)
+          .where((entry) => reading.contains(entry.reading))
+          .map(
+            (entry) => ConversionDictionaryEntry(
+              reading: entry.reading,
+              value: entry.text,
+              importance: (3 + entry.score ~/ 16).clamp(1, 5),
+            ),
+          )
+          .toList();
+      final dictionaryTexts = registeredCombinations
+          .map((path) => path.text)
+          .toSet();
+      final learnedPaths = [
+        ..._dictionaryCombinations(reading, learnedEntries),
+        ..._dictionaryCombinations(reading, [
+          ...options.userDictionary,
+          ...learnedEntries,
+        ], limit: 32).where((path) => !dictionaryTexts.contains(path.text)),
+      ];
+      final seen = <String>{};
+      for (final path
+          in learnedPaths.where((path) => seen.add(path.text)).take(8)) {
+        values.add(
+          ConversionCandidate(
+            text: path.text,
+            reading: reading,
+            source: 'learned-combination',
+            score: 280 + (path.score ~/ 4).clamp(0, 50),
+          ),
+        );
+      }
+    }
+    for (final value in AzooKeySpecialCandidates.complete(reading)) {
+      values.add(
+        ConversionCandidate(
+          text: value,
+          reading: reading,
+          source: 'special',
+          score: 165,
+        ),
+      );
+    }
+    if (predictionLimit > 0) {
+      for (final value in AzooKeySpecialCandidates.emailAddresses(input)) {
+        prefixPredictions.add(
+          ConversionCandidate(
+            text: value,
+            reading: value,
+            source: 'special-prediction',
+            score: 170,
+          ),
+        );
+      }
     }
     if (predictionLimit > 0) {
       for (final entry in _dictionary.entries) {
@@ -531,6 +626,11 @@ class JapaneseConverter {
     }
     if (options.emojiCandidate) {
       for (final value in _emoji[reading] ?? const <String>[]) {
+        if (options.emojiDenylist.contains(
+          value.replaceAll('\uFE0F', '').replaceAll('\uFE0E', ''),
+        )) {
+          continue;
+        }
         values.add(
           ConversionCandidate(
             text: value,
@@ -571,7 +671,10 @@ class JapaneseConverter {
       final learned = (exactLearning[candidate.text] ?? 0).clamp(0, 1000);
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = unique[candidate.text];
-      if (previous == null || scored.score > previous.score) {
+      if (previous == null ||
+          _candidatePriority(scored) < _candidatePriority(previous) ||
+          (_candidatePriority(scored) == _candidatePriority(previous) &&
+              scored.score > previous.score)) {
         unique[candidate.text] = scored;
       }
     }
@@ -582,14 +685,20 @@ class JapaneseConverter {
       final learned = (predictionLearning[candidate.text] ?? 0).clamp(0, 1000);
       final scored = candidate.copyWith(score: candidate.score + learned * 50);
       final previous = uniquePredictions[candidate.text];
-      if (previous == null || scored.score > previous.score) {
+      if (previous == null ||
+          _candidatePriority(scored) < _candidatePriority(previous) ||
+          (_candidatePriority(scored) == _candidatePriority(previous) &&
+              scored.score > previous.score)) {
         uniquePredictions[candidate.text] = scored;
       }
     }
-    final predictions = _rank(uniquePredictions.values);
+    final predictions = _priorityOrder(_rank(uniquePredictions.values));
+    final prioritizedResults = _priorityOrder(result);
     final liveCandidate =
-        options.liveConversion && sourceReading == reading && result.isNotEmpty
-        ? result.first
+        options.liveConversion &&
+            sourceReading == reading &&
+            prioritizedResults.isNotEmpty
+        ? prioritizedResults.first
         : null;
     final pinned = <ConversionCandidate>[
       if (liveCandidate != null &&
@@ -622,8 +731,8 @@ class JapaneseConverter {
         .where((candidate) => !baseTexts.contains(candidate.text))
         .take(predictionLimit < 0 ? 0 : predictionLimit)
         .toList(growable: false);
-    // Keep complete conversions ahead of completions, including when live
-    // conversion is off. Kana shortcuts retain their established positions.
+    // Keep the leading complete conversion in charge of live input, while a
+    // registered longer reading remains visible before the crowded fallback.
     final conversions = baseCandidates
         .where(
           (candidate) =>
@@ -631,22 +740,124 @@ class JapaneseConverter {
               const {
                 'user',
                 'user-combination',
+                'learned-combination',
                 'system',
                 'learned',
+                'special',
               }.contains(candidate.source),
         )
         .toList();
     final conversionTexts = conversions
         .map((candidate) => candidate.text)
         .toSet();
-    return [
-      ...conversions,
-      ...visiblePredictions,
+    final prominentPredictions = visiblePredictions
+        .where(
+          (candidate) =>
+              candidate.source == 'user-prediction' ||
+              candidate.source == 'learned-prediction',
+        )
+        .take(4)
+        .toList(growable: false);
+    final promotedTexts = prominentPredictions
+        .map((candidate) => candidate.text)
+        .toSet();
+    final ordered = [
+      ...conversions.take(1),
+      ...prominentPredictions,
+      ...conversions.skip(1),
+      ...visiblePredictions.where(
+        (candidate) => !promotedTexts.contains(candidate.text),
+      ),
       ...baseCandidates.where(
         (candidate) => !conversionTexts.contains(candidate.text),
       ),
     ];
+    final prioritized = _priorityOrder(ordered);
+    final literalLength = reading.runes.length;
+    final preferLiteralKana =
+        literalLength <= 2 &&
+        reading.runes.every((rune) => rune >= 0x3041 && rune <= 0x3096) &&
+        (literalLength == 1 ||
+            (!_dictionary.containsKey(reading) && visiblePredictions.isEmpty)) &&
+        !exactLearning.values.any((score) => score >= 4) &&
+        !options.userDictionary.any(
+          (entry) => katakanaToHiragana(entry.reading) == reading,
+        );
+    List<ConversionCandidate> preferReading(
+      List<ConversionCandidate> candidates,
+    ) {
+      if (!preferLiteralKana) return candidates;
+      final literal = candidates.where(
+        (candidate) => candidate.text == reading,
+      );
+      if (literal.isEmpty) return candidates;
+      return [
+        literal.first,
+        ...candidates.where((candidate) => candidate.text != reading),
+      ];
+    }
+
+    if (!options.liveConversion || sourceReading != reading) {
+      return _keepKanaCandidatesVisible(
+        reading,
+        preferReading([
+          ...pinned,
+          ...prioritized.where(
+            (candidate) => !pinnedTexts.contains(candidate.text),
+          ),
+        ]),
+      );
+    }
+    return _keepKanaCandidatesVisible(reading, preferReading(prioritized));
   }
+
+  List<ConversionCandidate> _keepKanaCandidatesVisible(
+    String reading,
+    List<ConversionCandidate> candidates,
+  ) {
+    final katakana = hiraganaToKatakana(reading);
+    if (reading.isEmpty || reading == katakana) return candidates;
+    final visible = List<ConversionCandidate>.of(candidates);
+    for (final (text, source, latestIndex) in [
+      (reading, 'hiragana', 3),
+      (katakana, 'katakana', 4),
+    ]) {
+      final index = visible.indexWhere((candidate) => candidate.text == text);
+      if (index >= 0 && index <= latestIndex) continue;
+      final candidate = index >= 0
+          ? visible.removeAt(index)
+          : ConversionCandidate(text: text, reading: reading, source: source);
+      visible.insert(latestIndex.clamp(0, visible.length).toInt(), candidate);
+    }
+    return visible;
+  }
+
+  List<ConversionCandidate> _priorityOrder(
+    Iterable<ConversionCandidate> values,
+  ) {
+    final indexed = values.indexed.toList()
+      ..sort((left, right) {
+        final priority = _candidatePriority(left.$2)
+            .compareTo(_candidatePriority(right.$2));
+        return priority != 0 ? priority : left.$1.compareTo(right.$1);
+      });
+    return indexed.map((entry) => entry.$2).toList();
+  }
+
+  int _candidatePriority(ConversionCandidate candidate) =>
+      switch (candidate.source) {
+        'user' || 'user-combination' => 1,
+        'learned' || 'learned-combination' => 2,
+        'user-prefix' || 'user-prediction' => 4,
+        'learned-prediction' => 5,
+        _ when candidate.source.contains('prediction') => 3,
+        'hiragana' ||
+        'katakana' ||
+        'half-kana' ||
+        'full-width' ||
+        'english' => 7,
+        _ => 0,
+      };
 
   List<ConversionCandidate> _rank(Iterable<ConversionCandidate> candidates) {
     final indexed = candidates.indexed.toList()
@@ -659,8 +870,9 @@ class JapaneseConverter {
 
   List<_DictionaryPath> _dictionaryCombinations(
     String reading,
-    List<ConversionDictionaryEntry> entries,
-  ) {
+    List<ConversionDictionaryEntry> entries, {
+    int limit = 8,
+  }) {
     if (reading.length < 2) return const [];
     final matches = List.generate(reading.length, (_) => <_DictionaryMatch>[]);
     var hasRegisteredMatch = false;
@@ -698,19 +910,29 @@ class JapaneseConverter {
       }
     }
 
-    final beams = List.generate(reading.length + 1, (_) => <_DictionaryPath>[]);
-    beams[0].add(const _DictionaryPath('', 0, 0, 0));
+    // Keep paths with and without a registered word separately. A single
+    // global beam can discard every registered path halfway through a sentence.
+    final lattice = List.generate(
+      reading.length + 1,
+      (_) => <int, List<_DictionaryPath>>{},
+    );
+    lattice[0][0] = [const _DictionaryPath('', 0, 0, 0, false, '', true)];
     void push(int end, _DictionaryPath path) {
-      final paths = beams[end]..add(path);
+      final context = (path.registeredWords > 0 ? 2 : 0) +
+          (path.words > 0 ? 1 : 0);
+      final paths = lattice[end].putIfAbsent(context, () => [])..add(path);
       if (paths.length > 48) {
         paths.sort((a, b) => b.score.compareTo(a.score));
-        paths.removeRange(16, paths.length);
+        paths.removeRange(20, paths.length);
       }
     }
 
     for (var index = 0; index < reading.length; index++) {
-      final current = beams[index]..sort((a, b) => b.score.compareTo(a.score));
-      for (final path in current.take(16)) {
+      final current = lattice[index].values.expand((paths) {
+        paths.sort((a, b) => b.score.compareTo(a.score));
+        return paths.take(20);
+      });
+      for (final path in current) {
         push(
           index + 1,
           _DictionaryPath(
@@ -718,6 +940,9 @@ class JapaneseConverter {
             path.score - 3,
             path.words,
             path.registeredWords,
+            path.startsWithWord,
+            path.pendingKana + reading.substring(index, index + 1),
+            path.validConnectors,
           ),
         );
         for (final match in matches[index]) {
@@ -728,20 +953,25 @@ class JapaneseConverter {
               path.score + match.score,
               path.words + 1,
               path.registeredWords + (match.registered ? 1 : 0),
+              path.startsWithWord || (index == 0 && path.words == 0),
+              '',
+              path.validConnectors && _isCombinationConnector(path.pendingKana),
             ),
           );
         }
       }
     }
     final ranked =
-        beams.last
-            .where((path) => path.words >= 2 && path.registeredWords >= 1)
+        lattice.last.values.expand((paths) => paths)
+            .where((path) => path.words >= 2 && path.registeredWords >= 1 &&
+                path.startsWithWord && path.validConnectors &&
+                _isCombinationConnector(path.pendingKana))
             .toList()
           ..sort((a, b) => b.score.compareTo(a.score));
     final unique = <String, _DictionaryPath>{};
     for (final path in ranked) {
       if (path.text != reading) unique.putIfAbsent(path.text, () => path);
-      if (unique.length >= 8) break;
+      if (unique.length >= limit) break;
     }
     return unique.values.toList();
   }

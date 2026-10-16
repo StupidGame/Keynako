@@ -27,8 +27,7 @@ internal data class AzooKeyHotfixDictionaryEntry(
 
 /**
  * Android cannot link the Swift-only AzooKeyKanaKanjiConverter package. This
- * class reads the same LOUDS dictionary and applies the converter's word and
- * connection scores with an N-best beam search.
+ * class reads the same LOUDS dictionary and searches scored paths by right CID.
  */
 internal class AzooKeyDictionary(
     private val source: DictionaryAssetSource,
@@ -38,13 +37,31 @@ internal class AzooKeyDictionary(
         val ruby: String,
         val lcid: Int,
         val rcid: Int,
+        val mid: Int,
         val score: Float,
+        val additionalMask: Int = 0,
+        val isUserEntry: Boolean = false,
     )
 
     private data class Path(
         val text: String,
         val score: Float,
         val lastRcid: Int,
+        val clauseMids: List<Int>,
+        val additionalMask: Int = 0,
+        val kanaAlternatives: KanaAlternativeNode? = null,
+    )
+
+    private data class KanaAlternative(
+        val start: Int,
+        val end: Int,
+        val kana: String,
+        val scoreLoss: Float,
+    )
+
+    private class KanaAlternativeNode(
+        val alternative: KanaAlternative,
+        val previous: KanaAlternativeNode?,
     )
 
     private data class ConnectionLine(
@@ -60,12 +77,21 @@ internal class AzooKeyDictionary(
     }
     private val shards = mutableMapOf<Char, LoudsShard?>()
     private val connectionLines = mutableMapOf<Int, ConnectionLine>()
+    private val meaningScores: FloatArray by lazy {
+        val bytes = runCatching { source.read("mm.binary") }.getOrDefault(byteArrayOf())
+        if (bytes.size < MID_COUNT * MID_COUNT * Float.SIZE_BYTES) return@lazy floatArrayOf()
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        FloatArray(MID_COUNT * MID_COUNT) { buffer.float }
+    }
     private data class ConversionCacheKey(
         val reading: String,
         val limit: Int,
         val additionalDictionaryVersion: String,
     )
     private var cachedAdditionalEntries: List<Entry> = emptyList()
+    private var cachedLatticeReading = ""
+    private var cachedLatticeEntries: List<Entry> = emptyList()
+    private var cachedLattice: Array<MutableMap<Int, MutableList<Path>>> = emptyArray()
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, List<String>>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, List<String>>): Boolean =
@@ -82,14 +108,39 @@ internal class AzooKeyDictionary(
     ): DictionaryCandidates {
         if (reading.isBlank()) return DictionaryCandidates(emptyList(), emptyList())
         val katakana = reading.toKatakana()
-        val dynamicEntries = additionalEntries.map {
+        val untrackedEntries = additionalEntries.map {
+            val ruby = it.ruby.toKatakana()
             Entry(
                 word = it.word,
-                ruby = it.ruby.toKatakana(),
+                ruby = ruby,
                 lcid = it.lcid,
                 rcid = it.rcid,
+                mid = it.mid,
                 score = it.wordWeight.toFloat(),
+                isUserEntry = true,
             )
+        }
+        val crossingKanaThreshold = cachedLatticeReading.length < KANA_VARIANT_MIN_READING_LENGTH &&
+            katakana.length >= KANA_VARIANT_MIN_READING_LENGTH
+        val canKeepMasks = cachedLattice.isNotEmpty() &&
+            katakana.startsWith(cachedLatticeReading) &&
+            !crossingKanaThreshold &&
+            cachedLatticeEntries.map { it.copy(additionalMask = 0) } == untrackedEntries
+        var usedMask = 0
+        val dynamicEntries = untrackedEntries.mapIndexed { index, entry ->
+            val previousMask = if (canKeepMasks) cachedLatticeEntries[index].additionalMask else 0
+            if (previousMask != 0) {
+                usedMask = usedMask or previousMask
+                entry.copy(additionalMask = previousMask)
+            } else if (entry.ruby.isNotEmpty() && katakana.contains(entry.ruby)) {
+                val bit = (0 until MAX_TRACKED_ADDITIONAL_ENTRIES)
+                    .firstOrNull { usedMask and (1 shl it) == 0 }
+                if (bit == null) entry else {
+                    val mask = 1 shl bit
+                    usedMask = usedMask or mask
+                    entry.copy(additionalMask = mask)
+                }
+            } else entry
         }
         // Callers may update entries without supplying a version. Never reuse
         // a result from a different dynamic dictionary or candidate limit.
@@ -122,85 +173,256 @@ internal class AzooKeyDictionary(
         limit: Int,
         additionalEntries: List<Entry>,
     ): List<String> {
-        val beams = Array(reading.length + 1) { mutableListOf<Path>() }
-        beams[0].add(Path("", 0f, BOS_CID))
+        val extendsCache = cachedLattice.isNotEmpty() &&
+            reading.startsWith(cachedLatticeReading) && cachedLatticeEntries == additionalEntries &&
+            (reading.length < KANA_VARIANT_MIN_READING_LENGTH ||
+                cachedLatticeReading.length >= KANA_VARIANT_MIN_READING_LENGTH)
+        val previousEnd = if (extendsCache) cachedLatticeReading.length else 0
+        val lattice = if (extendsCache) {
+            Array(reading.length + 1) { index ->
+                cachedLattice.getOrNull(index) ?: mutableMapOf()
+            }
+        } else {
+            Array(reading.length + 1) { mutableMapOf() }
+        }
+        if (!extendsCache) lattice[0][BOS_CID] = mutableListOf(Path("", 0f, BOS_CID, emptyList()))
+        val longestEntry = maxOf(MAX_WORD_LENGTH, additionalEntries.maxOfOrNull { it.ruby.length } ?: 0)
+        val firstStart = when {
+            extendsCache && previousEnd == reading.length -> reading.length
+            previousEnd >= longestEntry -> previousEnd - longestEntry + 1
+            else -> 0
+        }
 
-        for (start in reading.indices) {
-            val previous = beams[start]
-                .sortedByDescending(Path::score)
-                .take(BEAM_WIDTH)
+        for (start in firstStart until reading.length) {
+            val previous = lattice[start].flatMap { (contextKey, context) ->
+                val limit = if (contextKey >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
+                if (context.size > limit) trimContext(context, contextKey)
+                context
+            }
             if (previous.isEmpty()) continue
 
             val shard = shard(reading[start])
             val matchesByEnd = linkedMapOf<Int, MutableList<Entry>>()
             for ((end, entries) in shard?.matchingEntries(reading, start, MAX_WORD_LENGTH).orEmpty()) {
+                if (end <= previousEnd) continue
                 matchesByEnd.getOrPut(end) { mutableListOf() }.addAll(entries)
             }
             for (entry in additionalEntries) {
                 val end = start + entry.ruby.length
-                if (entry.ruby.isNotEmpty() &&
+                if (entry.ruby.isNotEmpty() && end > previousEnd &&
                     end <= reading.length &&
                     reading.regionMatches(start, entry.ruby, 0, entry.ruby.length)
                 ) {
                     matchesByEnd.getOrPut(end) { mutableListOf() }.add(entry)
                 }
             }
-            var hasSingleCharacterEntry = false
             for ((end, entries) in matchesByEnd) {
-                if (end == start + 1 && entries.isNotEmpty()) hasSingleCharacterEntry = true
                 appendPaths(
-                    beams[end],
+                    lattice[end],
                     previous,
-                    entries.sortedByDescending(Entry::score).take(ENTRIES_PER_READING),
+                    entries.sortedByDescending(Entry::score),
+                    offerKanaAlternatives = reading.length >= KANA_VARIANT_MIN_READING_LENGTH,
                 )
             }
-
-            if (!hasSingleCharacterEntry) {
-                val fallback = Entry(
-                    word = reading[start].toString().toHiragana(),
-                    ruby = reading[start].toString(),
-                    lcid = GENERAL_NOUN_CID,
-                    rcid = GENERAL_NOUN_CID,
-                    score = FALLBACK_SCORE,
-                )
-                appendPaths(beams[start + 1], previous, listOf(fallback))
+            val ruby = reading[start].toString()
+            if (start + 1 > previousEnd) {
+                appendPaths(lattice[start + 1], previous, listOf(
+                    Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
+                    Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
+                ))
             }
         }
+        cachedLatticeReading = reading
+        cachedLatticeEntries = additionalEntries
+        cachedLattice = lattice
 
+        val ranked = lattice.last().values.flatten().sortedByDescending {
+            it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
+        }
         val result = LinkedHashSet<String>()
-        for (path in beams.last().sortedByDescending {
-            it.score + connectionScore(it.lastRcid, EOS_CID)
-        }) {
+        val leading = minOf(limit, if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH) 2 else 5)
+        for (path in ranked) {
             if (path.text.isNotBlank()) result.add(path.text)
+            if (result.size >= leading) break
+        }
+        if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH && result.size < limit) {
+            // Beam pruning keeps the highest scoring spelling at each context.
+            // Rebuild local kana spellings from those complete paths so a long
+            // sentence can still offer hiragana in its middle.
+            val plainHiragana = reading.toHiragana()
+            val variants = ranked.asSequence().distinctBy(Path::text).take(3)
+                .flatMap { path -> kanaVariants(path).asSequence() }
+                .filter { it.first !in result && it.first != plainHiragana }
+                .distinctBy { it.first }
+                .sortedByDescending { it.second }
+                .take(minOf(8, limit - result.size))
+                .map { it.first }
+            result.addAll(variants.toList())
+        }
+        if (limit > leading) {
+            // Preserve one complete spelling for each registered word. A long
+            // suffix can otherwise fill the list with near-identical variants.
+            for (entry in additionalEntries) {
+                val mask = entry.additionalMask
+                if (mask == 0) continue
+                ranked.firstOrNull { it.additionalMask and mask != 0 }
+                    ?.let { if (it.text.isNotBlank()) result.add(it.text) }
+                if (result.size >= limit) break
+            }
+        }
+        for (path in ranked) {
             if (result.size >= limit) break
+            if (path.text.isNotBlank()) result.add(path.text)
         }
         return result.toList()
     }
 
-    private fun appendPaths(
-        destination: MutableList<Path>,
-        previous: List<Path>,
-        entries: List<Entry>,
-    ) {
-        for (entry in entries) {
-            for (path in previous) {
-                destination.add(
-                    Path(
-                        text = path.text + entry.word,
-                        score = path.score + entry.score + connectionScore(path.lastRcid, entry.lcid),
-                        lastRcid = entry.rcid,
-                    ),
+    private fun kanaVariants(path: Path): List<Pair<String, Float>> {
+        val alternatives = generateSequence(path.kanaAlternatives) { it.previous }
+            .map(KanaAlternativeNode::alternative)
+            .sortedBy(KanaAlternative::scoreLoss)
+            .take(8)
+            .toList()
+        val result = mutableListOf<Pair<String, Float>>()
+        for (alternative in alternatives) {
+            result.add(
+                path.text.replaceRange(alternative.start, alternative.end, alternative.kana) to
+                    (path.score - alternative.scoreLoss),
+            )
+        }
+        for (leftIndex in alternatives.indices) {
+            for (rightIndex in leftIndex + 1 until alternatives.size) {
+                val left = alternatives[leftIndex]
+                val right = alternatives[rightIndex]
+                val (first, second) = if (left.start < right.start) left to right else right to left
+                result.add(
+                    (path.text.substring(0, first.start) + first.kana +
+                        path.text.substring(first.end, second.start) + second.kana +
+                        path.text.substring(second.end)) to
+                        (path.score - first.scoreLoss - second.scoreLoss),
                 )
             }
         }
-        if (destination.size > BEAM_TRIM_THRESHOLD) {
-            val trimmed = destination
-                .sortedByDescending(Path::score)
-                .distinctBy { it.text to it.lastRcid }
-                .take(BEAM_WIDTH)
-            destination.clear()
-            destination.addAll(trimmed)
+        return result
+    }
+
+    private fun appendPaths(
+        destination: MutableMap<Int, MutableList<Path>>,
+        previous: List<Path>,
+        entries: List<Entry>,
+        offerKanaAlternatives: Boolean = false,
+    ) {
+        val kana = if (offerKanaAlternatives) entries.firstOrNull()?.ruby?.toHiragana().orEmpty() else ""
+        val kanaScore = if (kana.isNotEmpty()) entries.asSequence()
+            .filter { it.word == kana }
+            .maxOfOrNull(Entry::score) else null
+        val hasKatakanaSpelling = entries.any { it.word == it.ruby }
+        for (entry in entries) {
+            // The dictionary contains some all-capitals aliases with a slightly
+            // higher cost than their ordinary katakana spelling. In a sentence
+            // that small difference can put an English fragment ahead of the
+            // natural Japanese form even though both have the same reading.
+            val spellingAdjustment = when {
+                !entry.isUserEntry && hasKatakanaSpelling &&
+                    entry.word.length >= 3 && entry.word.all { it in 'A'..'Z' } -> -2f
+                !entry.isUserEntry && entry.ruby == "ナイカ" && entry.word == "無いか" -> 5.5f
+                else -> 0f
+            }
+            val canOfferKana = kanaScore != null && entry.word != kana &&
+                entry.word.any { it in '\u3400'..'\u9fff' } &&
+                kana.length in 2..6 && entry.word.length <= 4
+            val touchedContexts = IntArray(1 shl MAX_TRACKED_ADDITIONAL_ENTRIES)
+            var touchedCount = 0
+            for (path in previous) {
+                val mid = if (contributesMid(entry)) entry.mid else UNKNOWN_MID
+                val clauseMids = when {
+                    path.clauseMids.isEmpty() || beginsClause(path.lastRcid, entry.lcid) ->
+                        path.clauseMids + mid
+                    (path.clauseMids.last() == UNKNOWN_MID && entry.mid != UNKNOWN_MID) ||
+                        contributesMid(entry) -> path.clauseMids.dropLast(1) + entry.mid
+                    else -> path.clauseMids
+                }
+                val mask = path.additionalMask or entry.additionalMask
+                val contextKey = entry.rcid + mask * CID_COUNT
+                val context = destination.getOrPut(contextKey) { mutableListOf() }
+                context.add(
+                    Path(
+                        text = path.text + entry.word,
+                        score = path.score + entry.score + spellingAdjustment +
+                            connectionScore(path.lastRcid, entry.lcid),
+                        lastRcid = entry.rcid,
+                        clauseMids = clauseMids,
+                        additionalMask = mask,
+                        kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
+                            KanaAlternative(
+                                path.text.length,
+                                path.text.length + entry.word.length,
+                                kana,
+                                (entry.score - checkNotNull(kanaScore)).coerceAtLeast(0f),
+                            ),
+                            path.kanaAlternatives,
+                        ) else path.kanaAlternatives,
+                    ),
+                )
+                var touched = false
+                for (index in 0 until touchedCount) {
+                    if (touchedContexts[index] == contextKey) {
+                        touched = true
+                        break
+                    }
+                }
+                if (!touched) touchedContexts[touchedCount++] = contextKey
+            }
+            for (index in 0 until touchedCount) {
+                val contextKey = touchedContexts[index]
+                val context = destination.getValue(contextKey)
+                if (context.size > CONTEXT_TRIM_THRESHOLD) trimContext(context, contextKey)
+            }
         }
+    }
+
+    private fun trimContext(context: MutableList<Path>, contextKey: Int) {
+        val limit = if (contextKey >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
+        val best = context.sortedByDescending(Path::score).take(limit)
+        context.clear()
+        context.addAll(best)
+    }
+
+    private fun semanticScore(clauseMids: List<Int>): Float {
+        if (clauseMids.size < 2) return 0f
+        val scores = meaningScores
+        if (scores.isEmpty()) return 0f
+        var previous = UNKNOWN_MID
+        var total = 0f
+        for (mid in clauseMids) {
+            if (previous in 0 until MID_COUNT && mid in 0 until MID_COUNT &&
+                previous != UNKNOWN_MID && mid != UNKNOWN_MID) {
+                total += scores[previous * MID_COUNT + mid]
+            }
+            previous = mid
+        }
+        return total
+    }
+
+    private fun beginsClause(former: Int, latter: Int): Boolean {
+        val latterType = wordType(latter)
+        if (latterType == 3 || wordType(former) == 3) return false
+        return latterType in 0..1 && wordType(former) != 0
+    }
+
+    private fun contributesMid(entry: Entry): Boolean {
+        fun special(cid: Int) = cid in 895..1280 || cid in 1297..1305
+        return special(entry.lcid) || special(entry.rcid) ||
+            wordType(entry.lcid) == 1 || wordType(entry.rcid) == 1
+    }
+
+    private fun wordType(cid: Int): Int = when {
+        cid == BOS_CID || cid == EOS_CID -> 3
+        cid == 1315 || cid == 6 || cid in 557..560 -> 0
+        cid in 561..867 || cid in 1283..1296 || cid in 1306..1309 ||
+            cid in 11..52 || cid in 555..556 || cid in 1281..1282 ||
+            cid == 1314 || cid in 1..5 || cid == 9 -> 1
+        else -> 2
     }
 
     private fun predict(
@@ -380,23 +602,30 @@ internal class AzooKeyDictionary(
             val payload = ByteBuffer.wrap(bytes, start, end - start).order(ByteOrder.LITTLE_ENDIAN)
             val count = payload.short.toInt() and 0xffff
             if (count == 0 || payload.remaining() < count * 10) return emptyList()
-            data class Numeric(val lcid: Int, val rcid: Int, val score: Float)
+            data class Numeric(val lcid: Int, val rcid: Int, val mid: Int, val score: Float)
             val numeric = ArrayList<Numeric>(count)
             repeat(count) {
                 val lcid = payload.short.toInt() and 0xffff
                 val rcid = payload.short.toInt() and 0xffff
-                payload.short // meaning id; word/connection scoring does not need it here.
+                val mid = payload.short.toInt() and 0xffff
                 val score = payload.float
-                numeric.add(Numeric(lcid, rcid, score))
+                numeric.add(Numeric(lcid, rcid, mid, score))
             }
 
             val textStart = payload.position()
             val fields = splitTabFields(bytes, textStart, end)
             val ruby = fields.firstOrNull().orEmpty()
             if (ruby.isEmpty()) return emptyList()
-            return numeric.mapIndexed { index, value ->
+            return numeric.mapIndexedNotNull { index, value ->
                 val word = fields.getOrNull(index + 1).orEmpty().ifEmpty { ruby }
-                Entry(word, ruby, value.lcid, value.rcid, value.score)
+                val score = minOf(0f, value.score)
+                // Match DicdataStore.shouldBeRemoved in the Swift converter.
+                // Weak single-character readings otherwise crowd out common words.
+                if (score - DICTIONARY_THRESHOLD < 2f / word.codePointCount(0, word.length)) {
+                    null
+                } else {
+                    Entry(word, ruby, value.lcid, value.rcid, value.mid, score)
+                }
             }
         }
 
@@ -417,17 +646,22 @@ internal class AzooKeyDictionary(
         private const val ROOT_NODE = 1
         private const val BOS_CID = 0
         private const val EOS_CID = 1316
-        private const val GENERAL_NOUN_CID = 1285
+        private const val PROPER_NOUN_CID = 1288
+        private const val GENERAL_MID = 501
+        private const val UNKNOWN_MID = 500
+        private const val MID_COUNT = 502
         private const val CID_COUNT = 1319
         private const val SHARD_SHIFT = 11
         private const val LOCAL_MASK = (1 shl SHARD_SHIFT) - 1
         private const val MAX_WORD_LENGTH = 20
+        private const val KANA_VARIANT_MIN_READING_LENGTH = 10
         private const val MAX_PREDICTION_DEPTH = 8
         private const val MAX_PREDICTION_NODES = 192
-        private const val BEAM_WIDTH = 48
-        private const val BEAM_TRIM_THRESHOLD = 256
-        private const val ENTRIES_PER_READING = 32
-        private const val FALLBACK_SCORE = -17f
+        private const val PATHS_PER_CONTEXT = 4
+        private const val ADDITIONAL_PATHS_PER_CONTEXT = 1
+        private const val CONTEXT_TRIM_THRESHOLD = 16
+        private const val MAX_TRACKED_ADDITIONAL_ENTRIES = 4
+        private const val DICTIONARY_THRESHOLD = -17f
         private const val DEFAULT_CONNECTION_SCORE = -25f
 
         private fun escapedIdentifier(value: String): String = value

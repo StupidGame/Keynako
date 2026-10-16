@@ -43,6 +43,7 @@ const Map<String, dynamic> defaultKeyboardSettings = {
   'key_view_font_size': -1.0,
   'flick_sensitivity_setting': 1.0,
   'long_press_duration_ms': 400.0,
+  'quick_word_delete_interval_ms': 350,
   'keyboard_height_scale': 1.0,
   'memory_learining_styple_setting': 0,
   'marked_text_setting_beta': 'disabled',
@@ -52,6 +53,10 @@ const Map<String, dynamic> defaultKeyboardSettings = {
   'display_tab_bar_button': true,
   'emoji_dictionary_enabled': true,
   'kaomoji_dictionary_enabled': false,
+  'hide_cockroach_emoji': false,
+  'hide_mosquito_emoji': false,
+  'hide_spider_emoji': false,
+  'hide_worm_emoji': false,
 };
 
 class UserDictionaryEntry {

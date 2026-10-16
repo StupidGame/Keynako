@@ -87,17 +87,50 @@ constexpr UINT kMenuLiveConversion = 3;
 constexpr UINT kMenuRefreshDictionary = 4;
 constexpr UINT kMenuSettings = 5;
 constexpr UINT kMenuPersonalDictionary = 6;
+constexpr UINT kMenuCompletionStrengthFirst = 10;
+constexpr UINT kMenuWordDeleteIntervalFirst = 20;
+constexpr int kWordDeleteIntervals[] = {100, 200, 350, 500, 750, 1000};
+constexpr const wchar_t *kWordDeleteIntervalLabels[] = {
+    L"削除2回押し: 100 ms", L"削除2回押し: 200 ms", L"削除2回押し: 350 ms",
+    L"削除2回押し: 500 ms", L"削除2回押し: 750 ms", L"削除2回押し: 1000 ms",
+};
+static_assert(std::size(kWordDeleteIntervals) == std::size(kWordDeleteIntervalLabels));
+constexpr UINT kWordDeleteIntervalCount = static_cast<UINT>(std::size(kWordDeleteIntervals));
 constexpr UINT kCandidateSendShared = 1;
 constexpr UINT kCandidateSavePersonal = 2;
 constexpr wchar_t kCandidateWindowClass[] = L"KeynakoCandidateWindow";
 constexpr UINT kImprovementSubmissionComplete = WM_APP + 0x4b;
 constexpr UINT_PTR kImprovementDismissTimer = 1;
-constexpr auto kDoubleBackspaceInterval = std::chrono::milliseconds(350);
+constexpr wchar_t kWordDeleteSettingsKey[] = L"Software\\Keynako\\IME";
+constexpr wchar_t kWordDeleteIntervalValue[] = L"QuickWordDeleteIntervalMs";
 constexpr char kDictionarySubmissionUrl[] = KEYNAKO_DICTIONARY_SUBMISSION_URL;
 constexpr char kAppVersion[] = KEYNAKO_APP_VERSION;
 
 HINSTANCE g_instance = nullptr;
 std::atomic<long> g_objects{0};
+
+std::chrono::milliseconds read_word_delete_interval() {
+    DWORD value = 350;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, kWordDeleteSettingsKey,
+                     kWordDeleteIntervalValue, RRF_RT_REG_DWORD, nullptr,
+                     &value, &size) != ERROR_SUCCESS) return std::chrono::milliseconds(350);
+    return std::chrono::milliseconds(std::clamp<DWORD>(value, 100, 1000));
+}
+
+bool save_word_delete_interval(int milliseconds) {
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kWordDeleteSettingsKey, 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key,
+                        nullptr) != ERROR_SUCCESS) return false;
+    const DWORD value = static_cast<DWORD>(milliseconds);
+    const LONG result = RegSetValueExW(key, kWordDeleteIntervalValue, 0,
+                                       REG_DWORD,
+                                       reinterpret_cast<const BYTE *>(&value),
+                                       static_cast<DWORD>(sizeof(value)));
+    RegCloseKey(key);
+    return result == ERROR_SUCCESS;
+}
 
 std::wstring utf8_to_wide(const std::string &value) {
     if (value.empty()) return {};
@@ -201,6 +234,7 @@ private:
 
 enum class EditAction {
     update,
+    commit_prefix,
     commit,
     commit_and_set_japanese,
     commit_and_set_english,
@@ -232,7 +266,7 @@ class TextService final : public ITfTextInputProcessorEx,
                           public ITfKeyEventSink,
                           public ITfCompositionSink {
 public:
-    TextService() { ++g_objects; }
+    TextService() : word_delete_interval_(read_word_delete_interval()) { ++g_objects; }
     ~TextService() {
         hide_candidates();
         hide_improvement_prompt();
@@ -266,6 +300,19 @@ public:
 
     keynako::InputMode input_mode() const { return session_.mode(); }
     bool live_conversion() const { return session_.live_conversion(); }
+    int automatic_completion_strength() const { return session_.automatic_completion_strength(); }
+    int word_delete_interval() const { return static_cast<int>(word_delete_interval_.count()); }
+    void set_word_delete_interval(int milliseconds) {
+        milliseconds = std::clamp(milliseconds, 100, 1000);
+        word_delete_interval_ = std::chrono::milliseconds(milliseconds);
+        last_backspace_press_ = {};
+        save_word_delete_interval(milliseconds);
+        if (language_bar_) language_bar_->notify_mode_changed();
+    }
+    void set_automatic_completion_strength(int strength) {
+        session_.set_automatic_completion_strength(strength);
+        if (language_bar_) language_bar_->notify_mode_changed();
+    }
     void set_input_mode(keynako::InputMode mode, ITfContext *context = nullptr) {
         if (session_.mode() == mode) return;
         const bool has_composition = !session_.raw_input().empty();
@@ -523,6 +570,11 @@ public:
                     session_.append_literal_ascii(value);
                 } else {
                     session_.append_ascii(value);
+                    const std::string completed = session_.take_completed_clause();
+                    if (!completed.empty()) {
+                        pending_completed_clause_ = utf8_to_wide(completed);
+                        action = EditAction::commit_prefix;
+                    }
                 }
             }
         } else if (key == VK_BACK) {
@@ -538,7 +590,7 @@ public:
                 const bool double_press =
                     !auto_repeat &&
                     last_backspace_press_.time_since_epoch().count() != 0 &&
-                    now - last_backspace_press_ <= kDoubleBackspaceInterval;
+                    now - last_backspace_press_ <= word_delete_interval_;
                 if (double_press) {
                     session_.backspace_word();
                     last_backspace_press_ = {};
@@ -616,16 +668,40 @@ public:
         return S_OK;
     }
     STDMETHODIMP OnCompositionTerminated(TfEditCookie, ITfComposition *composition) override {
-        if (composition_ == composition) {
-            composition_->Release();
-            composition_ = nullptr;
-        }
+        if (composition_ != composition) return S_OK;
+        composition_->Release();
+        composition_ = nullptr;
         session_.clear();
         hide_candidates();
         return S_OK;
     }
 
     HRESULT apply_edit(TfEditCookie edit_cookie, ITfContext *context, EditAction action) {
+        if (action == EditAction::commit_prefix) {
+            const std::wstring prefix = std::move(pending_completed_clause_);
+            pending_completed_clause_.clear();
+            if (prefix.empty() || !composition_) return E_FAIL;
+            ITfRange *range = nullptr;
+            HRESULT result = composition_->GetRange(&range);
+            if (FAILED(result) || !range) return FAILED(result) ? result : E_FAIL;
+            result = range->SetText(edit_cookie, 0, prefix.data(),
+                                    static_cast<LONG>(prefix.size()));
+            if (SUCCEEDED(result)) {
+                range->Collapse(edit_cookie, TF_ANCHOR_END);
+                TF_SELECTION selection{range, TF_AE_NONE, FALSE};
+                result = context->SetSelection(edit_cookie, 1, &selection);
+            }
+            if (SUCCEEDED(result)) {
+                ITfComposition *ending = composition_;
+                composition_ = nullptr;
+                ending->EndComposition(edit_cookie);
+                ending->Release();
+            }
+            range->Release();
+            if (FAILED(result)) return result;
+            hide_candidates();
+            return apply_edit(edit_cookie, context, EditAction::update);
+        }
         if (action == EditAction::insert_pair) {
             std::wstring text = session_.raw_input().empty()
                 ? std::wstring{}
@@ -819,8 +895,10 @@ private:
     std::filesystem::file_time_type personal_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
     std::chrono::steady_clock::time_point last_backspace_press_{};
+    std::chrono::milliseconds word_delete_interval_{350};
     std::wstring shared_submission_status_;
     std::wstring pending_pair_text_;
+    std::wstring pending_completed_clause_;
     void convert_or_cycle(ITfContext *context) {
         if (session_.raw_input().empty()) return;
         reload_shared_dictionary();
@@ -2026,6 +2104,23 @@ STDMETHODIMP LanguageBarItem::InitMenu(ITfMenu *menu) {
     add_item(kMenuEnglish, japanese ? 0 : TF_LBMENUF_CHECKED, L"英数 (A)");
     add_item(kMenuLiveConversion, owner_->live_conversion() ? TF_LBMENUF_CHECKED : 0,
              L"ライブ変換");
+    constexpr const wchar_t *strength_labels[] = {
+        L"自動確定: 無効", L"自動確定: 弱い", L"自動確定: 普通",
+        L"自動確定: 強い", L"自動確定: 非常に強い",
+    };
+    for (UINT strength = 0; strength < 5; ++strength) {
+        add_item(kMenuCompletionStrengthFirst + strength,
+                 owner_->automatic_completion_strength() == static_cast<int>(strength)
+                     ? TF_LBMENUF_CHECKED : 0,
+                 strength_labels[strength]);
+    }
+    menu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+    for (UINT index = 0; index < kWordDeleteIntervalCount; ++index) {
+        add_item(kMenuWordDeleteIntervalFirst + index,
+                 owner_->word_delete_interval() == kWordDeleteIntervals[index]
+                     ? TF_LBMENUF_CHECKED : 0,
+                 kWordDeleteIntervalLabels[index]);
+    }
     menu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
     add_item(kMenuRefreshDictionary, 0, L"共有辞書を今すぐ更新");
     add_item(kMenuPersonalDictionary, 0, L"個人辞書を編集");
@@ -2035,6 +2130,16 @@ STDMETHODIMP LanguageBarItem::InitMenu(ITfMenu *menu) {
 
 STDMETHODIMP LanguageBarItem::OnMenuSelect(UINT id) {
     if (!owner_) return E_FAIL;
+    if (id >= kMenuCompletionStrengthFirst && id < kMenuCompletionStrengthFirst + 5) {
+        owner_->set_automatic_completion_strength(
+            static_cast<int>(id - kMenuCompletionStrengthFirst));
+        return S_OK;
+    }
+    if (id >= kMenuWordDeleteIntervalFirst &&
+        id < kMenuWordDeleteIntervalFirst + kWordDeleteIntervalCount) {
+        owner_->set_word_delete_interval(kWordDeleteIntervals[id - kMenuWordDeleteIntervalFirst]);
+        return S_OK;
+    }
     switch (id) {
         case kMenuJapanese: owner_->set_input_mode(keynako::InputMode::japanese); break;
         case kMenuEnglish: owner_->set_input_mode(keynako::InputMode::english); break;

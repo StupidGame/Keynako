@@ -18,7 +18,10 @@ KEYNAKO_IME_EXPORT keynako_ime_session keynako_ime_create(void);
 KEYNAKO_IME_EXPORT void keynako_ime_destroy(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_set_mode(keynako_ime_session session, int english);
 KEYNAKO_IME_EXPORT void keynako_ime_set_live_conversion(keynako_ime_session session, int enabled);
+KEYNAKO_IME_EXPORT void keynako_ime_set_automatic_completion_strength(keynako_ime_session session, int strength);
+KEYNAKO_IME_EXPORT int keynako_ime_automatic_completion_strength(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_append_ascii(keynako_ime_session session, int value);
+KEYNAKO_IME_EXPORT const char *keynako_ime_take_completed_clause(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_backspace(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_backspace_word(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_clear(keynako_ime_session session);
@@ -36,6 +39,7 @@ KEYNAKO_IME_EXPORT const char *keynako_ime_display_text(keynako_ime_session sess
 KEYNAKO_IME_EXPORT const char *keynako_ime_selected_text(keynako_ime_session session);
 KEYNAKO_IME_EXPORT size_t keynako_ime_candidate_count(keynako_ime_session session);
 KEYNAKO_IME_EXPORT const char *keynako_ime_candidate_at(keynako_ime_session session, size_t index);
+KEYNAKO_IME_EXPORT const char *keynako_ime_candidate_reading(keynako_ime_session session, size_t index);
 KEYNAKO_IME_EXPORT size_t keynako_ime_selected_index(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_select_next(keynako_ime_session session);
 KEYNAKO_IME_EXPORT void keynako_ime_select_previous(keynako_ime_session session);

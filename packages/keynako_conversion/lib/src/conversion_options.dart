@@ -31,6 +31,7 @@ class ConversionOptions {
     this.fullWidthRomanCandidate = true,
     this.unicodeCandidate = true,
     this.emojiCandidate = true,
+    this.emojiDenylist = const {},
     this.kaomojiCandidate = true,
     this.romanEnglishCandidate = true,
     this.liveConversion = true,
@@ -43,6 +44,7 @@ class ConversionOptions {
   final bool fullWidthRomanCandidate;
   final bool unicodeCandidate;
   final bool emojiCandidate;
+  final Set<String> emojiDenylist;
   final bool kaomojiCandidate;
   final bool romanEnglishCandidate;
   final bool liveConversion;

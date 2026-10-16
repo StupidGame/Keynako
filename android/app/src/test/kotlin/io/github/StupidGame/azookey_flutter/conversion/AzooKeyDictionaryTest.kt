@@ -62,6 +62,25 @@ class AzooKeyDictionaryTest {
         )
     }
 
+    @Test
+    fun longSentenceOffersKanaInsideTheBestConversion() {
+        val dictionary = syntheticDictionary()
+        val reading = "あ" + "かんじ".repeat(6) + "い"
+        val candidates = dictionary.candidates(
+            reading,
+            predictionLimit = 0,
+            additionalEntries = listOf(
+                AzooKeyHotfixDictionaryEntry("漢字", "かんじ", 0.0, 200, 200, 501),
+                AzooKeyHotfixDictionaryEntry("かんじ", "かんじ", -4.0, 200, 200, 501),
+            ),
+        ).conversions
+
+        assertEquals("あ" + "漢字".repeat(6) + "い", candidates.first())
+        assertTrue("middle kana spelling is missing: $candidates", candidates.contains(
+            "あ" + "漢字".repeat(2) + "かんじ" + "漢字".repeat(3) + "い",
+        ))
+    }
+
     private val dictionaryRoot: File by lazy {
         val workingDirectory = requireNotNull(System.getProperty("user.dir"))
         generateSequence(File(workingDirectory).absoluteFile) { it.parentFile }
@@ -92,12 +111,86 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun officialLowScoreEntriesDoNotCrowdCommonConversions() {
+        val candidates = dictionary.candidates("へんかん", predictionLimit = 0).conversions
+        assertEquals("変換", candidates.first())
+        assertTrue("low-score archaic spelling leaked: $candidates", "返翰" !in candidates)
+    }
+
+    @Test
+    fun commonJapaneseSpellingsLeadAmbiguousReadings() {
+        assertEquals("クロスウォーズ", dictionary.candidates("くろすうぉーず", 0).conversions.first())
+        assertEquals("サプライ", dictionary.candidates("さぷらい", 0).conversions.first())
+        assertEquals("ようこそ", dictionary.candidates("ようこそ", 0).conversions.first())
+        assertEquals("とかも", dictionary.candidates("とかも", 0).conversions.first())
+        assertEquals("無いか", dictionary.candidates("ないか", 0).conversions.first())
+        assertEquals("iPhone", dictionary.candidates("あいふぉん", 0).conversions.first())
+        assertEquals("CROSS", dictionary.candidates(
+            "くろす", 0, additionalEntries = listOf(entry("CROSS", "くろす", 1285)),
+        ).conversions.first())
+    }
+
+    @Test
     fun longSentenceStartsWithTheCommonCompleteConversion() {
         val candidates = dictionary.candidates(
             "わたしはきょうとうきょうのえきでともだちとあいました",
             predictionLimit = 0,
         ).conversions
         assertEquals("私は今日東京の駅で友達と会いました", candidates.first())
+        assertTrue("middle hiragana spelling is buried: $candidates",
+            "私はきょう東京の駅で友達と会いました" in candidates.take(8))
+    }
+
+    @Test
+    fun longSentenceKeepsAnAlternativeRegisteredWord() {
+        val candidates = dictionary.candidates(
+            "わたしはきょうとうきょうのえきでともだちとあいましたそしてあしたもとうきょうにいきます",
+            predictionLimit = 0,
+            additionalEntries = listOf(AzooKeyHotfixDictionaryEntry(
+                word = "拙者", ruby = "わたし", wordWeight = -9.0,
+                lcid = 1285, rcid = 1285, mid = 501,
+            )),
+        ).conversions
+        assertTrue("registered spelling disappeared: $candidates", candidates.any {
+            it.startsWith("拙者は今日東京の駅で友達と会いました")
+        })
+    }
+
+    @Test
+    fun extendingReadingMatchesFreshSearch() {
+        val entries = listOf(
+            entry("拙者", "わたし", 1285),
+            entry("友達", "ともだち", 1285),
+        )
+        val incremental = AzooKeyDictionary(
+            DictionaryAssetSource { path -> resolveExactCase(dictionaryRoot, path).readBytes() },
+        )
+        for (reading in listOf(
+            "わたし", "わたしはきょう", "わたしはきょうとうきょうのえきで",
+            "わたしはきょうとうきょうのえきでともだち",
+            "わたしはきょうとうきょうのえきでともだちとあいました",
+        )) {
+            val fresh = AzooKeyDictionary(
+                DictionaryAssetSource { path -> resolveExactCase(dictionaryRoot, path).readBytes() },
+            )
+            assertEquals(
+                "incremental conversion differs for $reading",
+                fresh.candidates(reading, 0, additionalEntries = entries).conversions,
+                incremental.candidates(reading, 0, additionalEntries = entries).conversions,
+            )
+        }
+    }
+
+    @Test
+    fun matchesAzooKeysLongSentenceReference() {
+        val candidates = dictionary.candidates(
+            "ようしょうきからてにすすいえいやきゅうしょうりんじけんぽうなどさまざまなすぽーつをけいけんしながらそだちしょうがっこうじだいはろさんぜるすきんこうにたいざいしておりごるふやてにすをならっていた",
+            predictionLimit = 0,
+        ).conversions
+        assertEquals(
+            "幼少期からテニス水泳野球少林寺拳法など様々なスポーツを経験しながら育ち小学校時代はロサンゼルス近郊に滞在しておりゴルフやテニスを習っていた",
+            candidates.first(),
+        )
     }
 
     @Test

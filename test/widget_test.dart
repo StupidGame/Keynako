@@ -77,6 +77,55 @@ void main() {
     );
   });
 
+  testWidgets('saves the word delete double-tap interval', (tester) async {
+    final storage = MemoryStorage();
+    final controller = AppController(storage: storage);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: KeyboardSettingsPage()),
+      ),
+    );
+
+    final slider = find.byKey(const ValueKey('quick-word-delete-interval'));
+    await tester.scrollUntilVisible(slider, 240);
+    await tester.ensureVisible(slider);
+    await tester.pumpAndSettle();
+    expect(find.text('350 ms'), findsOneWidget);
+    await tester.drag(slider, const Offset(100, 0));
+    await tester.pumpAndSettle();
+    await controller.flush();
+
+    final value = controller.data.settings['quick_word_delete_interval_ms'];
+    expect(value, isA<int>());
+    expect(value, greaterThan(350));
+    expect(
+      AppData.decode(storage.value!).settings['quick_word_delete_interval_ms'],
+      value,
+    );
+  });
+
+  testWidgets('finds the delete-button interval from settings search', (
+    tester,
+  ) async {
+    final controller = AppController(storage: MemoryStorage());
+    await controller.initialize();
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: SettingsPage()),
+      ),
+    );
+
+    await tester.enterText(find.byType(SearchBar), '単語削除');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('キーボード設定'));
+    await tester.pumpAndSettle();
+    expect(find.text('削除ボタンを2回押す間隔'), findsOneWidget);
+  });
+
   testWidgets('keyboard sandbox opens a real editable input field', (
     tester,
   ) async {
@@ -190,6 +239,8 @@ void main() {
       find.byKey(const ValueKey('keyboard-layout-keyboard_type_phone')),
       240,
     );
+    await tester.drag(find.byType(ListView), const Offset(0, -160));
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey('keyboard-layout-keyboard_type_phone')),
     );

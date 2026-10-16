@@ -290,6 +290,34 @@ const List<SettingDescriptor> settingCatalog = [
     kind: SettingKind.toggle,
   ),
   SettingDescriptor(
+    group: '絵文字と顔文字',
+    key: 'hide_cockroach_emoji',
+    title: 'ゴキブリの絵文字を非表示',
+    explanation: '追加の絵文字辞書からゴキブリを除外します。',
+    kind: SettingKind.toggle,
+  ),
+  SettingDescriptor(
+    group: '絵文字と顔文字',
+    key: 'hide_mosquito_emoji',
+    title: '蚊の絵文字を非表示',
+    explanation: '追加の絵文字辞書から蚊を除外します。',
+    kind: SettingKind.toggle,
+  ),
+  SettingDescriptor(
+    group: '絵文字と顔文字',
+    key: 'hide_spider_emoji',
+    title: 'クモの絵文字を非表示',
+    explanation: '追加の絵文字辞書からクモとクモの巣を除外します。',
+    kind: SettingKind.toggle,
+  ),
+  SettingDescriptor(
+    group: '絵文字と顔文字',
+    key: 'hide_worm_emoji',
+    title: 'ミミズの絵文字を非表示',
+    explanation: '追加の絵文字辞書からミミズを除外します。',
+    kind: SettingKind.toggle,
+  ),
+  SettingDescriptor(
     group: 'ユーザ辞書',
     key: 'use_OS_user_dict',
     title: 'OSのユーザ辞書の利用',
@@ -307,6 +335,13 @@ const List<SettingDescriptor> settingCatalog = [
       SettingOption(1, '新たな学習を停止'),
       SettingOption(2, '学習結果を反映しない'),
     ],
+  ),
+  SettingDescriptor(
+    group: '学習機能',
+    key: 'stop_learning_when_search',
+    title: '検索時は学習を停止',
+    explanation: '検索欄で入力した単語は新たに学習しません。',
+    kind: SettingKind.toggle,
   ),
   SettingDescriptor(
     group: '協力',

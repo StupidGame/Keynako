@@ -14,10 +14,10 @@ struct AzooKeyAdditionalEntry {
     int lcid = 1285;
     int rcid = 1285;
     float score = -17.0f;
+    int mid = 501;
 };
 
-// Reads the LOUDS dictionary shipped by azooKey_dictionary_storage and applies
-// the same word/connection score beam search used by the Android implementation.
+// Reads azooKey's LOUDS dictionary and searches scored word paths by right CID.
 class AzooKeyDictionary {
 public:
     explicit AzooKeyDictionary(std::filesystem::path root);

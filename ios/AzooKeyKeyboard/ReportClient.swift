@@ -72,11 +72,23 @@ enum ReportClient {
         request.httpBody = payloadData
         sharedSubmissionSession.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            completion(
-                error == nil &&
-                    (200..<300).contains(status) &&
-                    responseAcceptsSubmission(data)
-            )
+            if error == nil, let httpResponse = response as? HTTPURLResponse,
+               let redirected = sharedSubmissionResponseURL(endpoint: url, response: httpResponse) {
+                var follow = URLRequest(url: redirected)
+                follow.httpMethod = "GET"
+                follow.timeoutInterval = 30
+                follow.setValue("application/json", forHTTPHeaderField: "Accept")
+                sharedSubmissionSession.dataTask(with: follow) { resultData, resultResponse, resultError in
+                    let resultStatus = (resultResponse as? HTTPURLResponse)?.statusCode ?? 0
+                    completion(resultError == nil &&
+                        (200..<300).contains(resultStatus) &&
+                        responseAcceptsSubmission(resultData))
+                }.resume()
+                return
+            }
+            completion(error == nil &&
+                (200..<300).contains(status) &&
+                responseAcceptsSubmission(data))
         }.resume()
     }
 
@@ -113,5 +125,18 @@ enum ReportClient {
               let decoded = try? JSONSerialization.jsonObject(with: data) else { return false }
         guard let response = decoded as? [String: Any] else { return true }
         return response["ok"] as? Bool != false
+    }
+
+    private static func sharedSubmissionResponseURL(
+        endpoint: URL,
+        response: HTTPURLResponse
+    ) -> URL? {
+        guard endpoint.host == "script.google.com",
+              response.statusCode == 302 || response.statusCode == 303,
+              let location = response.value(forHTTPHeaderField: "Location"),
+              let redirected = URL(string: location, relativeTo: endpoint)?.absoluteURL,
+              redirected.scheme == "https",
+              redirected.host == "script.googleusercontent.com" else { return nil }
+        return redirected
     }
 }

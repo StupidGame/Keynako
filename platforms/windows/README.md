@@ -29,6 +29,8 @@ Keynako shared-dictionary HTTPS gateway used by the app. Network work runs in a
 small out-of-process helper, so the focused application and TSF thread do not
 block on the request.
 The input-indicator menu can also refresh the shared dictionary immediately.
+It also sets the interval for two Backspace presses to delete one word. The
+selected interval is saved per Windows user and restored when the IME starts.
 The desktop app performs periodic cache refreshes. The TIP only reloads the newest
 local cache while typing, so a focused application never spawns a dictionary-refresh
 process in response to a key event.
