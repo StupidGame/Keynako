@@ -71,6 +71,83 @@ class JapaneseTextTransformsTest {
     }
 
     @Test
+    fun prefersTheExistingHiraganaEndingAfterModelReranking() {
+        val candidates = pinJapaneseKanaCandidates(
+            reading = "つくった",
+            ranked = listOf("作っタ", "創った", "作った"),
+            liveCandidate = "作っタ",
+        )
+
+        assertEquals("作った", candidates.first())
+        assertTrue("The original spelling must remain selectable", "作っタ" in candidates)
+        assertEquals(candidates.size, candidates.distinct().size)
+        assertEquals("作った", compositionCommitText("つくった", candidates, useCandidate = true))
+        assertEquals(
+            "作っタ",
+            compositionCommitText("つくった", candidates, true, candidates.indexOf("作っタ")),
+        )
+    }
+
+    @Test
+    fun prefersTheExistingHiraganaSpellingOverAccidentallyLearnedKatakana() {
+        val candidates = pinJapaneseKanaCandidates(
+            reading = "つくったよ",
+            ranked = listOf("作ったヨ", "作ったよ"),
+            liveCandidate = "作ったヨ",
+            learnedCandidates = exactLearnedJapaneseCandidates(
+                "つくったよ", mapOf("つくったよ\t作ったヨ" to 32),
+            ),
+        )
+
+        assertEquals("作ったよ", candidates.first())
+        assertTrue("作ったヨ" in candidates)
+    }
+
+    @Test
+    fun prefersHiraganaForIsolatedKatakanaInsideSentences() {
+        for ((reading, mixed, natural) in listOf(
+            Triple("つくったもの", "作っタもの", "作ったもの"),
+            Triple("つくったよ", "作ったヨ", "作ったよ"),
+            Triple("わたしはつくった", "私ハ作っタ", "私は作った"),
+        )) {
+            assertEquals(
+                natural,
+                pinJapaneseKanaCandidates(reading, listOf(mixed, natural), mixed).first(),
+            )
+        }
+    }
+
+    @Test
+    fun preservesKatakanaWordsAndSmallKanaCounters() {
+        for ((reading, preferred, alternative) in listOf(
+            Triple("ぱんをかった", "パンを買った", "ぱんを買った"),
+            Triple("ばすにのった", "バスに乗った", "ばすに乗った"),
+            Triple("いっかしょ", "一ヶ所", "一ゖ所"),
+            Triple("いっかしょ", "一ヵ所", "一ゕ所"),
+            Triple("か", "カ", "か"),
+        )) {
+            assertEquals(
+                preferred,
+                pinJapaneseKanaCandidates(
+                    reading, listOf(preferred, alternative), learnedCandidates = listOf(preferred),
+                ).first(),
+            )
+        }
+    }
+
+    @Test
+    fun doesNotInventAHiraganaSpellingMissingFromTheCandidates() {
+        assertEquals(
+            listOf("私ハ作った", "わたしはつくった", "ワタシハツクッタ", "私は造った"),
+            pinJapaneseKanaCandidates(
+                reading = "わたしはつくった",
+                ranked = listOf("私ハ作った", "私は造った"),
+                liveCandidate = "私ハ作った",
+            ),
+        )
+    }
+
+    @Test
     fun commitsSymbolsAndSpacingWithoutConversion() {
         listOf("、", "。", "？", "！", "「」", "　", "\t", "😊", "＋").forEach { value ->
             assertTrue("$value should bypass conversion", shouldDirectCommitJapaneseInput(value))

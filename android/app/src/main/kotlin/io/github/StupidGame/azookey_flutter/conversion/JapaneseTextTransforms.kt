@@ -131,6 +131,29 @@ internal fun pinJapaneseKanaCandidates(
         if (hiragana.isNotEmpty()) add(hiragana)
         if (katakana.isNotEmpty()) add(katakana)
         addAll(ranked.filter { it.isNotEmpty() })
+    }.toList().let(::prioritizeHiraganaVariants)
+}
+
+private val isolatedKatakana = Regex("(?<![゠-ヿ])[ァ-ヴ](?![゠-ヿ])")
+
+/** Prefer an existing spelling such as 作った over 作っタ, keeping both selectable. */
+private fun prioritizeHiraganaVariants(candidates: List<String>): List<String> {
+    val available = candidates.toHashSet()
+    return linkedSetOf<String>().apply {
+        for (candidate in candidates) {
+            // Only mixed Japanese text needs this preference. Whole katakana
+            // words, prolonged sounds and small ヵ/ヶ counters stay intact.
+            if (candidate.any { it in 'ぁ'..'ゖ' || Character.isIdeographic(it.code) }) {
+                val hiraganaVariant = isolatedKatakana.replace(candidate) {
+                    katakanaToHiragana(it.value)
+                }
+                // Do not invent replacements for names or intentional spellings.
+                // Apply this after learning and model ranking, which can otherwise
+                // promote an accidental one-character script change again.
+                if (hiraganaVariant in available) add(hiraganaVariant)
+            }
+            add(candidate)
+        }
     }.toList()
 }
 
