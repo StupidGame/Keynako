@@ -96,6 +96,27 @@ void main() {
     controller.dispose();
   });
 
+  test('manual choices follow the preceding text', () {
+    final controller = DesktopInputController();
+    for (final (context, choice) in [('今日は', '飴'), ('明日は', '雨')]) {
+      controller.replaceCommittedText(context);
+      controller.updateRawInput('ame');
+      controller.selectCandidate(
+        controller.candidates.indexWhere(
+          (candidate) => candidate.text == choice,
+        ),
+      );
+      controller.commitSelected();
+    }
+    controller.replaceCommittedText('今日は');
+    controller.updateRawInput('ame');
+    expect(controller.candidates.first.text, '飴');
+    controller.replaceCommittedText('明日は');
+    controller.updateRawInput('ame');
+    expect(controller.candidates.first.text, '雨');
+    controller.dispose();
+  });
+
   test('a new model word follows the established conversion', () async {
     final controller = DesktopInputController(
       zenzaiEngineFactory: (_) async => _FakeZenzaiEngine(),

@@ -15,9 +15,12 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.ByteArrayOutputStream
 
 class MainActivity : FlutterActivity() {
     private var pendingContactResult: MethodChannel.Result? = null
+    private var pendingBackupResult: MethodChannel.Result? = null
+    private var pendingBackupText: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -59,6 +62,39 @@ class MainActivity : FlutterActivity() {
                     }
                     startActivity(Intent.createChooser(share, "共有"))
                     result.success(null)
+                }
+                "openBackupFile" -> {
+                    if (pendingBackupResult != null) {
+                        result.error("request_in_progress", "A backup request is already active", null)
+                    } else {
+                        pendingBackupResult = result
+                        startActivityForResult(
+                            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "*/*"
+                            },
+                            OPEN_BACKUP_REQUEST,
+                        )
+                    }
+                }
+                "saveBackupFile" -> {
+                    val text = call.argument<String>("text")
+                    if (text == null || text.toByteArray(Charsets.UTF_8).size > MAX_BACKUP_BYTES) {
+                        result.error("invalid_backup", "Backup must be JSON under 32 MB", null)
+                    } else if (pendingBackupResult != null) {
+                        result.error("request_in_progress", "A backup request is already active", null)
+                    } else {
+                        pendingBackupResult = result
+                        pendingBackupText = text
+                        startActivityForResult(
+                            Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "application/json"
+                                putExtra(Intent.EXTRA_TITLE, "keynako-backup.json")
+                            },
+                            SAVE_BACKUP_REQUEST,
+                        )
+                    }
                 }
                 "importContacts" -> importContacts(result)
                 "saveKeyboardBackgroundImage" -> {
@@ -138,6 +174,44 @@ class MainActivity : FlutterActivity() {
             result?.success(readContacts())
         } else {
             result?.error("permission_denied", "Contacts permission was denied", null)
+        }
+    }
+
+    @Deprecated("Activity result API is used here for compatibility with FlutterActivity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != OPEN_BACKUP_REQUEST && requestCode != SAVE_BACKUP_REQUEST) return
+        val callback = pendingBackupResult ?: return
+        pendingBackupResult = null
+        val text = pendingBackupText
+        pendingBackupText = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) {
+            callback.success(null)
+            return
+        }
+        runCatching {
+            if (requestCode == SAVE_BACKUP_REQUEST) {
+                requireNotNull(text)
+                contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray(Charsets.UTF_8))
+                } ?: error("Cannot open backup destination")
+                null
+            } else {
+                val bytes = ByteArrayOutputStream()
+                contentResolver.openInputStream(uri)?.use { input ->
+                    val chunk = ByteArray(8192)
+                    while (true) {
+                        val count = input.read(chunk)
+                        if (count < 0) break
+                        if (bytes.size() + count > MAX_BACKUP_BYTES) error("Backup is too large")
+                        bytes.write(chunk, 0, count)
+                    }
+                } ?: error("Cannot open backup file")
+                bytes.toString(Charsets.UTF_8.name())
+            }
+        }.onSuccess(callback::success).onFailure {
+            callback.error("backup_file_failed", it.localizedMessage, null)
         }
     }
 
@@ -221,5 +295,8 @@ class MainActivity : FlutterActivity() {
         const val DICTIONARY_SUBMISSION_URL_KEY = "keynako_dictionary_submission_url"
         private const val CONTACTS_PERMISSION_REQUEST = 4101
         private const val MAX_BACKGROUND_IMAGE_BYTES = 8 * 1024 * 1024
+        private const val MAX_BACKUP_BYTES = 32 * 1024 * 1024
+        private const val OPEN_BACKUP_REQUEST = 4102
+        private const val SAVE_BACKUP_REQUEST = 4103
     }
 }

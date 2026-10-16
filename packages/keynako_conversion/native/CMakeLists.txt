@@ -12,11 +12,19 @@ add_library(keynako_ime_core STATIC
 )
 target_include_directories(keynako_ime_core PUBLIC ime_core)
 set_target_properties(keynako_ime_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+  # Context keys encode UTF-8 code points, so Japanese string literals must
+  # have the same byte representation as imported learning.tsv entries.
+  target_compile_options(keynako_ime_core PRIVATE /utf-8)
+endif()
 
 add_library(keynako_ime_bridge SHARED ime_core/keynako_ime_c_api.cpp)
 target_link_libraries(keynako_ime_bridge PRIVATE keynako_ime_core)
 target_include_directories(keynako_ime_bridge PUBLIC ime_core)
 set_target_properties(keynako_ime_bridge PROPERTIES CXX_VISIBILITY_PRESET hidden)
+if(MSVC)
+  target_compile_options(keynako_ime_bridge PRIVATE /utf-8)
+endif()
 
 if(BUILD_TESTING)
   add_executable(keynako_ime_core_test ime_core/keynako_ime_core_test.cpp)
@@ -37,7 +45,7 @@ if(BUILD_TESTING)
   # The packaging jobs run tests in Release too; keep assert-based checks active.
   foreach(test_target keynako_ime_core_test keynako_ime_c_api_test keynako_zenzai_client_test)
     if(MSVC)
-      target_compile_options(${test_target} PRIVATE /UNDEBUG)
+      target_compile_options(${test_target} PRIVATE /utf-8 /UNDEBUG)
     else()
       target_compile_options(${test_target} PRIVATE -UNDEBUG)
     endif()

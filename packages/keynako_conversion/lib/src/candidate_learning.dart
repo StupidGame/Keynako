@@ -35,6 +35,7 @@ class CandidateLearning {
     final separator = key.indexOf('\t');
     if (separator <= 0 || count <= 0) return null;
     var ruby = key.substring(0, separator);
+    if (ruby.startsWith('context:')) return null;
     final text = key.substring(separator + 1);
     if (text.trim().isEmpty) return null;
     if (ruby.startsWith('english:')) {
@@ -66,6 +67,83 @@ class CandidateLearning {
       if (entry.score > (result[text] ?? 0)) result[text] = entry.score;
     }
     return result;
+  }
+
+  static List<String> _contextPrefixes(String leftContext, String reading) {
+    final preceding = leftContext.trimRight().runes.toList();
+    if (preceding.isEmpty || reading.trim().isEmpty) return const [];
+    final prefixes = <String>{};
+    for (final length in [8, 4]) {
+      final suffix = String.fromCharCodes(
+        preceding.sublist(
+          preceding.length > length ? preceding.length - length : 0,
+        ),
+      );
+      final portable = suffix.runes
+          .map((code) => code.toRadixString(16))
+          .join('.');
+      prefixes.add('context:$portable\t${normalizeReading(reading)}\t');
+      // Backups made before the portable key format used URI escaping.
+      prefixes.add(
+        'context:${Uri.encodeComponent(suffix)}\t'
+        '${normalizeReading(reading)}\t',
+      );
+    }
+    return prefixes.toList();
+  }
+
+  /// Recalls deliberate choices only when the same preceding text reappears.
+  static Map<String, int> contextScores(
+    Map<String, int> learning, {
+    required String leftContext,
+    required String reading,
+  }) {
+    for (final prefix in _contextPrefixes(leftContext, reading)) {
+      final result = <String, int>{};
+      for (final entry in learning.entries) {
+        if (!entry.key.startsWith(prefix) || entry.value <= 0) continue;
+        final text = entry.key.substring(prefix.length);
+        if (text.trim().isNotEmpty) {
+          result[text] = entry.value.clamp(1, maxScore);
+        }
+      }
+      if (result.isNotEmpty) return result;
+    }
+    return const {};
+  }
+
+  static void recordContext(
+    Map<String, int> learning, {
+    required String leftContext,
+    required String reading,
+    required String text,
+  }) {
+    if (reading.contains('\t') || text.trim().isEmpty) return;
+    final prefixes = _contextPrefixes(leftContext, reading);
+    if (prefixes.isEmpty) return;
+    for (final prefix in prefixes.where((value) => !value.contains('%'))) {
+      final choices = learning.keys
+          .where((key) => key.startsWith(prefix))
+          .toList();
+      final strongest = choices.fold<int>(
+        0,
+        (score, key) => learning[key]! > score ? learning[key]! : score,
+      );
+      for (final key in choices) {
+        if (key != '$prefix$text') learning[key] = learning[key]! ~/ 2;
+      }
+      final key = '$prefix$text';
+      // A deliberate correction must outrank the former favorite immediately.
+      learning[key] = (strongest + 4).clamp(1, maxScore);
+    }
+    final contextKeys = learning.keys
+        .where((key) => key.startsWith('context:'))
+        .toList();
+    for (final stale in contextKeys.take(
+      contextKeys.length > 512 ? contextKeys.length - 512 : 0,
+    )) {
+      learning.remove(stale);
+    }
   }
 
   static void record(

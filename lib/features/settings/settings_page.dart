@@ -161,18 +161,33 @@ class _SettingsPageState extends State<SettingsPage> {
                       children: [
                         ListTile(
                           leading: const Icon(Icons.ios_share),
-                          title: const Text('設定データをエクスポート'),
-                          subtitle: const Text('テーマ、辞書、カスタムタブをJSONで共有します。'),
-                          onTap: () => controller.platform.shareText(
-                            subject: 'Keynako settings backup',
-                            text: controller.data.encode(),
+                          title: const Text('設定・辞書・学習履歴をエクスポート'),
+                          subtitle: const Text(
+                            'Android・iOS・PC共通のJSONファイルに保存します。',
                           ),
+                          onTap: () async {
+                            final backup = await controller.exportJson();
+                            await controller.platform.saveBackupFile(backup);
+                          },
+                        ),
+                        const Divider(height: 1, indent: 16, endIndent: 16),
+                        ListTile(
+                          leading: const Icon(Icons.share_outlined),
+                          title: const Text('バックアップJSONを共有'),
+                          subtitle: const Text('コピーや他のアプリへの受け渡しに使います。'),
+                          onTap: () async {
+                            final backup = await controller.exportJson();
+                            await controller.platform.shareText(
+                              subject: 'Keynako backup',
+                              text: backup,
+                            );
+                          },
                         ),
                         const Divider(height: 1, indent: 16, endIndent: 16),
                         ListTile(
                           leading: const Icon(Icons.file_download_outlined),
-                          title: const Text('設定データをインポート'),
-                          subtitle: const Text('現在の設定をバックアップ内容で置き換えます。'),
+                          title: const Text('設定・辞書・学習履歴をインポート'),
+                          subtitle: const Text('共通JSONで現在のデータを置き換えます。'),
                           onTap: () => _importBackup(context),
                         ),
                       ],
@@ -280,6 +295,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   (await Clipboard.getData(Clipboard.kTextPlain))?.text ?? '';
             },
             child: const Text('貼り付け'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final selected = await AppControllerScope.of(context).platform
+                  .openBackupFile();
+              if (selected != null) text.text = selected;
+            },
+            child: const Text('ファイルを選ぶ'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),

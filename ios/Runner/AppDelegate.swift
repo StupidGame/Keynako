@@ -2,9 +2,12 @@ import Flutter
 import Contacts
 import Foundation
 import UIKit
+import UniformTypeIdentifiers
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
+  private var pendingBackupResult: FlutterResult?
+  private var backupExportURL: URL?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -67,6 +70,38 @@ import UIKit
       let text = arguments?["text"] as? String ?? ""
       presentShareSheet(items: [subject, text])
       result(nil)
+    case "openBackupFile":
+      guard pendingBackupResult == nil else {
+        result(FlutterError(code: "request_in_progress", message: "Backup picker is open", details: nil))
+        return
+      }
+      pendingBackupResult = result
+      let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json, .plainText, .data], asCopy: true)
+      picker.delegate = self
+      presentBackupPicker(picker)
+    case "saveBackupFile":
+      guard pendingBackupResult == nil else {
+        result(FlutterError(code: "request_in_progress", message: "Backup picker is open", details: nil))
+        return
+      }
+      guard let arguments = call.arguments as? [String: Any],
+            let text = arguments["text"] as? String,
+            let content = text.data(using: .utf8), content.count <= 32 * 1024 * 1024 else {
+        result(FlutterError(code: "invalid_backup", message: "Backup must be JSON under 32 MB", details: nil))
+        return
+      }
+      let file = FileManager.default.temporaryDirectory
+        .appendingPathComponent("keynako-backup-\(UUID().uuidString).json")
+      do {
+        try content.write(to: file, options: .atomic)
+        backupExportURL = file
+        pendingBackupResult = result
+        let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+        picker.delegate = self
+        presentBackupPicker(picker)
+      } catch {
+        result(FlutterError(code: "backup_file_failed", message: error.localizedDescription, details: nil))
+      }
     case "importContacts":
       importContacts(result: result)
     case "saveKeyboardBackgroundImage":
@@ -109,6 +144,55 @@ import UIKit
       popover.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.midY, width: 1, height: 1)
     }
     root.present(activity, animated: true)
+  }
+
+  private func presentBackupPicker(_ picker: UIDocumentPickerViewController) {
+    guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
+          let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+      pendingBackupResult?(FlutterError(code: "picker_unavailable", message: "No active window", details: nil))
+      pendingBackupResult = nil
+      cleanupBackupExport()
+      return
+    }
+    root.present(picker, animated: true)
+  }
+
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    let callback = pendingBackupResult
+    pendingBackupResult = nil
+    if backupExportURL != nil {
+      cleanupBackupExport()
+      callback?(nil)
+      return
+    }
+    guard let url = urls.first else { callback?(nil); return }
+    let access = url.startAccessingSecurityScopedResource()
+    defer { if access { url.stopAccessingSecurityScopedResource() } }
+    do {
+      let values = try url.resourceValues(forKeys: [.fileSizeKey])
+      guard (values.fileSize ?? 0) <= 32 * 1024 * 1024 else {
+        throw CocoaError(.fileReadTooLarge)
+      }
+      let data = try Data(contentsOf: url)
+      guard data.count <= 32 * 1024 * 1024,
+            let text = String(data: data, encoding: .utf8) else {
+        throw CocoaError(.fileReadCorruptFile)
+      }
+      callback?(text)
+    } catch {
+      callback?(FlutterError(code: "backup_file_failed", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    pendingBackupResult?(nil)
+    pendingBackupResult = nil
+    cleanupBackupExport()
+  }
+
+  private func cleanupBackupExport() {
+    if let file = backupExportURL { try? FileManager.default.removeItem(at: file) }
+    backupExportURL = nil
   }
 
   private func saveKeyboardBackgroundImage(themeId: String, data: Data) throws -> String {

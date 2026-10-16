@@ -135,10 +135,17 @@ void main() {
     expect(data.settings['keyboard_type_phone'], 'phone');
     expect(data.settings['keyboard_type_datetime'], 'datetime');
     expect(data.settings['automatic_keyboard_switching'], isTrue);
+    expect(data.settings['automatic_completion_strength'], 0);
     expect(data.settings['half_kana_candidate'], isTrue);
     expect(data.settings['unicode_candidate'], isTrue);
     expect(data.themes, isNotEmpty);
     expect(data.themes.first.keyOpacity, 0.72);
+
+    final existing = AppData.fromJson({
+      'schemaVersion': 0,
+      'settings': {'automatic_completion_strength': 1},
+    });
+    expect(existing.settings['automatic_completion_strength'], 1);
   });
 
   test('keeps an intentionally emptied user dictionary empty after reload', () {

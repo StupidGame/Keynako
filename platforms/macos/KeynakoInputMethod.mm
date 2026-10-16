@@ -464,6 +464,9 @@ static NSString *PairedDelimiter(unichar value) {
 - (void)configureDictionaries {
     if (_dictionariesConfigured) return;
     _dictionariesConfigured = YES;
+    NSString *dataDirectory = [NSHomeDirectory() stringByAppendingPathComponent:
+        @"Library/Application Support/Keynako"];
+    _session.configure_storage(std::filesystem::u8path(dataDirectory.UTF8String));
     NSBundle *bundle = [NSBundle mainBundle];
     NSString *root = [bundle pathForResource:@"Dictionary" ofType:nil
                                   inDirectory:@"azookey_dictionary"];

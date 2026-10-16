@@ -6,6 +6,8 @@ import 'package:keynako_conversion/keynako_conversion.dart';
 
 import 'desktop_shared_dictionary.dart';
 import 'desktop_personal_dictionary.dart';
+import 'desktop_learning.dart';
+import 'portable_profile.dart';
 
 enum InputMode { japanese, english }
 
@@ -18,12 +20,16 @@ class DesktopInputController extends ChangeNotifier {
     ZenzaiEngineFactory? zenzaiEngineFactory,
     SharedDictionaryRepository? sharedDictionaryRepository,
     PersonalDictionaryRepository? personalDictionaryRepository,
+    LearningRepository? learningRepository,
+    DesktopPortableProfileRepository? profileRepository,
     KeynakoDictionarySubmitter? sharedDictionarySubmitter,
     Duration sharedDictionaryInterval = desktopSharedDictionaryInterval,
   }) => DesktopInputController._(
     zenzaiEngineFactory,
     sharedDictionaryRepository,
     personalDictionaryRepository,
+    learningRepository,
+    profileRepository,
     sharedDictionarySubmitter ?? KeynakoDictionarySubmissionClient(),
     sharedDictionaryInterval,
   );
@@ -32,6 +38,8 @@ class DesktopInputController extends ChangeNotifier {
     this._zenzaiEngineFactory,
     this._sharedDictionaryRepository,
     this._personalDictionaryRepository,
+    this._learningRepository,
+    this._profileRepository,
     this._sharedDictionarySubmitter,
     this._sharedDictionaryInterval,
   );
@@ -64,9 +72,17 @@ class DesktopInputController extends ChangeNotifier {
   final ZenzaiEngineFactory? _zenzaiEngineFactory;
   final SharedDictionaryRepository? _sharedDictionaryRepository;
   final PersonalDictionaryRepository? _personalDictionaryRepository;
+  final LearningRepository? _learningRepository;
+  final DesktopPortableProfileRepository? _profileRepository;
   final KeynakoDictionarySubmitter _sharedDictionarySubmitter;
   final Duration _sharedDictionaryInterval;
   final Map<String, int> _learning = {};
+  Future<void> _learningSaveQueue = Future<void>.value();
+  int _learningRevision = 0;
+  Future<void> _settingsSaveQueue = Future<void>.value();
+  bool _liveConversionEdited = false;
+  bool _learningLoadFailed = false;
+  bool _learningSaveFailed = false;
 
   InputMode _mode = InputMode.japanese;
   ZenzaiModel _zenzaiModel = ZenzaiModel.off;
@@ -109,6 +125,8 @@ class DesktopInputController extends ChangeNotifier {
   List<ConversionDictionaryEntry> get personalDictionary =>
       List.unmodifiable(_personalDictionary);
   bool get personalDictionaryLoadFailed => _personalDictionaryLoadFailed;
+  bool get learningLoadFailed => _learningLoadFailed;
+  bool get learningSaveFailed => _learningSaveFailed;
   bool isPersonalCandidate(ConversionCandidate candidate) =>
       _personalDictionary.any(
         (entry) =>
@@ -143,9 +161,18 @@ class DesktopInputController extends ChangeNotifier {
     ),
   );
 
-  void setLiveConversionEnabled(bool enabled) {
+  void setLiveConversionEnabled(bool enabled, {bool persist = true}) {
     if (_liveConversionEnabled == enabled) return;
     _liveConversionEnabled = enabled;
+    if (persist && _profileRepository != null) {
+      _liveConversionEdited = true;
+      _settingsSaveQueue = _settingsSaveQueue.then((_) async {
+        final repository = _profileRepository;
+        final settings = await repository.loadImeSettings();
+        settings['live_conversion'] = enabled;
+        await repository.saveImeSettings(settings);
+      });
+    }
     notifyListeners();
   }
 
@@ -211,7 +238,34 @@ class DesktopInputController extends ChangeNotifier {
     final repository = _personalDictionaryRepository;
     if (repository == null) return;
     try {
-      _personalDictionary = await repository.load();
+      final loaded = await repository.load();
+      List<ConversionDictionaryEntry> profileEntries = const [];
+      try {
+        profileEntries =
+            (await _profileRepository?.load())?.dictionary ?? const [];
+      } on FormatException {
+        // The TSV dictionary remains usable if the optional profile is damaged.
+      }
+      _personalDictionary = List.unmodifiable(
+        loaded.map((entry) {
+          for (final original in profileEntries) {
+            if (entry.reading == original.reading &&
+                entry.value == original.value) {
+              return ConversionDictionaryEntry(
+                reading: entry.reading,
+                value: entry.value,
+                importance: entry.importance,
+                template: original.template,
+                format: original.format,
+                wordWeight: entry.wordWeight,
+                leftContextId: entry.leftContextId,
+                rightContextId: entry.rightContextId,
+              );
+            }
+          }
+          return entry;
+        }),
+      );
       _personalDictionaryLoadFailed = false;
     } on Object {
       _personalDictionary = const [];
@@ -219,6 +273,121 @@ class DesktopInputController extends ChangeNotifier {
     }
     if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
     notifyListeners();
+  }
+
+  Future<void> initializeLearning() async {
+    final repository = _learningRepository;
+    if (repository == null) return;
+    try {
+      _learning
+        ..clear()
+        ..addAll(await repository.load());
+      _learningLoadFailed = false;
+    } on Object {
+      // Keep a damaged file available for recovery instead of overwriting it.
+      _learningLoadFailed = true;
+    }
+    if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+    notifyListeners();
+  }
+
+  Future<void> flushLearning() => _learningSaveQueue;
+
+  Future<String> exportPortableProfile() async {
+    final repository = _profileRepository;
+    if (repository == null) throw StateError('バックアップを利用できない');
+    await flushLearning();
+    if (_learningSaveFailed) throw StateError('学習履歴を保存できない');
+    await _settingsSaveQueue;
+    final profile = await repository.load();
+    final scores = await _learningRepository?.load() ?? _learning;
+    final dictionary =
+        await _personalDictionaryRepository?.load() ?? _personalDictionary;
+    final nativeSettings = await repository.loadImeSettings();
+    return profile.export(
+      dictionary: dictionary,
+      learning: scores,
+      liveConversion: _liveConversionEdited
+          ? _liveConversionEnabled
+          : nativeSettings['live_conversion'] as bool? ??
+                _liveConversionEnabled,
+      zenzaiEnabled: _zenzaiModel != ZenzaiModel.off,
+      automaticCompletionStrength:
+          nativeSettings['automatic_completion_strength'] as int?,
+    );
+  }
+
+  Future<void> importPortableProfile(String source) async {
+    final repository = _profileRepository;
+    final dictionaryRepository = _personalDictionaryRepository;
+    final learningRepository = _learningRepository;
+    if (repository == null ||
+        dictionaryRepository == null ||
+        learningRepository == null) {
+      throw StateError('バックアップを利用できない');
+    }
+    final profile = PortableProfile.decode(source);
+    await flushLearning();
+    await _settingsSaveQueue;
+    await dictionaryRepository.save(profile.dictionary);
+    await learningRepository.save(profile.learning);
+    await repository.saveImeSettings(profile.settings);
+    await repository.save(source);
+    _personalDictionary = List.unmodifiable(profile.dictionary);
+    _learning
+      ..clear()
+      ..addAll(profile.learning);
+    _learningLoadFailed = false;
+    _personalDictionaryLoadFailed = false;
+    setLiveConversionEnabled(
+      profile.settings['live_conversion'] != false,
+      persist: false,
+    );
+    _liveConversionEdited = false;
+    await setZenzaiModel(
+      profile.settings['enable_zenzai'] == false
+          ? ZenzaiModel.off
+          : ZenzaiModel.xsmall,
+    );
+    if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+    notifyListeners();
+  }
+
+  void _queueLearningSave(Map<String, int> before) {
+    final repository = _learningRepository;
+    if (repository == null || _learningLoadFailed) return;
+    final snapshot = Map<String, int>.of(_learning);
+    final changed = <String, int>{
+      for (final entry in snapshot.entries)
+        if (before[entry.key] != entry.value) entry.key: entry.value,
+    };
+    final removed = before.keys
+        .where((key) => !snapshot.containsKey(key))
+        .toList();
+    final revision = ++_learningRevision;
+    _learningSaveQueue = _learningSaveQueue
+        .then((_) async {
+          final latest = await repository.load();
+          for (final key in removed) {
+            latest.remove(key);
+          }
+          latest.addAll(changed);
+          await repository.save(latest);
+          if (revision == _learningRevision && !_disposed) {
+            _learning
+              ..clear()
+              ..addAll(latest);
+            if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
+            notifyListeners();
+          }
+        })
+        .then((_) {
+          _learningSaveFailed = false;
+        })
+        .catchError((Object _) {
+          _learningSaveFailed = true;
+          if (!_disposed) notifyListeners();
+        });
   }
 
   Future<void> savePersonalDictionary(
@@ -426,6 +595,7 @@ class DesktopInputController extends ChangeNotifier {
               : _firstCompleteCandidate());
     final candidate = selected?.text ?? composingText;
     if (candidate.isEmpty) return;
+    final previousLearning = Map<String, int>.of(_learning);
     CandidateLearning.record(
       _learning,
       reading: selected?.reading ?? composingText,
@@ -433,6 +603,18 @@ class DesktopInputController extends ChangeNotifier {
       english: _mode == InputMode.english,
       explicitSelection: _converting,
     );
+    if (_mode == InputMode.japanese && _converting) {
+      CandidateLearning.recordContext(
+        _learning,
+        leftContext: _committedText.substring(
+          0,
+          _committedSelectionOffset.clamp(0, _committedText.length),
+        ),
+        reading: selected?.reading ?? composingText,
+        text: candidate,
+      );
+    }
+    _queueLearningSave(previousLearning);
     final committedCandidate = _mode == InputMode.english
         ? '$candidate '
         : candidate;
@@ -485,6 +667,10 @@ class DesktopInputController extends ChangeNotifier {
     final options = ConversionOptions(
       userDictionary: [..._personalDictionary, ..._sharedDictionary],
       learning: _learning,
+      leftContext: _committedText.substring(
+        0,
+        _committedSelectionOffset.clamp(0, _committedText.length),
+      ),
     );
     _candidates = _mode == InputMode.japanese
         ? _japaneseConverter.candidates(
@@ -537,7 +723,12 @@ class DesktopInputController extends ChangeNotifier {
     _zenzaiStatus = '推論中';
     notifyListeners();
     try {
-      final committedCharacters = _committedText.characters;
+      final committedCharacters = _committedText
+          .substring(
+            0,
+            _committedSelectionOffset.clamp(0, _committedText.length),
+          )
+          .characters;
       final skipCount = committedCharacters.length - 40;
       final generated = await engine.generate(
         ZenzaiRequest(
