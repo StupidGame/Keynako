@@ -92,6 +92,7 @@ import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
 import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.closingDelimiterFor
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
+import io.github.StupidGame.azookey_flutter.input.custardVariationLongPressDuration
 import io.github.StupidGame.azookey_flutter.input.customLayoutSelection
 import io.github.StupidGame.azookey_flutter.input.defaultSymbolKeyboardRows
 import io.github.StupidGame.azookey_flutter.input.deleteEditorText
@@ -1319,9 +1320,11 @@ class AzooKeyInputMethodService : InputMethodService() {
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
-                            // Each flick variation owns its duration independently
-                            // from the center key's long-press duration.
-                            handler.postDelayed(longPress, longPressDelay(variationLongPress?.optString("duration")))
+                            val duration = custardVariationLongPressDuration(
+                                parentDuration = longPressData.optString("duration"),
+                                variationDuration = variationLongPress?.optString("duration"),
+                            )
+                            handler.postDelayed(longPress, longPressDelay(duration))
                         }
                     }
                     true

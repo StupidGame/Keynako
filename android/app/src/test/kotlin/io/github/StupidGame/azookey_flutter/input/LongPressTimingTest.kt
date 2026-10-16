@@ -2,10 +2,21 @@ package io.github.StupidGame.azookey_flutter.input
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LongPressTimingTest {
+    @Test
+    fun variationDurationOverridesItsParentAndFallsBackOnlyWhenOmitted() {
+        assertEquals("light", custardVariationLongPressDuration("normal", "light"))
+        assertEquals("normal", custardVariationLongPressDuration("light", "normal"))
+        assertEquals("light", custardVariationLongPressDuration("light", ""))
+        assertEquals("normal", custardVariationLongPressDuration("normal", null))
+        assertNull(custardVariationLongPressDuration(null, null))
+        assertNull(custardVariationLongPressDuration("", " "))
+    }
+
     @Test
     fun lightFlickVariationOverridesNormalCenterTiming() {
         val centerDelay = longPressDelayMillis("normal", configuredDurationMs = 400.0)
