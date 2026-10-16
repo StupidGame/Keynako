@@ -42,6 +42,7 @@ class AppController extends ChangeNotifier {
   Timer? _saveTimer;
   Future<void> _saveQueue = Future<void>.value();
   Future<bool>? _azooKeyHotfixSyncTask;
+  bool _dictionaryEdited = false;
 
   Future<void> initialize() async {
     try {
@@ -136,6 +137,7 @@ class AppController extends ChangeNotifier {
   }
 
   void addOrUpdateDictionaryEntry(UserDictionaryEntry entry) {
+    _dictionaryEdited = true;
     final index = data.userDictionary.indexWhere((item) => item.id == entry.id);
     if (index < 0) {
       data.userDictionary.add(entry);
@@ -151,6 +153,7 @@ class AppController extends ChangeNotifier {
   }
 
   void removeDictionaryEntry(int id) {
+    _dictionaryEdited = true;
     data.userDictionary.removeWhere((item) => item.id == id);
     _changed();
   }
@@ -345,9 +348,98 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> importJson(String value) async {
-    data = AppData.decode(value);
+    if (value.length > 32 * 1024 * 1024) {
+      throw const FormatException('バックアップが大きすぎます。');
+    }
+    final decoded = jsonDecode(value);
+    if (decoded is! Map ||
+        decoded['settings'] is! Map ||
+        decoded['userDictionary'] is! List ||
+        decoded['learning'] is! Map ||
+        ((decoded['schemaVersion'] as num?)?.toInt() ?? 0) >
+            currentSchemaVersion) {
+      throw const FormatException('対応するバックアップJSONではありません。');
+    }
+    final restored = AppData.decode(value);
+    final themeImages = decoded['themeImages'];
+    if (themeImages is Map) {
+      for (var index = 0; index < restored.themes.length; index++) {
+        final theme = restored.themes[index];
+        final encoded = themeImages[theme.id];
+        if (encoded is! String) continue;
+        final bytes = base64Decode(encoded);
+        if (bytes.length > 8 * 1024 * 1024) {
+          throw const FormatException('テーマ画像が大きすぎます。');
+        }
+        final path = await platform.saveKeyboardBackgroundImage(
+          themeId: theme.id,
+          bytes: bytes,
+        );
+        if (path == null) {
+          throw const FormatException('テーマ画像を保存できませんでした。');
+        }
+        restored.themes[index] = theme.copyWith(
+          backgroundImage: path,
+          backgroundImageRevision: DateTime.now().microsecondsSinceEpoch,
+        );
+      }
+    }
+    for (var index = 0; index < restored.themes.length; index++) {
+      final theme = restored.themes[index];
+      final path = theme.backgroundImage;
+      if (path != null && !await File(path).exists()) {
+        restored.themes[index] = theme.copyWith(clearBackgroundImage: true);
+      }
+    }
+    data = restored;
+    _dictionaryEdited = false;
     notifyListeners();
     await flush();
+  }
+
+  Future<String> exportJson() async {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    await _saveQueue;
+    final stored = await _storage.load();
+    if (stored != null && stored.isNotEmpty) {
+      final latest = AppData.decode(stored);
+      if (data.settings['memory_reset_setting'] == null) {
+        for (final entry in latest.learning.entries) {
+          if (entry.value > (data.learning[entry.key] ?? 0)) {
+            data.learning[entry.key] = entry.value;
+          }
+        }
+      }
+      if (!_dictionaryEdited) {
+        data.userDictionary
+          ..clear()
+          ..addAll(latest.userDictionary);
+      }
+    }
+    await flush();
+    final backup = data.toJson();
+    final images = <String, String>{};
+    final themes = (backup['themes'] as List).cast<Map<String, dynamic>>();
+    for (var index = 0; index < data.themes.length; index++) {
+      final theme = data.themes[index];
+      final path = theme.backgroundImage;
+      if (path == null) continue;
+      final file = File(path);
+      if (await file.exists()) {
+        if (await file.length() > 8 * 1024 * 1024) {
+          throw const FormatException('テーマ画像が大きすぎます。');
+        }
+        images[theme.id] = base64Encode(await file.readAsBytes());
+      }
+      themes[index].remove('backgroundImage');
+    }
+    if (images.isNotEmpty) backup['themeImages'] = images;
+    final exported = jsonEncode(backup);
+    if (exported.length > 32 * 1024 * 1024) {
+      throw const FormatException('バックアップが大きすぎます。');
+    }
+    return exported;
   }
 
   void _changed({bool immediate = false}) {

@@ -238,6 +238,8 @@ public final class AzooKeyConversionEngine {
         }
         let clauseReading = Self.toHiragana(clause.data.map(\.ruby).joined())
         guard clauseReading.count >= 2,
+              reading.count >= 16,
+              reading.count - clauseReading.count >= 8,
               reading.hasPrefix(clauseReading),
               reading.count > clauseReading.count,
               clause.text != clauseReading else {

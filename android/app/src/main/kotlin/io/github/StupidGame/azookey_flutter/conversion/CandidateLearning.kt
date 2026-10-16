@@ -5,12 +5,14 @@ import java.util.Locale
 internal data class LearnedCandidate(val reading: String, val text: String, val score: Int)
 
 private const val MAX_LEARNING_SCORE = 32
+private const val MAX_CONTEXT_CHOICES = 512
 private val legacyEnglishReading = Regex("[a-zA-Z']+")
 
 internal fun learnedCandidates(learning: Map<String, Int>, english: Boolean = false): List<LearnedCandidate> =
     learning.mapNotNull { (key, count) -> learnedCandidate(key, count, english) }
 
 private fun learnedCandidate(key: String, count: Int, english: Boolean): LearnedCandidate? {
+    if (key.startsWith("context:")) return null
     val separator = key.indexOf('\t')
     if (separator <= 0 || count <= 0) return null
     var ruby = key.substring(0, separator)
@@ -28,6 +30,52 @@ private fun learnedCandidate(key: String, count: Int, english: Boolean): Learned
         word,
         count.coerceIn(1, MAX_LEARNING_SCORE),
     )
+}
+
+private fun contextPrefixes(leftContext: String, reading: String): List<String> {
+    val preceding = leftContext.trimEnd()
+    if (preceding.isBlank() || reading.isBlank() || '\t' in reading) return emptyList()
+    val codePoints = preceding.codePoints().toArray().toList()
+    return listOf(8, 4).map { length ->
+        val suffix = codePoints.takeLast(length).joinToString(".") { it.toString(16) }
+        "context:$suffix\t${katakanaToHiragana(reading)}\t"
+    }.distinct()
+}
+
+/** A deliberate spelling choice can be recalled for the text just before the cursor. */
+internal fun recordContextCandidateLearning(
+    learning: MutableMap<String, Int>,
+    leftContext: String,
+    reading: String,
+    text: String,
+) {
+    val prefixes = contextPrefixes(leftContext, reading)
+    if (prefixes.isEmpty()) return
+    if (text.isBlank() || '\t' in text) return
+    for (prefix in prefixes) {
+        val choices = learning.filterKeys { it.startsWith(prefix) }
+        val strongest = choices.values.maxOrNull()?.coerceIn(0, MAX_LEARNING_SCORE) ?: 0
+        for ((key, score) in choices) {
+            if (key != prefix + text) learning[key] = (score / 2).coerceAtLeast(0)
+        }
+        learning[prefix + text] = (strongest + 4).coerceAtMost(MAX_LEARNING_SCORE)
+    }
+    val contextKeys = learning.keys.filter { it.startsWith("context:") }
+    for (key in contextKeys.take((contextKeys.size - MAX_CONTEXT_CHOICES).coerceAtLeast(0))) {
+        learning.remove(key)
+    }
+}
+
+internal fun prioritizeContextualJapaneseCandidates(
+    reading: String,
+    candidates: List<String>,
+    learning: Map<String, Int>,
+    leftContext: String,
+): List<String> {
+    val prefix = contextPrefixes(leftContext, reading).firstOrNull { context ->
+        candidates.any { (learning[context + it] ?: 0) > 0 }
+    } ?: return candidates
+    return candidates.sortedByDescending { learning[prefix + it] ?: 0 }
 }
 
 /** Updates the existing score map without changing the persisted state format. */

@@ -3,9 +3,62 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 
 int main() {
     using keynako::ImeSession;
+    const auto storage = std::filesystem::temp_directory_path() /
+        ("keynako_portable_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(storage);
+    {
+        std::ofstream settings(storage / "ime_settings.tsv");
+        settings << "live_conversion\t0\nautomatic_completion_strength\t2\n";
+    }
+    {
+        ImeSession first;
+        first.configure_storage(storage);
+        assert(!first.live_conversion());
+        assert(first.automatic_completion_strength() == 2);
+        first.set_live_conversion(true);
+        for (const char value : std::string("ai")) first.append_ascii(value);
+        assert(first.begin_conversion());
+        const auto selected = std::find_if(first.candidates().begin(), first.candidates().end(),
+            [](const auto &candidate) { return candidate.text == "藍"; });
+        assert(selected != first.candidates().end());
+        assert(first.select_candidate(static_cast<std::size_t>(selected - first.candidates().begin())));
+        first.learn_selected();
+    }
+    {
+        std::ifstream saved(storage / "learning.tsv");
+        const std::string text((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
+        assert(text.find("あい\t藍\t") != std::string::npos);
+        ImeSession restored;
+        restored.configure_storage(storage);
+        assert(restored.live_conversion());
+        for (const char value : std::string("ai")) restored.append_ascii(value);
+        assert(restored.candidates().front().text == "藍");
+    }
+    {
+        std::ofstream imported(storage / "learning.tsv", std::ios::binary | std::ios::trunc);
+        imported << "あい\t愛\t12\r\ncontext:4eca.65e5\tあい\t藍\t8\r\n";
+    }
+    {
+        ImeSession contextual;
+        contextual.configure_storage(storage);
+        for (const char value : std::string("kyou")) contextual.append_ascii(value);
+        assert(contextual.begin_conversion());
+        const auto today = std::find_if(contextual.candidates().begin(), contextual.candidates().end(),
+            [](const auto &candidate) { return candidate.text == "今日"; });
+        assert(today != contextual.candidates().end());
+        assert(contextual.select_candidate(static_cast<std::size_t>(today - contextual.candidates().begin())));
+        contextual.learn_selected();
+        contextual.clear();
+        for (const char value : std::string("ai")) contextual.append_ascii(value);
+        assert(contextual.candidates().front().text == "藍");
+    }
+    std::filesystem::remove_all(storage);
     assert(ImeSession::roman_to_hiragana("nihongo") == "にほんご");
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");
     assert(ImeSession::roman_to_hiragana("nani?") == "なに？");
@@ -57,7 +110,8 @@ int main() {
     assert(std::any_of(learning.candidates().begin(), learning.candidates().end(),
         [](const auto &candidate) { return candidate.text == "藍"; }));
     learning.insert_zenzai_candidate("愛");
-    assert(learning.selected_text() == "愛");
+    // A deliberate correction survives a conflicting model suggestion.
+    assert(learning.selected_text() == "藍");
 
     // A learned unconverted reading must still support the reading shortcut.
     assert(learning.select_reading());
@@ -587,6 +641,8 @@ int main() {
         }));
     ImeSession stable_clause;
     assert(stable_clause.set_bundled_dictionary_path(dictionary_path));
+    assert(stable_clause.automatic_completion_strength() == 0);
+    stable_clause.set_automatic_completion_strength(1);
     std::string committed_prefix;
     for (const char value : std::string("watashihakyouToukyounoekidetomodachitoaimashita")) {
         stable_clause.append_ascii(value);
@@ -609,6 +665,14 @@ int main() {
         }
     }
     assert(strong_completed_at > 0 && strong_completed_at < phrase.size());
+    ImeSession short_clause;
+    assert(short_clause.set_bundled_dictionary_path(dictionary_path));
+    short_clause.set_automatic_completion_strength(4);
+    for (const char value : std::string("honrainomokuteki")) {
+        short_clause.append_ascii(value);
+        assert(short_clause.take_completed_clause().empty());
+    }
+    assert(short_clause.reading() == "ほんらいのもくてき");
     ImeSession disabled_clause;
     assert(disabled_clause.set_bundled_dictionary_path(dictionary_path));
     disabled_clause.set_automatic_completion_strength(0);

@@ -115,6 +115,18 @@ internal fun keepKanaCandidatesVisible(reading: String, candidates: List<String>
     return visible
 }
 
+/** The editor includes the active composition in text before the cursor. */
+internal fun precedingTextBeforeComposition(
+    beforeCursor: String,
+    composingText: String,
+    maxLength: Int,
+): String {
+    val preceding = if (composingText.isNotEmpty() && beforeCursor.endsWith(composingText)) {
+        beforeCursor.dropLast(composingText.length)
+    } else beforeCursor
+    return preceding.takeLast(maxLength.coerceAtLeast(0))
+}
+
 /** Keep a new model suggestion visible without letting it displace common dictionary results. */
 internal fun placeNovelGeneratedCandidate(
     ranked: List<String>,
@@ -228,7 +240,26 @@ internal fun rerankedJapaneseCandidates(
     val stable = if (ordinarySpelling != null && leading !in explicitlyPreferred) {
         listOf(ordinarySpelling) + ordered.filter { it != ordinarySpelling }
     } else ordered
-    return preferSingleKanaReading(reading, stable, exactRegistration)
+    val dictionaryFirst = baseCandidates.firstOrNull()
+    // The dictionary has already parsed the words before 「付き」. Keep that
+    // complete path ahead of a model-ranked suffix with the same word group.
+    val attachedSuffix = dictionaryFirst?.takeIf {
+        reading.endsWith("つき") && it.endsWith("付き") && it.length > 2 &&
+            it[it.lastIndex - 1].let { last -> last in 'ァ'..'ヿ' || last in '一'..'龯' } &&
+            leading != null && leading != it && leading.length <= it.length &&
+            leading.startsWith(it.removeSuffix("付き")) && leading !in explicitlyPreferred &&
+            it in stable
+    }
+    val lexicalWord = dictionaryFirst?.takeIf {
+        reading.endsWith("つき") && it.length in 2..3 &&
+            it.all { char -> char in '一'..'龯' } && leading?.endsWith("付き") == true &&
+            leading !in explicitlyPreferred && it in stable
+    }
+    val protected = attachedSuffix ?: lexicalWord
+    val withCompound = if (protected != null) {
+        listOf(protected) + stable.filter { it != protected }
+    } else stable
+    return preferSingleKanaReading(reading, withCompound, exactRegistration)
 }
 
 /** Complete model and standard conversions lead; personal results follow other complete readings. */

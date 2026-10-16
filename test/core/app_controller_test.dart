@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:azookey_flutter/core/app_controller.dart';
 import 'package:azookey_flutter/core/platform_service.dart';
@@ -6,6 +8,7 @@ import 'package:azookey_flutter/input/azookey_hotfix_sync.dart';
 import 'package:azookey_flutter/models/app_data.dart';
 import 'package:azookey_flutter/models/azookey_hotfix_dictionary.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 
 class _MemoryStorage implements StateStorage {
   String? value;
@@ -73,6 +76,76 @@ const _hotfixDictionary = AzooKeyHotfixDictionary(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('theme image bytes survive a backup across mobile file paths', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'keynako-theme-backup-',
+    );
+    const channel = MethodChannel('net.azookey/theme-backup-test');
+    final destination = File('${directory.path}/restored.image');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'saveKeyboardBackgroundImage') {
+            final arguments = Map<String, Object?>.from(call.arguments as Map);
+            await destination.writeAsBytes(arguments['bytes'] as List<int>);
+            return destination.path;
+          }
+          return null;
+        });
+    try {
+      final source = File('${directory.path}/original.image');
+      await source.writeAsBytes([1, 2, 3, 4]);
+      final exporter = AppController(storage: _MemoryStorage());
+      await exporter.initialize();
+      exporter.replaceTheme(
+        exporter.data.themes.first.copyWith(backgroundImage: source.path),
+      );
+      final backup = await exporter.exportJson();
+      expect((jsonDecode(backup) as Map)['themeImages']['classic'], 'AQIDBA==');
+      final imported = AppController(
+        storage: _MemoryStorage(),
+        platform: PlatformService(channel: channel),
+      );
+      await imported.initialize();
+      await imported.importJson(backup);
+      expect(imported.data.themes.first.backgroundImage, destination.path);
+      expect(await destination.readAsBytes(), [1, 2, 3, 4]);
+      exporter.dispose();
+      imported.dispose();
+    } finally {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test(
+    'desktop profile restores settings, dictionary and learned words',
+    () async {
+      final storage = _MemoryStorage();
+      final controller = AppController(storage: storage);
+      await controller.initialize();
+      await controller.importJson('''{
+      "schemaVersion":7,
+      "settings":{"live_conversion":false,"keyboard_type":"qwerty"},
+      "userDictionary":[{"id":0,"ruby":"ぼいすつき","word":"ボイス付き","importance":5}],
+      "learning":{"ぼいすつき\\tボイス付き":12,"context:672c.65e5\\tあめ\\t飴":4}
+    }''');
+      expect(controller.setting('live_conversion', true), isFalse);
+      expect(controller.data.userDictionary.single.word, 'ボイス付き');
+      expect(controller.data.learning['ぼいすつき\tボイス付き'], 12);
+      expect(controller.data.learning['context:672c.65e5\tあめ\t飴'], 4);
+      expect(await controller.exportJson(), contains('ボイス付き'));
+      await expectLater(
+        controller.importJson('{"settings":{}}'),
+        throwsFormatException,
+      );
+      expect(controller.data.userDictionary.single.word, 'ボイス付き');
+      controller.dispose();
+    },
+  );
+
   test('resolves azooKey share URLs to the Custard API', () {
     expect(
       resolveCustardUrl(Uri.parse('https://custard.azookey.com/tab/example-id'))

@@ -47,6 +47,10 @@ void keynako_ime_backspace(keynako_ime_session session) { if (auto *value = cast
 void keynako_ime_backspace_word(keynako_ime_session session) { if (auto *value = cast(session)) value->backspace_word(); }
 void keynako_ime_clear(keynako_ime_session session) { if (auto *value = cast(session)) value->clear(); }
 void keynako_ime_learn_selected(keynako_ime_session session) { if (auto *value = cast(session)) value->learn_selected(); }
+void keynako_ime_configure_storage(keynako_ime_session session, const char *utf8_directory) {
+    if (auto *value = cast(session); value && utf8_directory && *utf8_directory)
+        value->configure_storage(std::filesystem::u8path(utf8_directory));
+}
 int keynako_ime_begin_conversion(keynako_ime_session session) {
     return session && cast(session)->begin_conversion() ? 1 : 0;
 }

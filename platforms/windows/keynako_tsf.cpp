@@ -266,7 +266,11 @@ class TextService final : public ITfTextInputProcessorEx,
                           public ITfKeyEventSink,
                           public ITfCompositionSink {
 public:
-    TextService() : word_delete_interval_(read_word_delete_interval()) { ++g_objects; }
+    TextService() : word_delete_interval_(read_word_delete_interval()) {
+        ++g_objects;
+        const auto root = environment_path(L"LOCALAPPDATA");
+        if (!root.empty()) session_.configure_storage(root / L"Keynako");
+    }
     ~TextService() {
         hide_candidates();
         hide_improvement_prompt();

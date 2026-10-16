@@ -165,6 +165,45 @@ class CandidatePredictionsTest {
     }
 
     @Test
+    fun previousWordsKeepAttachedTsukiAheadOfModelMonth() {
+        for ((reading, attached, month) in listOf(
+            Triple("ぼいすつき", "ボイス付き", "ボイス月"),
+            Triple("ぼいすつき", "ボイス付き", "ボイス突き"),
+            Triple("わたしのぼいすつき", "私のボイス付き", "私のボイス月"),
+            Triple("ほしょうつき", "保証付き", "保証月"),
+        )) {
+            assertEquals(attached, rerankedJapaneseCandidates(
+                reading = reading,
+                ranked = listOf(month, attached),
+                baseCandidates = listOf(attached, month),
+                predictionReadings = emptyMap(),
+                learning = emptyMap(),
+            ).first())
+        }
+        assertEquals("毎月", rerankedJapaneseCandidates(
+            reading = "まいつき",
+            ranked = listOf("マイ付き", "毎月"),
+            baseCandidates = listOf("毎月", "マイ付き"),
+            predictionReadings = emptyMap(),
+            learning = emptyMap(),
+        ).first())
+        assertEquals("ボイス月", rerankedJapaneseCandidates(
+            reading = "ぼいすつき",
+            ranked = listOf("ボイス月", "ボイス付き"),
+            baseCandidates = listOf("ボイス付き", "ボイス月"),
+            predictionReadings = emptyMap(),
+            learning = mapOf("ぼいすつき\tボイス月" to 8),
+        ).first())
+    }
+
+    @Test
+    fun modelContextExcludesTheVisibleComposition() {
+        assertEquals("今日は", precedingTextBeforeComposition("今日はボイス付き", "ボイス付き", 20))
+        assertEquals("今日は", precedingTextBeforeComposition("今日はボイス月", "ボイス月", 20))
+        assertEquals("今日は", precedingTextBeforeComposition("今日は", "ボイス付き", 20))
+    }
+
+    @Test
     fun novelModelTextFollowsEstablishedCompleteConversions() {
         val base = listOf("今日は晴れる", "今日は晴れ", "きょうははれる")
         val ranked = placeNovelGeneratedCandidate(

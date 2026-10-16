@@ -1,5 +1,12 @@
 package io.github.StupidGame.azookey_flutter.input
 
+/** Older Custard definitions can omit a flick variation's duration. */
+internal fun custardVariationLongPressDuration(
+    parentDuration: String?,
+    variationDuration: String?,
+): String? = variationDuration?.takeIf(String::isNotBlank)
+    ?: parentDuration?.takeIf(String::isNotBlank)
+
 internal fun longPressDelayMillis(
     explicitDuration: String?,
     configuredDurationMs: Double,

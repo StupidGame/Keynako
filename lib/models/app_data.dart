@@ -17,7 +17,7 @@ const Map<String, dynamic> defaultKeyboardSettings = {
   ...defaultKeyboardLayoutSettings,
   'automatic_keyboard_switching': true,
   'live_conversion': true,
-  'automatic_completion_strength': 1,
+  'automatic_completion_strength': 0,
   'enable_zenzai': true,
   'zenzai_effort': 1,
   'typography_roman_candidate': true,
