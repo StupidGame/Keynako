@@ -57,7 +57,7 @@ const List<SettingDescriptor> settingCatalog = [
     group: 'ライブ変換',
     key: 'automatic_completion_strength',
     title: '自動確定の速さ',
-    explanation: '長い文章を入力したときに先頭側を自動確定する強さです。',
+    explanation: '初期状態では無効です。16文字以上の長い文章で先頭側を自動確定する速さを選べます。',
     kind: SettingKind.choice,
     options: [
       SettingOption(0, '無効'),

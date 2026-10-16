@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'app.dart';
 import 'input/candidate_dictionary_command.dart';
 import 'input/desktop_input_controller.dart';
+import 'input/desktop_learning.dart';
 import 'input/desktop_personal_dictionary.dart';
 import 'input/desktop_shared_dictionary.dart';
 import 'input/desktop_zenzai_locator.dart';
+import 'input/portable_profile.dart';
 
 Future<void> main(List<String> arguments) async {
   final dictionaryCommand = await runSharedDictionaryCommand(arguments);
@@ -21,10 +23,13 @@ Future<void> main(List<String> arguments) async {
     return;
   }
   WidgetsFlutterBinding.ensureInitialized();
+  final profileRepository = DesktopPortableProfileRepository();
   final controller = DesktopInputController(
     zenzaiEngineFactory: DesktopZenzaiLocator.create,
     sharedDictionaryRepository: DesktopSharedDictionaryRepository(),
     personalDictionaryRepository: DesktopPersonalDictionaryRepository(),
+    learningRepository: DesktopLearningRepository(),
+    profileRepository: profileRepository,
   );
   final openDictionary = arguments.contains('--dictionary');
   final candidateIndex = arguments.indexOf('--candidate-word');
@@ -38,9 +43,25 @@ Future<void> main(List<String> arguments) async {
       ? arguments[readingIndex + 1]
       : null;
   await controller.initializePersonalDictionary();
+  await controller.initializeLearning();
+  var zenzaiEnabled = true;
+  try {
+    final profile = await profileRepository.load();
+    final imeSettings = await profileRepository.loadImeSettings();
+    controller.setLiveConversionEnabled(
+      imeSettings['live_conversion'] as bool? ??
+          profile.settings['live_conversion'] != false,
+      persist: false,
+    );
+    zenzaiEnabled = profile.settings['enable_zenzai'] != false;
+  } on FormatException {
+    // Preserve the damaged backup for manual recovery; use normal defaults.
+  }
   if (!openDictionary && (candidateWord == null || candidateReading == null)) {
     await controller.initializeSharedDictionary();
-    await controller.setZenzaiModel(ZenzaiModel.xsmall);
+    await controller.setZenzaiModel(
+      zenzaiEnabled ? ZenzaiModel.xsmall : ZenzaiModel.off,
+    );
   }
   runApp(
     KeynakoDesktopApp(

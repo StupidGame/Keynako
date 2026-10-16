@@ -163,4 +163,99 @@ void main() {
       isEmpty,
     );
   });
+
+  test('context choices stay local and separate from general learning', () {
+    final learning = <String, int>{};
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    expect(learning['context:4eca.65e5.306f\tあめ\t飴'], 4);
+    expect(CandidateLearning.entries(learning), isEmpty);
+    expect(
+      CandidateLearning.contextScores(
+        learning,
+        leftContext: '今日は',
+        reading: 'あめ',
+      ),
+      {'飴': 4},
+    );
+    expect(
+      CandidateLearning.contextScores(
+        learning,
+        leftContext: '明日は',
+        reading: 'あめ',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('older URI-encoded context scores remain readable', () {
+    final legacy = {'context:${Uri.encodeComponent('今日は')}\tあめ\t飴': 6};
+    expect(
+      CandidateLearning.contextScores(
+        legacy,
+        leftContext: '今日は',
+        reading: 'あめ',
+      ),
+      {'飴': 6},
+    );
+  });
+
+  test('a corrected context choice outranks the former favorite', () {
+    final learning = <String, int>{};
+    for (var i = 0; i < 8; i++) {
+      CandidateLearning.recordContext(
+        learning,
+        leftContext: '今日は',
+        reading: 'あめ',
+        text: '雨',
+      );
+    }
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    final scores = CandidateLearning.contextScores(
+      learning,
+      leftContext: '今日は',
+      reading: 'あめ',
+    );
+    expect(scores['飴'], greaterThan(scores['雨']!));
+    expect(CandidateLearning.entries(learning), isEmpty);
+  });
+
+  test('longer context distinguishes phrases with the same ending', () {
+    final learning = <String, int>{};
+    for (final context in ['朝から今日は', '夜から今日は']) {
+      CandidateLearning.recordContext(
+        learning,
+        leftContext: context,
+        reading: 'あめ',
+        text: '雨',
+      );
+    }
+    CandidateLearning.recordContext(
+      learning,
+      leftContext: '朝から今日は',
+      reading: 'あめ',
+      text: '飴',
+    );
+    final morning = CandidateLearning.contextScores(
+      learning,
+      leftContext: '朝から今日は',
+      reading: 'あめ',
+    );
+    final evening = CandidateLearning.contextScores(
+      learning,
+      leftContext: '夜から今日は',
+      reading: 'あめ',
+    );
+    expect(morning['飴'], greaterThan(morning['雨']!));
+    expect(evening['雨'], greaterThan(evening['飴'] ?? 0));
+  });
 }
