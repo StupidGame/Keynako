@@ -34,6 +34,14 @@ migrate_working_dir/
 /coverage/
 .ci/
 
+# Signing secrets stay outside Git; encrypted .jks.gpg and public certificates are tracked.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.passphrase
+keystore.properties
+
 # Symbolication related
 app.*.symbols
 

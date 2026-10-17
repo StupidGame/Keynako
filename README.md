@@ -105,7 +105,7 @@ flutter run -d windows # linux、macosも指定可能
 
 ### GitHub Actions
 
-「Build app files」ワークフローは、署名済みAndroid APK、未署名iOS IPA、Simulator用アプリ、各PC OSへ登録できるIMEとZenzai入り設定アプリを作成します。Androidは固定鍵のSecretsまたは既存のCI用keystoreが必要で、鍵が見つからない場合は別の鍵を自動生成せず停止します。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
+「Build app files」ワークフローは、署名済みAndroid APK、未署名iOS IPA、Simulator用アプリ、各PC OSへ登録できるIMEとZenzai入り設定アプリを作成します。Androidのリリース鍵はAndroid Studio相当の手順で作成したJKSを暗号化してGitに保存し、GitHub Secretsのパスフレーズで復号します。Pull Requestでは既存のCI用keystoreを使用し、配布用ビルドでは復号用Secretがない場合に停止します。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
 
 ## azooKey / Custard互換性
 
