@@ -51,36 +51,30 @@ jobs:
           flutter test
           (cd android && ./gradlew :app:testDebugUnitTest)
 
-      - name: Restore the stable CI signing key
-        uses: actions/cache@v6.1.0
+      - name: Test Android signing preparation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_android_signing.py'
+
+      - name: Restore the existing CI signing key
+        uses: actions/cache/restore@v6.1.0
         with:
           path: .ci/keynako-ci-release.jks
           key: keynako-ci-release-signing-v1
 
-      - name: Create or reuse the CI signer and build the APK
+      - name: Prepare the Android signing key
+        id: android-signing
+        env:
+          KEYNAKO_ANDROID_KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_KEYSTORE_BASE64 || '' }}
+          KEYNAKO_ANDROID_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_STORE_PASSWORD || '' }}
+          KEYNAKO_ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_KEY_ALIAS || '' }}
+          KEYNAKO_ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_KEY_PASSWORD || '' }}
+        run: python3 .github/scripts/android_signing.py
+
+      - name: Build the signed APK
         shell: bash
         run: |
           set -euo pipefail
-          signing_password="keynako-ci-release-v1"
-          keystore_path="$GITHUB_WORKSPACE/.ci/keynako-ci-release.jks"
-          mkdir -p "$(dirname "$keystore_path")"
-
-          if [[ ! -f "$keystore_path" ]]; then
-            keytool -genkeypair -v \
-              -keystore "$keystore_path" \
-              -storepass "$signing_password" \
-              -keypass "$signing_password" \
-              -alias keynako-ci \
-              -keyalg RSA \
-              -keysize 4096 \
-              -validity 3650 \
-              -dname "CN=Keynako GitHub Actions, OU=CI, O=Keynako, L=Tokyo, C=JP"
-          fi
-
-          export KEYNAKO_KEYSTORE_PATH="$keystore_path"
-          export KEYNAKO_STORE_PASSWORD="$signing_password"
-          export KEYNAKO_KEY_ALIAS="keynako-ci"
-          export KEYNAKO_KEY_PASSWORD="$signing_password"
+          keytool -list -keystore "$KEYNAKO_KEYSTORE_PATH" \
+            -storepass:env KEYNAKO_STORE_PASSWORD -alias "$KEYNAKO_KEY_ALIAS"
           flutter build apk --release --build-number="$GITHUB_RUN_NUMBER" \
             --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
@@ -103,6 +97,11 @@ jobs:
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/flutter-apk/signature-report.txt
+
+      - name: Remove the private release keystore
+        if: always()
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/keynako-release.jks"
 
   ios:
     name: Unsigned iOS files

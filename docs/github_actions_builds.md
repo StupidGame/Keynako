@@ -1,10 +1,10 @@
 # GitHub Actionsでアプリファイルを作る
 
-`.github/workflows/build-app-files.yml` は、Pull Request、Actions画面の手動実行、または`v`で始まるタグのpushで次の成果物を作ります。Windows成果物はすべての実行でAuthenticode署名します。Pull Requestと手動実行では外部の署名ファイルを使わず、Actionsのキャッシュに保持するCI用証明書を使います。
+`.github/workflows/build-app-files.yml` は、Pull Request、Actions画面の手動実行、または`v`で始まるタグのpushで次の成果物を作ります。Windows成果物はすべての実行でAuthenticode署名します。WindowsのPull Requestと手動実行では、Actionsのキャッシュに保持するCI用証明書を使います。Androidの固定鍵は以下のSecretsで設定できます。
 
 | ジョブ | 成果物 | 用途 |
 | --- | --- | --- |
-| Android | `app-release.apk`、`signature-report.txt` | Actionsのキャッシュに保持するCI用keystoreによる署名済みAPKと署名検証結果 |
+| Android | `app-release.apk`、`signature-report.txt` | 固定鍵のSecretsまたは既存のCI用keystoreによる署名済みAPKと署名検証結果 |
 | iOS | `Keynako-unsigned.ipa` | Appleの証明書で後から署名するための実機用アーカイブ |
 | iOS | `Keynako-simulator.app.zip` | iOS Simulatorへ展開・インストールできるアプリ |
 | Windows | `KeynakoSetup.exe` | Keynako製DLL／exeとインストーラーを常にAuthenticode署名。通常はCI用証明書、登録済み証明書がある`v`タグでは正式証明書を使用 |
@@ -13,7 +13,25 @@
 
 ## Android署名の制約
 
-keystoreは初回実行時に作成され、Actionsのキャッシュへ保持されます。同じキャッシュが使われる限り、異なるActions実行のAPKを上書き更新できます。キャッシュが消えた場合は署名が変わるため、以前のAPKをアンインストールしてください。この方式は動作確認向けであり、Google Play配布では本番用キーを安全に保管して継続利用する必要があります。
+Androidは同じパッケージ名でも署名鍵が異なるAPKへ上書き更新できません。Actions #191と#192はソースツリーが同一ですが、#192ではキャッシュが見つからず別の鍵が生成されていました。署名証明書のSHA-256はそれぞれ次の値です。
+
+- #191: `89064217d88f24f8ede388a2ec74a248ca7359a44d41094f51eb5d125417c014`
+- #192: `837d05948a4c504cf61196bcc613ac382f1b3ebdfc9b6980c1905412f2982cad`
+
+鍵がないときに自動生成する処理は廃止しました。Secretsが未設定の場合は、既存の`.ci/keynako-ci-release.jks`をキャッシュから読み込むだけです。キャッシュが消えた場合はAndroidジョブをエラーで止め、別の署名のAPKを配布しません。ActionsキャッシュはブランチやPull Requestごとにアクセス範囲が異なり、削除もされるため、配布用の鍵の保管先には使えません。
+
+継続して配布する場合は、使用中のAPKを署名した元のkeystoreを安全にバックアップし、次のRepository secretsをすべて登録します。Google Playのアカウントは不要です。
+
+- `KEYNAKO_ANDROID_KEYSTORE_BASE64`: 元のkeystoreファイル全体をBase64にした文字列
+- `KEYNAKO_ANDROID_STORE_PASSWORD`: keystoreのパスワード
+- `KEYNAKO_ANDROID_KEY_ALIAS`: 署名鍵のalias
+- `KEYNAKO_ANDROID_KEY_PASSWORD`: 署名鍵のパスワード
+
+手動実行と`v`タグでは、すべてのSecretsが設定されていればこの鍵を優先します。一部だけ設定されていたり、Base64が不正だったりする場合はキャッシュへフォールバックせず停止します。秘密鍵はPull Requestへ渡さず、キャッシュや成果物にも保存しません。Secretsから復元したファイルはジョブの最後に削除します。
+
+新しい鍵を作っても、すでに配布したAPKへの更新互換性は戻りません。APKに入っている公開証明書から元の秘密鍵を復元することもできません。署名が異なる場合は、アンインストールする前に元の鍵の復旧とアプリ内データの保存を確認してください。#191を利用中なら、同じソースの#192へ入れ替える必要はありません。
+
+Playプロテクトのスキャン確認は署名検証とは別です。有効な固定署名があってもGoogle側の判定で表示されることがあり、この変更で非表示になる保証はありません。[Googleの説明](https://developers.google.com/android/play-protect/warning-dev-guidance?hl=ja)と[Androidの署名の説明](https://developer.android.com/studio/publish/app-signing)、[Actionsキャッシュのアクセス制約](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache)も参照してください。
 
 ## iOS署名の制約
 
@@ -44,7 +62,7 @@ Actionsの完了後、実行詳細のArtifactsから次をダウンロードし�
 - `keynako-linux-x64-<run number>`
 - `keynako-macos-<run number>`
 
-成果物は14日間保存されます。AndroidのCI用keystoreとWindowsのCI用PFXはリポジトリや成果物には含めず、Actionsキャッシュだけに保存します。キャッシュが消えた場合はCI用の署名者が変わります。
+成果物は14日間保存されます。AndroidのCI用keystoreとWindowsのCI用PFXはリポジトリや成果物には含めず、Actionsキャッシュだけに保存します。Androidはキャッシュが消えると固定鍵のSecretsが必要になり、自動で署名者を変えません。WindowsのCI用証明書はキャッシュが消えると再作成されます。
 
 PC版ジョブは共有変換モジュール、C++入力セッション、Flutter設定アプリを検査します。WindowsではTSF DLLとInno Setup製インストーラー、macOSではInputMethodKit bundle、LinuxではIBus engineも各OS向けに検証・梱包します。`keynako_zenzai`とsmall／xsmallモデルを同梱するため、追加モデル取得は不要です。
 
