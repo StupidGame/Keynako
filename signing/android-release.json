@@ -1,0 +1,10 @@
+{
+  "alias": "keynako-release",
+  "subject": "CN=StupidGame",
+  "keystoreType": "JKS",
+  "keyAlgorithm": "RSA",
+  "keySize": 2048,
+  "signatureAlgorithm": "SHA256withRSA",
+  "validityDays": 10950,
+  "certificateSha256": "8469cff24bf4411fa9f48d3521389f673ccf56caf7c80b1136124c97194b4af0"
+}

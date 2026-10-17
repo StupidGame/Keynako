@@ -470,9 +470,9 @@ class CandidatePredictionsTest {
     }
 
     @Test
-    fun zenzaiKeepsScoredCompletePathsAheadOfNovelWordsAndCompletions() {
+    fun registeredConversionsLeadZenzaiWhileCompletionsStayAfterCompletePaths() {
         assertEquals(
-            listOf("学習語", "登録語", "モデル候補", "登録補完"),
+            listOf("登録語", "学習語", "モデル候補", "登録補完"),
             rerankedJapaneseCandidates(
                 reading = "にほんご",
                 ranked = listOf("登録補完", "モデル候補", "学習語", "登録語", "にほんご"),
@@ -495,6 +495,81 @@ class CandidatePredictionsTest {
                 dictionaryCandidates = listOf("登録語", "登録補完"),
                 preferredZenzaiCandidate = "登録補完",
             ).first(),
+        )
+    }
+
+    @Test
+    fun modelPreferenceCannotOverrideDictionaryImportanceOrSharedEntries() {
+        val dictionary = listOf("最優先の登録語", "低い重要度の登録語", "共有辞書の登録語", "別の登録語")
+        for (generated in listOf("標準候補", "低い重要度の登録語", "新しいモデル候補")) {
+            val ranked = rerankedJapaneseCandidates(
+                reading = "とうろくご",
+                ranked = listOf(generated, "別の登録語", "共有辞書の登録語", "標準候補") + dictionary,
+                baseCandidates = listOf("標準候補") + dictionary + "とうろくご",
+                predictionReadings = emptyMap(),
+                learning = emptyMap(),
+                dictionaryCandidates = dictionary,
+                preferredZenzaiCandidate = generated,
+                exactRegistrationTexts = dictionary.toSet(),
+            )
+            assertEquals(dictionary, ranked.take(dictionary.size))
+            assertTrue("Model results should remain selectable", generated in ranked)
+            assertEquals(ranked.distinct(), ranked)
+        }
+    }
+
+    @Test
+    fun registeredConversionsRemainFirstAfterContextLearning() {
+        val learning = mutableMapOf<String, Int>()
+        recordContextCandidateLearning(learning, "今日は", "とうろくご", "標準候補")
+        val contextual = prioritizeContextualJapaneseCandidates(
+            "とうろくご", listOf("登録語", "標準候補", "共有語"), learning, "今日は",
+        )
+        assertEquals("標準候補", contextual.first())
+        assertEquals(
+            listOf("登録語", "共有語", "標準候補"),
+            prioritizeRegisteredJapaneseCandidates(contextual, listOf("登録語", "共有語")),
+        )
+    }
+
+    @Test
+    fun incompleteRegistrationsDoNotDisplaceCompleteModelConversions() {
+        assertEquals(
+            listOf("登録語と共有語", "標準候補", "登録ご", "登録補完", "とうろくご"),
+            prioritizeRegisteredJapaneseCandidates(
+                candidates = listOf("標準候補", "登録ご", "登録補完", "登録語と共有語", "とうろくご"),
+                dictionaryCandidates = listOf("除外済みの語", "登録ご", "登録補完", "登録語と共有語"),
+                predictionTexts = setOf("登録補完"),
+                partialTexts = setOf("登録ご"),
+            ),
+        )
+    }
+
+    @Test
+    fun exactKanaAndRenderedTemplateRegistrationsOverrideFallbackClassification() {
+        for ((reading, registered, ordinary) in listOf(
+            Triple("さぷらい", "さプライ", "サプライ"),
+            Triple("ないか", "ないか", "無いか"),
+            Triple("ひづけ", "2026/10/17", "日付"),
+        )) {
+            assertEquals(registered, rerankedJapaneseCandidates(
+                reading = reading,
+                ranked = listOf(ordinary, registered, reading),
+                baseCandidates = listOf(ordinary, registered, reading),
+                predictionReadings = emptyMap(),
+                learning = emptyMap(),
+                dictionaryCandidates = listOf(registered),
+                preferredZenzaiCandidate = ordinary,
+                exactRegistrationTexts = setOf(registered),
+            ).first())
+        }
+        assertEquals(
+            listOf("登録語", "標準候補"),
+            prioritizeRegisteredJapaneseCandidates(
+                listOf("標準候補", "登録語"), listOf("登録語"),
+                predictionTexts = setOf("登録語"), partialTexts = setOf("登録語"),
+                exactRegistrationTexts = setOf("登録語"),
+            ),
         )
     }
 

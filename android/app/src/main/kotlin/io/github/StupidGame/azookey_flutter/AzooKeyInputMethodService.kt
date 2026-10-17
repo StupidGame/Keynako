@@ -53,6 +53,7 @@ import io.github.StupidGame.azookey_flutter.conversion.CompletedClause
 import io.github.StupidGame.azookey_flutter.conversion.StableClauseCompletion
 import io.github.StupidGame.azookey_flutter.conversion.JapaneseInputContext
 import io.github.StupidGame.azookey_flutter.conversion.ReadingPrediction
+import io.github.StupidGame.azookey_flutter.conversion.LiveConversionPreview
 import io.github.StupidGame.azookey_flutter.conversion.asciiToFullWidth
 import io.github.StupidGame.azookey_flutter.conversion.compositionCommitText
 import io.github.StupidGame.azookey_flutter.conversion.defaultScanTargets
@@ -72,7 +73,9 @@ import io.github.StupidGame.azookey_flutter.conversion.learnedCandidates
 import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.preferSingleKanaReading
 import io.github.StupidGame.azookey_flutter.conversion.precedingTextBeforeComposition
+import io.github.StupidGame.azookey_flutter.conversion.pendingLiveConversionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prioritizeContextualJapaneseCandidates
+import io.github.StupidGame.azookey_flutter.conversion.prioritizeRegisteredJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
@@ -183,6 +186,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         val dictionaryVersion: String,
     )
     private val candidateRevision = AtomicLong()
+    private val liveConversionPreview = LiveConversionPreview()
+    private var pendingLivePreviewBase: List<String>? = null
     private val candidateHandler = Handler(Looper.getMainLooper())
     private val candidateExecutor = ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue(),
@@ -2086,6 +2091,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun renderCandidates(showTabs: Boolean = composing.isEmpty()) {
+        liveConversionPreview.reset()
+        pendingLivePreviewBase = null
         if (!::candidateRow.isInitialized) return
         if (dictionaryMode != DictionaryMode.CLOSED) return
         candidateRow.removeAllViews()
@@ -2115,6 +2122,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
         selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
             ?: defaultCandidateIndex()
+        if (mode == "japanese" && settings.optBoolean("live_conversion", true)) {
+            liveConversionPreview.updateReading(displayReading(), if (layout == "qwerty") rawRoman else displayReading())
+            rememberLiveConversion(displayReading())
+        }
         renderCandidateValues()
     }
 
@@ -2736,6 +2747,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         val revision = candidateRevision.incrementAndGet()
         pendingOfficialLookup = null
         val reading = displayReading()
+        val live = settings.optBoolean("live_conversion", true)
+        if (live && mode == "japanese") {
+            liveConversionPreview.updateReading(reading, if (layout == "qwerty") rawRoman else reading)
+        } else {
+            liveConversionPreview.reset()
+        }
+        pendingLivePreviewBase = null
         if (mode != "english" && layout == "qwerty") composing = reading
         candidateSelectedExplicitly = false
         if (settings.optBoolean("enable_zenzai", true)) zenzaiRuntime.cancel()
@@ -2744,7 +2762,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         pendingOfficialLookup = lookup?.let { revision to it }
         if (candidates.isEmpty() && reading.isNotEmpty()) candidates.add(reading)
         selectedCandidate = defaultCandidateIndex()
-        val live = settings.optBoolean("live_conversion", true)
+        val localCandidate = candidates.getOrNull(selectedCandidate)
+        if (localCandidate != null && (localCandidate in candidateExplicitDictionaryTexts ||
+            (localCandidate != reading && localCandidate != hiraganaToKatakana(reading)))) {
+            rememberLiveConversion(reading)
+        }
+        if (live && mode == "japanese" && lookup != null) applyPendingLivePreview(reading)
+        selectedCandidate = defaultCandidateIndex()
         val displayed = if (mode == "english") {
             reading
         } else if (live && candidates.isNotEmpty()) {
@@ -2763,6 +2787,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun scheduleOfficialLookup(revision: Long, request: OfficialLookupRequest) {
+        val previewSession = liveConversionPreview.session
         candidateExecutor.queue.clear()
         candidateExecutor.execute {
             if (revision != candidateRevision.get()) return@execute
@@ -2771,8 +2796,23 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (revision != candidateRevision.get() ||
                     pendingOfficialLookup?.first != revision ||
                     displayReading() != request.reading || dictionaryMode != DictionaryMode.CLOSED
-                ) return@post
+                ) {
+                    // A finished lookup is still useful when the user only appended
+                    // text. Keep its converted prefix while the newest lookup runs.
+                    if (dictionaryMode == DictionaryMode.CLOSED && mode == "japanese" &&
+                        settings.optBoolean("live_conversion", true) &&
+                        !candidateSelectedExplicitly && pendingOfficialLookup != null &&
+                        official.conversions.firstOrNull()?.let {
+                            liveConversionPreview.remember(previewSession, request.reading, it)
+                        } == true && applyPendingLivePreview(displayReading())) {
+                        selectedCandidate = defaultCandidateIndex()
+                        showComposingText(candidates[selectedCandidate])
+                        renderCandidateValues()
+                    }
+                    return@post
+                }
                 pendingOfficialLookup = null
+                pendingLivePreviewBase = null
                 val selectedText = if (candidateSelectedExplicitly) {
                     candidates.getOrNull(selectedCandidate)
                 } else null
@@ -2781,6 +2821,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
                 selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
                     ?: defaultCandidateIndex()
+                rememberLiveConversion(request.reading)
                 if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
                     showComposingText(candidates[selectedCandidate])
                 }
@@ -2802,14 +2843,38 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateExecutor.queue.clear()
         val official = lookupOfficialCandidates(pending.second)
         pendingOfficialLookup = null
+        pendingLivePreviewBase = null
         candidates = buildCandidates(officialOverride = official).toMutableList()
         if (candidates.isEmpty()) candidates.add(pending.second.reading)
         if (selectedText != null && selectedText !in candidates) candidates.add(0, selectedText)
         selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
             ?: defaultCandidateIndex()
+        rememberLiveConversion(pending.second.reading)
+    }
+
+    private fun applyPendingLivePreview(reading: String): Boolean {
+        val base = pendingLivePreviewBase ?: candidates.toList()
+        val updated = pendingLiveConversionCandidates(
+            reading, base, liveConversionPreview.preview(reading),
+            candidatePredictionReadings.keys, candidatePartialTexts, candidateExplicitDictionaryTexts,
+        )
+        pendingLivePreviewBase = base
+        if (updated == candidates) return false
+        candidates = updated.toMutableList()
+        return true
+    }
+
+    private fun rememberLiveConversion(reading: String) {
+        if (mode != "japanese" || !settings.optBoolean("live_conversion", true)) return
+        val text = candidates.getOrNull(selectedCandidate) ?: return
+        if (text !in candidateExplicitDictionaryTexts &&
+            (text in candidatePredictionReadings || text in candidatePartialTexts)) return
+        liveConversionPreview.remember(liveConversionPreview.session, reading, text)
     }
 
     private fun invalidateCandidateLookup() {
+        liveConversionPreview.reset()
+        pendingLivePreviewBase = null
         candidateRevision.incrementAndGet()
         pendingOfficialLookup = null
         candidateExecutor.queue.clear()
@@ -2895,6 +2960,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val explicitDictionaryTexts = candidateExplicitDictionaryTexts
         val officialLiteralReading = candidateOfficialLiteralReading
         val trustedCompleteTexts = candidateTrustedCompleteTexts
+        val previewSession = liveConversionPreview.session
         zenzaiRuntime.rank(
             modelSize = size,
             reading = modelInput,
@@ -2903,7 +2969,8 @@ class AzooKeyInputMethodService : InputMethodService() {
             baseCandidates = baseCandidates,
             maxTokens = maxTokens,
         ) { ranked, generated ->
-            if (displayReading() != reading || ranked.isEmpty()) return@rank
+            if (displayReading() != reading || ranked.isEmpty() ||
+                previewSession != liveConversionPreview.session) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
             val katakana = hiraganaToKatakana(reading)
             val rankedCandidates = rerankedJapaneseCandidates(
@@ -2924,9 +2991,14 @@ class AzooKeyInputMethodService : InputMethodService() {
                     blockedCombinationValues, exactRegistrationTexts,
                 )
             }
+            val contextual = prioritizeContextualJapaneseCandidates(
+                reading, rankedCandidates, learningScores(), leftContext,
+            )
             val reranked = keepKanaCandidatesVisible(reading,
-                prioritizeContextualJapaneseCandidates(reading, rankedCandidates,
-                    learningScores(), leftContext))
+                prioritizeRegisteredJapaneseCandidates(
+                    contextual, dictionaryPriority, predictionReadings.keys,
+                    partialTexts, explicitDictionaryTexts,
+                ))
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
@@ -2935,6 +3007,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             selectedCandidate = selectedText?.let { candidates.indexOf(it) }?.coerceAtLeast(0)
                 ?: defaultCandidateIndex()
+            rememberLiveConversion(reading)
             if (candidateSelectedExplicitly || settings.optBoolean("live_conversion", true)) {
                 showComposingText(candidates[selectedCandidate])
             }
@@ -3160,9 +3233,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateTrustedCompleteTexts = if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
-        val explicitDictionaryTexts = (personalEntries + activeHotfixEntries).filter {
+        val explicitDictionaryTexts = (registeredExact + activeHotfixEntries.filter {
             katakanaToHiragana(it.ruby) == reading
-        }.map { it.word }.toSet()
+        }.map { it.word }).toSet()
         val explicitExactTexts = explicitDictionaryTexts + learned
         candidateExplicitDictionaryTexts = explicitDictionaryTexts
         candidateExactRegistrationTexts = explicitExactTexts
@@ -3208,9 +3281,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                         candidateBlockedCombinationValues, candidateExactRegistrationTexts,
                     ))
             }.distinct()
-        val contextual = prioritizeContextualJapaneseCandidates(
-            reading, ordered, learning,
-            leftContextBeforeComposition(20),
+        val contextual = prioritizeRegisteredJapaneseCandidates(
+            prioritizeContextualJapaneseCandidates(
+                reading, ordered, learning, leftContextBeforeComposition(20),
+            ),
+            candidateDictionaryPriority, candidatePredictionReadings.keys,
+            candidatePartialTexts, candidateExplicitDictionaryTexts,
         )
         val strongLearning = learnedEntries.any {
             it.reading == reading && it.score >= 4
