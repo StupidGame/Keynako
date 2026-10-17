@@ -90,8 +90,8 @@ android {
 
     buildTypes {
         release {
-            // CI creates a temporary keystore and supplies these values through
-            // environment variables. Without them, Gradle emits an unsigned
+            // CI supplies an existing keystore through environment variables.
+            // Without them, Gradle emits an unsigned
             // release instead of silently using the public debug certificate.
             signingConfig = signingConfigs.findByName("release")
         }
