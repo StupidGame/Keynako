@@ -166,6 +166,24 @@ internal fun learnedJapanesePrefixPredictions(
         .toList()
 }
 
+/** Reapply dictionary importance after ranking, promoting only complete registered conversions. */
+internal fun prioritizeRegisteredJapaneseCandidates(
+    candidates: List<String>,
+    dictionaryCandidates: List<String>,
+    predictionTexts: Set<String> = emptySet(),
+    partialTexts: Set<String> = emptySet(),
+    exactRegistrationTexts: Set<String> = emptySet(),
+): List<String> {
+    val available = candidates.toSet()
+    val registered = dictionaryCandidates.filter {
+        it.isNotBlank() && it in available &&
+            (it in exactRegistrationTexts || (it !in predictionTexts && it !in partialTexts))
+    }.distinct()
+    if (registered.isEmpty()) return candidates
+    val registeredTexts = registered.toSet()
+    return registered + candidates.filter { it !in registeredTexts }
+}
+
 /** Keep completions visible after the model reranks candidates, without using one for live text. */
 internal fun rerankedJapaneseCandidates(
     reading: String,
@@ -259,7 +277,10 @@ internal fun rerankedJapaneseCandidates(
     val withCompound = if (protected != null) {
         listOf(protected) + stable.filter { it != protected }
     } else stable
-    return preferSingleKanaReading(reading, withCompound, exactRegistration)
+    val dictionaryOrdered = prioritizeRegisteredJapaneseCandidates(
+        withCompound, dictionaryCandidates, predictionTexts, partialCandidates, exactRegistrationTexts,
+    )
+    return preferSingleKanaReading(reading, dictionaryOrdered, exactRegistration)
 }
 
 /** Complete model and standard conversions lead; personal results follow other complete readings. */

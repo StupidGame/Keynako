@@ -73,6 +73,7 @@ import io.github.StupidGame.azookey_flutter.conversion.learnedJapanesePrefixPred
 import io.github.StupidGame.azookey_flutter.conversion.preferSingleKanaReading
 import io.github.StupidGame.azookey_flutter.conversion.precedingTextBeforeComposition
 import io.github.StupidGame.azookey_flutter.conversion.prioritizeContextualJapaneseCandidates
+import io.github.StupidGame.azookey_flutter.conversion.prioritizeRegisteredJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
@@ -2924,9 +2925,14 @@ class AzooKeyInputMethodService : InputMethodService() {
                     blockedCombinationValues, exactRegistrationTexts,
                 )
             }
+            val contextual = prioritizeContextualJapaneseCandidates(
+                reading, rankedCandidates, learningScores(), leftContext,
+            )
             val reranked = keepKanaCandidatesVisible(reading,
-                prioritizeContextualJapaneseCandidates(reading, rankedCandidates,
-                    learningScores(), leftContext))
+                prioritizeRegisteredJapaneseCandidates(
+                    contextual, dictionaryPriority, predictionReadings.keys,
+                    partialTexts, explicitDictionaryTexts,
+                ))
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
                 isAllowedCombinationCandidate(selectedText, trustedCompleteTexts,
@@ -3160,9 +3166,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateTrustedCompleteTexts = if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
-        val explicitDictionaryTexts = (personalEntries + activeHotfixEntries).filter {
+        val explicitDictionaryTexts = (registeredExact + activeHotfixEntries.filter {
             katakanaToHiragana(it.ruby) == reading
-        }.map { it.word }.toSet()
+        }.map { it.word }).toSet()
         val explicitExactTexts = explicitDictionaryTexts + learned
         candidateExplicitDictionaryTexts = explicitDictionaryTexts
         candidateExactRegistrationTexts = explicitExactTexts
@@ -3208,9 +3214,12 @@ class AzooKeyInputMethodService : InputMethodService() {
                         candidateBlockedCombinationValues, candidateExactRegistrationTexts,
                     ))
             }.distinct()
-        val contextual = prioritizeContextualJapaneseCandidates(
-            reading, ordered, learning,
-            leftContextBeforeComposition(20),
+        val contextual = prioritizeRegisteredJapaneseCandidates(
+            prioritizeContextualJapaneseCandidates(
+                reading, ordered, learning, leftContextBeforeComposition(20),
+            ),
+            candidateDictionaryPriority, candidatePredictionReadings.keys,
+            candidatePartialTexts, candidateExplicitDictionaryTexts,
         )
         val strongLearning = learnedEntries.any {
             it.reading == reading && it.score >= 4
