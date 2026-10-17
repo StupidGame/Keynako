@@ -71,4 +71,3 @@ if __name__ == "__main__":
         prepare(os.environ)
     except ValueError as error:
         raise SystemExit(str(error)) from None
-
