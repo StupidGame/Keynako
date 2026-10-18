@@ -86,6 +86,9 @@ import io.github.StupidGame.azookey_flutter.conversion.shouldDirectCommitJapanes
 import io.github.StupidGame.azookey_flutter.conversion.toMathematicalBold
 import io.github.StupidGame.azookey_flutter.conversion.unicodeCandidate
 import io.github.StupidGame.azookey_flutter.conversion.zenzaiGenerationTokenBudget
+import io.github.StupidGame.azookey_flutter.input.KeyboardHeightMetrics
+import io.github.StupidGame.azookey_flutter.input.keyboardHeightMetrics
+import io.github.StupidGame.azookey_flutter.input.keyboardBodyHeightScale
 import io.github.StupidGame.azookey_flutter.input.FlickLongPressSelection
 import io.github.StupidGame.azookey_flutter.input.FiredLongPressTransition
 import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationAction
@@ -116,6 +119,7 @@ import io.github.StupidGame.azookey_flutter.input.backwardCharacterDeleteCount
 import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
 import io.github.StupidGame.azookey_flutter.input.shiftedInputLabel
+import io.github.StupidGame.azookey_flutter.view.KeyboardBodyScrollView
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -139,12 +143,15 @@ class AzooKeyInputMethodService : InputMethodService() {
     private lateinit var inputViewFrame: KeyboardInputFrame
     private lateinit var keyboardSurface: FrameLayout
     private lateinit var root: LinearLayout
+    private lateinit var candidateHeader: LinearLayout
     private lateinit var candidateRow: LinearLayout
     private lateinit var candidateScroll: HorizontalScrollView
     private lateinit var candidateExpandButton: TextView
     private lateinit var candidatePanel: ScrollView
     private lateinit var candidatePanelContent: LinearLayout
+    private lateinit var keyboardScroll: KeyboardBodyScrollView
     private lateinit var keyboardContainer: LinearLayout
+    private var naturalKeyboardHeights = emptyList<Int>()
     private var state = JSONObject()
     private var settings = JSONObject()
     private var cachedLearningSource: JSONObject? = null
@@ -254,8 +261,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         prepareZenzaiIfNeeded()
     }
 
+    // Keep the application editor visible when the device is rotated.
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     override fun onCreateInputView(): View {
         reloadState()
+        naturalKeyboardHeights = emptyList()
         inputViewFrame = KeyboardInputFrame(this).apply {
             setBackgroundColor(palette.background)
         }
@@ -313,6 +324,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 val bottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
                 if (view.paddingBottom != bottom) {
                     view.setPadding(0, 0, 0, bottom)
+                    applyKeyboardHeightConstraints()
                     view.requestLayout()
                 }
                 insets
@@ -326,9 +338,9 @@ class AzooKeyInputMethodService : InputMethodService() {
             }
             addView(candidateRow)
         }
-        val candidateHeader = LinearLayout(this).apply {
+        candidateHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(candidateScroll, LinearLayout.LayoutParams(0, dp(43), 1f))
+            addView(candidateScroll, LinearLayout.LayoutParams(0, keyboardMetrics().candidateBarHeight, 1f))
             candidateExpandButton = TextView(context).apply {
                 gravity = Gravity.CENTER
                 textSize = 20f
@@ -340,7 +352,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 visibility = View.GONE
             }
-            addView(candidateExpandButton, LinearLayout.LayoutParams(dp(43), dp(43)))
+            addView(candidateExpandButton, LinearLayout.LayoutParams(dp(43), keyboardMetrics().candidateBarHeight))
         }
         root.addView(candidateHeader)
         candidatePanelContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -349,12 +361,15 @@ class AzooKeyInputMethodService : InputMethodService() {
             addView(candidatePanelContent)
             visibility = View.GONE
         }
-        root.addView(candidatePanel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(176)))
+        root.addView(candidatePanel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, keyboardMetrics().candidatePanelHeight))
         keyboardContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+        keyboardScroll = KeyboardBodyScrollView(this).apply {
+            addView(keyboardContainer)
+        }
         root.addView(
-            keyboardContainer,
+            keyboardScroll,
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
         )
         renderCandidates()
@@ -616,6 +631,60 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
     }
 
+    private fun keyboardMetrics(
+        heightScale: Double = settings.optDouble("keyboard_height_scale", 1.0),
+    ): KeyboardHeightMetrics {
+        val configuration = resources.configuration
+        val metrics = resources.displayMetrics
+        val availableHeight = if (configuration.screenHeightDp > 0) {
+            dp(configuration.screenHeightDp)
+        } else {
+            metrics.heightPixels
+        }
+        return keyboardHeightMetrics(
+            landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE,
+            availableHeight = availableHeight,
+            density = metrics.density,
+            heightScale = heightScale,
+        )
+    }
+
+    private fun keyRowHeight(scale: Double): Int = keyboardMetrics(scale).rowHeight
+
+    private fun setCandidatePanelVisible(visible: Boolean) {
+        candidatePanel.visibility = if (visible) View.VISIBLE else View.GONE
+        applyKeyboardHeightConstraints()
+    }
+
+    private fun applyKeyboardHeightConstraints() {
+        if (!::keyboardScroll.isInitialized || !::candidateHeader.isInitialized) return
+        val metrics = keyboardMetrics()
+        val maximumBody = metrics.maximumBodyHeight(
+            bottomInset = inputViewFrame.paddingBottom,
+            panelVisible = candidatePanel.visibility == View.VISIBLE,
+        )
+        val factor = keyboardBodyHeightScale(
+            naturalHeight = naturalKeyboardHeights.sum(),
+            maximumHeight = maximumBody,
+            rowHeight = metrics.rowHeight,
+            minimumRowHeight = metrics.minimumRowHeight,
+        )
+        for (index in 0 until keyboardContainer.childCount) {
+            val preferred = naturalKeyboardHeights.getOrNull(index) ?: continue
+            val child = keyboardContainer.getChildAt(index)
+            val height = (preferred * factor).toInt().coerceAtLeast(1)
+            if (child.layoutParams.height != height) {
+                child.layoutParams = child.layoutParams.apply { this.height = height }
+            }
+        }
+        keyboardScroll.maximumHeight = maximumBody
+        if (candidatePanel.layoutParams.height != metrics.candidatePanelHeight) {
+            candidatePanel.layoutParams = candidatePanel.layoutParams.apply {
+                height = metrics.candidatePanelHeight
+            }
+        }
+    }
+
     private fun renderKeyboard() {
         dismissFlickGuide()
         keyboardContainer.removeAllViews()
@@ -645,6 +714,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             else renderFlick(heightScale)
         }
         if (activeCustomTab == null) renderStandaloneCustomKeys(heightScale)
+        naturalKeyboardHeights = (0 until keyboardContainer.childCount).map {
+            keyboardContainer.getChildAt(it).layoutParams.height
+        }
+        applyKeyboardHeightConstraints()
     }
 
     private fun renderFlick(scale: Double) {
@@ -712,7 +785,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val grid = CustardGridLayout(this, columns = 5, rows = 4).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                (dp(47) * scale * 4).toInt(),
+                keyRowHeight(scale) * 4,
             )
         }
         for ((rowIndex, row) in keys.withIndex()) {
@@ -978,7 +1051,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val columns = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 40)
         val rows = layoutData.optDouble("column_count", 5.0).toInt().coerceIn(1, 40)
         val grid = CustardGridLayout(this, columns, rows)
-        val cellHeight = (dp(47) * scale).toInt().coerceAtLeast(dp(32))
+        val cellHeight = keyRowHeight(scale).coerceAtLeast(keyboardMetrics().minimumRowHeight)
         for (index in 0 until keys.length()) {
             val element = keys.optJSONObject(index) ?: continue
             if (element.optString("specifier_type") != "grid_fit") continue
@@ -1011,7 +1084,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             .sortedBy { it.optJSONObject("specifier")?.optInt("index") ?: Int.MAX_VALUE }
         val crossCount = layoutData.optDouble("row_count", 4.0).toInt().coerceIn(1, 20)
         val visibleCount = layoutData.optDouble("column_count", 4.0).coerceIn(1.0, 20.0)
-        val cellHeight = (dp(47) * scale).toInt().coerceAtLeast(dp(32))
+        val cellHeight = keyRowHeight(scale).coerceAtLeast(keyboardMetrics().minimumRowHeight)
         if (layoutData.optString("direction", "vertical") == "horizontal") {
             val cellWidth = (resources.displayMetrics.widthPixels / visibleCount).toInt()
             val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -1188,6 +1261,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         view.setOnTouchListener { target, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (variationsEnabled) target.parent?.requestDisallowInterceptTouchEvent(true)
                     startX = event.x
                     startY = event.y
                     didLongPress = false
@@ -1545,6 +1619,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         view.setOnTouchListener { target, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    target.parent?.requestDisallowInterceptTouchEvent(true)
                     startX = event.x
                     startY = event.y
                     longPressed = false
@@ -1668,6 +1743,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         view.setOnTouchListener { target, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    target.parent?.requestDisallowInterceptTouchEvent(true)
                     startX = event.x
                     startY = event.y
                     longPressed = false
@@ -1962,6 +2038,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 setOnTouchListener { target, event ->
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
+                            target.parent?.requestDisallowInterceptTouchEvent(true)
                             textDragStartX = event.x
                             longPressed = false
                             repeating = false
@@ -2082,7 +2159,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         setPadding(dp(2), dp(2), dp(2), dp(2))
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            (dp(47) * scale).toInt(),
+            keyRowHeight(scale),
         )
     }
 
@@ -2099,13 +2176,13 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateScroll.scrollTo(0, 0)
         if (showTabs) {
             candidateExpanded = false
-            candidatePanel.visibility = View.GONE
+            setCandidatePanelVisible(false)
             candidateExpandButton.visibility = View.GONE
             cursorBarVisible = false
             cursorBarView = null
         }
         if (cursorBarVisible) {
-            candidatePanel.visibility = View.GONE
+            setCandidatePanelVisible(false)
             candidateExpandButton.visibility = View.GONE
             renderCursorBar()
             return
@@ -2181,7 +2258,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (!canExpand) candidateExpanded = false
         candidateExpandButton.text = if (candidateExpanded) "⌃" else "⌄"
         candidateExpandButton.contentDescription = if (candidateExpanded) "候補を閉じる" else "候補をさらに表示"
-        candidatePanel.visibility = if (candidateExpanded) View.VISIBLE else View.GONE
+        setCandidatePanelVisible(candidateExpanded)
         if (candidateExpanded) {
             candidatePanelContent.removeAllViews()
             for (start in candidates.indices step 3) {
@@ -2201,10 +2278,10 @@ class AzooKeyInputMethodService : InputMethodService() {
                             showCandidatePreview(candidate, index)
                             true
                         }
-                    }, LinearLayout.LayoutParams(0, dp(43), 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+                    }, LinearLayout.LayoutParams(0, keyboardMetrics().candidateBarHeight, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
                 }
                 repeat(3 - row.childCount) {
-                    row.addView(View(this), LinearLayout.LayoutParams(0, dp(43), 1f))
+                    row.addView(View(this), LinearLayout.LayoutParams(0, keyboardMetrics().candidateBarHeight, 1f))
                 }
                 candidatePanelContent.addView(row)
             }
@@ -2308,7 +2385,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             setTextColor(palette.text)
             setPadding(dp(16), dp(12), dp(16), dp(12))
         })
-        candidatePanel.visibility = View.VISIBLE
+        setCandidatePanelVisible(true)
     }
 
     private fun showDictionaryEditor(
@@ -2346,7 +2423,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             textSize = 12f
             setPadding(dp(12), dp(8), dp(12), dp(8))
         })
-        candidatePanel.visibility = View.VISIBLE
+        setCandidatePanelVisible(true)
         renderDictionaryEditorActions()
     }
 
@@ -2436,7 +2513,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         dictionaryReadingField = null
         dictionaryWordField = null
         dictionaryActiveField = null
-        candidatePanel.visibility = View.GONE
+        setCandidatePanelVisible(false)
         renderCandidates()
     }
 
@@ -2463,7 +2540,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         cursorBarVisible = !cursorBarVisible
         if (cursorBarVisible) {
             candidateExpanded = false
-            candidatePanel.visibility = View.GONE
+            setCandidatePanelVisible(false)
             candidateExpandButton.visibility = View.GONE
             renderCursorBar()
             if (settings.optBoolean("display_cursor_bar_automatically", false)) {
@@ -2484,7 +2561,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             bar,
             LinearLayout.LayoutParams(
                 keyboardSurface.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels,
-                dp(43),
+                keyboardMetrics().candidateBarHeight,
             ),
         )
         bar.post { bar.refresh() }
@@ -2615,7 +2692,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun showEmoji() {
         candidateExpanded = false
-        candidatePanel.visibility = View.GONE
+        setCandidatePanelVisible(false)
         candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
         candidateScroll.scrollTo(0, 0)
@@ -2668,7 +2745,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun candidateButtonLayoutParams() = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.WRAP_CONTENT,
-        dp(43),
+        keyboardMetrics().candidateBarHeight,
     ).apply {
         setMargins(dp(2), 0, dp(2), 0)
     }
@@ -3398,7 +3475,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun showLegacyReportPrompt(candidate: String, index: Int) {
         candidateExpanded = false
-        candidatePanel.visibility = View.GONE
+        setCandidatePanelVisible(false)
         candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
         addCandidateButton("「$candidate」を誤変換として報告") {}
@@ -3424,7 +3501,7 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun showCandidatePreview(candidate: String, index: Int) {
         candidateExpanded = true
-        candidatePanel.visibility = View.VISIBLE
+        setCandidatePanelVisible(true)
         candidateExpandButton.visibility = View.GONE
         candidatePanelContent.removeAllViews()
         candidatePanelContent.addView(TextView(this).apply {
@@ -3440,7 +3517,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateRow.removeAllViews()
         addCandidateButton("戻る") { renderCandidates(false) }
         addCandidateButton("誤変換を報告") {
-            candidatePanel.visibility = View.GONE
+            setCandidatePanelVisible(false)
             candidateExpanded = false
             showLegacyReportPrompt(candidate, index)
         }

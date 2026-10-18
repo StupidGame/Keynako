@@ -9,6 +9,7 @@ on:
     tags:
       - "v*"
     paths:
+      - "android/**"
       - "signing/**"
       - ".github/scripts/android_signing.py"
       - ".github/scripts/test_android_signing.py"

@@ -1,6 +1,6 @@
 # GitHub Actionsでアプリファイルを作る
 
-`.github/workflows/build-app-files.yml` は、Pull Request、Actions画面の手動実行、または`v`で始まるタグのpushで次の成果物を作ります。署名ファイルやAndroid署名処理のブランチpushでも、Androidだけをビルドします。Windows成果物はすべての実行でAuthenticode署名します。WindowsのPull Requestと手動実行では、Actionsのキャッシュに保持するCI用証明書を使います。
+`.github/workflows/build-app-files.yml` は、Pull Request、Actions画面の手動実行、または`v`で始まるタグのpushで次の成果物を作ります。`android/**`、署名ファイル、Android署名処理のブランチpushでも、固定リリース鍵でAndroidだけをビルドします。Windows成果物はすべての実行でAuthenticode署名します。WindowsのPull Requestと手動実行では、Actionsのキャッシュに保持するCI用証明書を使います。
 
 | ジョブ | 成果物 | 用途 |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ Gitへ保存するのは `signing/android-release.jks.gpg`（GPG AES-256暗号�
 
 - `KEYNAKO_ANDROID_SIGNING_PASSPHRASE`: 作成時に保管したパスフレーズ。GPGの復号とJKSの鍵・keystoreパスワードに使用します。
 
-手動実行、タグ、署名ファイルのブランチpushでは、このSecretを必須にしています。未登録・復号失敗の場合は停止し、CI用など別の鍵へフォールバックしません。署名ファイルや署名処理のブランチpushではAndroidジョブだけを実行します。復号ファイルは `RUNNER_TEMP` 内だけに作り、ジョブ終了時に削除します。完成したAPKの署名は `apksigner` で検証し、コミットした公開証明書のSHA-256とも照合します。
+手動実行、タグ、Androidコードや署名関連ファイルのブランチpushでは、このSecretを必須にしています。未登録・復号失敗の場合は停止し、CI用など別の鍵へフォールバックしません。対象ファイルのブランチpushではAndroidジョブだけを実行します。復号ファイルは `RUNNER_TEMP` 内だけに作り、ジョブ終了時に削除します。完成したAPKの署名は `apksigner` で検証し、コミットした公開証明書のSHA-256とも照合します。
 
 Pull Requestには復号用Secretを渡さず、既存のCI用keystoreでビルドします。暗号化リリース鍵の成果物名は `keynako-android-release-apk-<run number>`、CI署名の成果物名は従来の `keynako-android-signed-apk-<run number>` です。
 
