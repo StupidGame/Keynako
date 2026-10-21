@@ -56,7 +56,7 @@ internal fun pendingLiveConversionCandidates(
     if (preview.isNullOrBlank() || preview == reading) return candidates
     val leading = candidates.firstOrNull { it !in predictionTexts }
     if (leading in exactRegistrationTexts) return candidates
-    if (leading != null && leading != reading && leading != hiraganaToKatakana(reading) &&
+    if (leading != null && leading !in japaneseReadingForms(reading) &&
         leading !in partialTexts) return candidates
     return listOf(preview) + candidates.filter { it != preview }
 }

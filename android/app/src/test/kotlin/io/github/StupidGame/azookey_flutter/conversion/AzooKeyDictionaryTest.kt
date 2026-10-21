@@ -131,6 +131,30 @@ class AzooKeyDictionaryTest {
     }
 
     @Test
+    fun inflectedVerbsRemainWholeDuringIncrementalAndLongSentenceConversion() {
+        for ((reading, expected) in listOf(
+            "いわれたから" to "言われたから",
+            "くらって" to "食らって",
+            "いわせられた" to "言わせられた",
+            "いわれなかった" to "言われなかった",
+            "くらわされた" to "食らわされた",
+            "たべさせられた" to "食べさせられた",
+            "せんせいにいわれたからしゅくだいをしました" to "先生に言われたから宿題をしました",
+            "だめーじをくらってうごけなくなった" to "ダメージを食らって動けなくなった",
+        )) {
+            for (end in 1 until reading.length) dictionary.candidates(reading.take(end), 0)
+            val base = dictionary.candidates(reading, 0).conversions
+            assertEquals(reading, expected, base.first())
+            val pool = zenzaiRerankingCandidates(reading, base)
+            assertTrue("Correct inflection was excluded for $reading: $pool", expected in pool)
+            assertEquals(expected, rerankedJapaneseCandidates(
+                reading, listOf(expected) + base.filter { it != expected }, base,
+                emptyMap(), emptyMap(),
+            ).first())
+        }
+    }
+
+    @Test
     fun longSentenceStartsWithTheCommonCompleteConversion() {
         val candidates = dictionary.candidates(
             "わたしはきょうとうきょうのえきでともだちとあいました",

@@ -45,6 +45,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
         rightContext: String,
         baseCandidates: List<String>,
         maxTokens: Int,
+        incompleteTexts: Set<String> = emptySet(),
         callback: (List<String>, String?) -> Unit,
     ) {
         if (closed) return
@@ -52,6 +53,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
         runCatching { ZenzEngine.cancelCurrent() }
         pendingRank?.let(mainHandler::removeCallbacks)
         pendingRank = null
+        if (hasPendingRomanSuffix(reading)) return
         val work = Runnable {
             if (closed || request != requestSequence.get()) return@Runnable
             val startedAt = System.nanoTime()
@@ -85,7 +87,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 // Scoring every entry in the large dictionary makes inference lag behind typing.
                 // Zenzai reranks the strongest entries and preserves the remaining dictionary order.
                 val candidates = values.toList()
-                val rerankedCandidates = candidates.take(MAX_RERANKED_CANDIDATES)
+                val rerankedCandidates = zenzaiRerankingCandidates(reading, candidates, incompleteTexts)
                 val scores = ZenzEngine.scoreCandidatesV32(
                     null,
                     null,
@@ -102,7 +104,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
                             ?.takeIf { it.isFinite() }
                             ?: Float.NEGATIVE_INFINITY
                     }.thenBy { it.index },
-                ).map { it.value } + candidates.drop(rerankedCandidates.size)
+                ).map { it.value } + candidates.filter { it !in rerankedCandidates }
                 placeNovelGeneratedCandidate(ranked, generated, baseCandidates.toSet()) to
                     generated.takeIf { it.isNotEmpty() }
             }.getOrElse { error ->
@@ -177,7 +179,6 @@ internal class AndroidZenzaiRuntime(context: Context) {
 
     private companion object {
         const val LOG_TAG = "KeynakoZenzai"
-        const val MAX_RERANKED_CANDIDATES = 16
         const val LONG_READING_THRESHOLD = 24
         const val LONG_READING_IDLE_MILLIS = 150L
     }

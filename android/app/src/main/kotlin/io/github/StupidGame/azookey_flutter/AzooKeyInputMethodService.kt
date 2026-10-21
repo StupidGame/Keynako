@@ -61,6 +61,7 @@ import io.github.StupidGame.azookey_flutter.conversion.dictionaryCombinationCand
 import io.github.StupidGame.azookey_flutter.conversion.incompleteDictionaryCombinations
 import io.github.StupidGame.azookey_flutter.conversion.hasLongOrdinaryGapBetweenRegisteredWords
 import io.github.StupidGame.azookey_flutter.conversion.isAllowedCombinationCandidate
+import io.github.StupidGame.azookey_flutter.conversion.japaneseReadingForms
 import io.github.StupidGame.azookey_flutter.conversion.caseConvertedComposition
 import io.github.StupidGame.azookey_flutter.conversion.englishPredictionCandidates
 import io.github.StupidGame.azookey_flutter.conversion.exactLearnedJapaneseCandidates
@@ -2841,7 +2842,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         selectedCandidate = defaultCandidateIndex()
         val localCandidate = candidates.getOrNull(selectedCandidate)
         if (localCandidate != null && (localCandidate in candidateExplicitDictionaryTexts ||
-            (localCandidate != reading && localCandidate != hiraganaToKatakana(reading)))) {
+            localCandidate !in japaneseReadingForms(reading))) {
             rememberLiveConversion(reading)
         }
         if (live && mode == "japanese" && lookup != null) applyPendingLivePreview(reading)
@@ -2946,6 +2947,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         val text = candidates.getOrNull(selectedCandidate) ?: return
         if (text !in candidateExplicitDictionaryTexts &&
             (text in candidatePredictionReadings || text in candidatePartialTexts)) return
+        if (!candidateSelectedExplicitly && text !in candidateExplicitDictionaryTexts &&
+            text == katakanaToHalfWidth(hiraganaToKatakana(reading)) &&
+            text.any { it in '\uFF66'..'\uFF9F' }) return
         liveConversionPreview.remember(liveConversionPreview.session, reading, text)
     }
 
@@ -3045,6 +3049,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             rightContext = rightContext,
             baseCandidates = baseCandidates,
             maxTokens = maxTokens,
+            incompleteTexts = predictionReadings.keys + partialTexts,
         ) { ranked, generated ->
             if (displayReading() != reading || ranked.isEmpty() ||
                 previewSession != liveConversionPreview.session) return@rank
@@ -3339,10 +3344,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         val officialComplete = allowedOfficialConversions.filter { it !in candidatePartialTexts }
         val fallback = setOf(reading, katakana, katakanaToHalfWidth(katakana),
             rawRoman, asciiToFullWidth(rawRoman))
+        val intentionallyPreferred = explicitDictionaryTexts + learnedEntries.filter {
+            it.reading == reading && it.score >= 4
+        }.map { it.text }
         val localComplete = (registeredExact + combinedWords + learnedCombinations +
             learned + specialCandidates + values.filter {
                 it !in fallback && it !in candidatePartialTexts && it !in allowedOfficialConversions
-            }).filter { it.isNotBlank() && it !in candidatePredictionReadings }
+            }).filter {
+                it.isNotBlank() && it !in candidatePredictionReadings &&
+                    (it !in fallback || it in intentionallyPreferred)
+            }
         val completions = (registeredPredictions.map(ReadingPrediction::text) +
             learnedPrefixes.map { it.text } + predictedValues).filter {
             it.isNotBlank() && it !in officialComplete
