@@ -46,6 +46,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
         baseCandidates: List<String>,
         maxTokens: Int,
         incompleteTexts: Set<String> = emptySet(),
+        validateGenerated: (String) -> Boolean = { false },
         callback: (List<String>, String?) -> Unit,
     ) {
         if (closed) return
@@ -61,7 +62,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 if (!ensureModel(modelSize)) return@runCatching emptyList<String>() to null
                 if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
 
-                val generated = if (shouldGenerateZenzaiCandidate(reading.length, maxTokens)) {
+                val generatedText = if (shouldGenerateZenzaiCandidate(reading.length, maxTokens)) {
                     ZenzEngine.generateWithContextAndConditionsV32(
                         "",
                         "",
@@ -77,6 +78,12 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 } else {
                     ""
                 }
+                if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
+                // The proposal must consume the whole reading through the dictionary.
+                // This also rejects truncated output and invented words/readings.
+                val generated = completeZenzaiCandidate(
+                    reading, generatedText, baseCandidates, incompleteTexts, validateGenerated,
+                ).orEmpty()
                 if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
 
                 val values = linkedSetOf<String>()
@@ -105,8 +112,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
                             ?: Float.NEGATIVE_INFINITY
                     }.thenBy { it.index },
                 ).map { it.value } + candidates.filter { it !in rerankedCandidates }
-                placeNovelGeneratedCandidate(ranked, generated, baseCandidates.toSet()) to
-                    generated.takeIf { it.isNotEmpty() }
+                ranked to generated.takeIf { it.isNotEmpty() }
             }.getOrElse { error ->
                 Log.e(LOG_TAG, "Candidate ranking failed", error)
                 emptyList<String>() to null
