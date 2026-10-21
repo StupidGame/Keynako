@@ -40,7 +40,8 @@ class KeyboardBackgroundImagesTest {
         val directory = temporary.newFolder("images")
         val file = File(directory, "large.image")
         val original = Bitmap.createBitmap(4096, 3072, Bitmap.Config.ARGB_8888)
-        file.outputStream().use { assertTrue(original.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        // Robolectric's ImageIO PNG writer uses quality=0 for maximum compression.
+        file.outputStream().use { assertTrue(original.compress(Bitmap.CompressFormat.PNG, 0, it)) }
         original.recycle()
         val images = KeyboardBackgroundImages(directory)
         assertTrue(file.length() < KeyboardBackgroundImages.MAXIMUM_BYTES)

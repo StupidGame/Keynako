@@ -57,7 +57,7 @@ jobs:
         run: |
           flutter analyze
           flutter test
-          (cd android && ./gradlew :app:testDebugUnitTest)
+          (cd android && ./gradlew :app:lintDebug :app:testDebugUnitTest)
 
       - name: Test Android signing preparation
         run: python3 -m unittest discover -s .github/scripts -p 'test_android_signing.py'

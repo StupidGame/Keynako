@@ -6,7 +6,6 @@ import android.os.Looper
 import android.util.Log
 import com.kazumaproject.zenz.ZenzEngine
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
@@ -216,17 +215,11 @@ private class ZenzaiModelManager(private val context: Context) {
         val expectedSize = if (size == "xsmall") 20_970_304L else 73_871_936L
         val folder = "zenz-v3.2-$size-gguf"
         val destination = File(context.filesDir, "zenzai/$folder/ggml-model-Q5_K_M.gguf")
-        if (destination.length() == expectedSize) return destination
         return runCatching {
-            check(destination.parentFile?.mkdirs() != false) {
-                "Could not create the Zenzai model directory"
-            }
             val asset = "$folder/ggml-model-Q5_K_M.gguf"
-            context.assets.open(asset).use { input ->
-                FileOutputStream(destination).use { output -> input.copyTo(output, 1024 * 1024) }
+            prepareZenzaiModelFile(destination, expectedSize) {
+                context.assets.open(asset)
             }
-            destination.takeIf { it.length() == expectedSize }
-                ?: error("Copied Zenzai model has an unexpected size: ${destination.length()}")
         }.onFailure { error ->
             Log.e("KeynakoZenzai", "Could not copy the $size model", error)
         }.getOrNull()
