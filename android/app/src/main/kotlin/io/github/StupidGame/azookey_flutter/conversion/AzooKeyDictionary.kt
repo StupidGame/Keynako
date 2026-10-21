@@ -14,6 +14,7 @@ internal data class DictionaryCandidates(
     val conversions: List<String>,
     val predictions: List<String>,
     val predictionReadings: Map<String, String> = emptyMap(),
+    val canonicalConversion: String? = conversions.firstOrNull(),
 )
 
 internal data class AzooKeyHotfixDictionaryEntry(
@@ -23,6 +24,7 @@ internal data class AzooKeyHotfixDictionaryEntry(
     val lcid: Int,
     val rcid: Int,
     val mid: Int,
+    val isLearned: Boolean = false,
 )
 
 /**
@@ -41,6 +43,7 @@ internal class AzooKeyDictionary(
         val score: Float,
         val additionalMask: Int = 0,
         val isUserEntry: Boolean = false,
+        val isLearned: Boolean = false,
     )
 
     private data class Path(
@@ -50,6 +53,7 @@ internal class AzooKeyDictionary(
         val clauseMids: List<Int>,
         val additionalMask: Int = 0,
         val kanaAlternatives: KanaAlternativeNode? = null,
+        val usesLearning: Boolean = false,
     )
 
     private data class KanaAlternative(
@@ -93,8 +97,10 @@ internal class AzooKeyDictionary(
     private var cachedLatticeEntries: List<Entry> = emptyList()
     private var cachedLattice: Array<MutableMap<Int, MutableList<Path>>> = emptyArray()
 
-    private val conversionCache = object : LinkedHashMap<ConversionCacheKey, List<String>>(128, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, List<String>>): Boolean =
+    private data class ConversionResult(val values: List<String>, val canonical: String?)
+
+    private val conversionCache = object : LinkedHashMap<ConversionCacheKey, ConversionResult>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, ConversionResult>): Boolean =
             size > 128
     }
 
@@ -118,6 +124,7 @@ internal class AzooKeyDictionary(
                 mid = it.mid,
                 score = it.wordWeight.toFloat(),
                 isUserEntry = true,
+                isLearned = it.isLearned,
             )
         }
         val crossingKanaThreshold = cachedLatticeReading.length < KANA_VARIANT_MIN_READING_LENGTH &&
@@ -132,7 +139,7 @@ internal class AzooKeyDictionary(
             if (previousMask != 0) {
                 usedMask = usedMask or previousMask
                 entry.copy(additionalMask = previousMask)
-            } else if (entry.ruby.isNotEmpty() && katakana.contains(entry.ruby)) {
+            } else if (!entry.isLearned && entry.ruby.isNotEmpty() && katakana.contains(entry.ruby)) {
                 val bit = (0 until MAX_TRACKED_ADDITIONAL_ENTRIES)
                     .firstOrNull { usedMask and (1 shl it) == 0 }
                 if (bit == null) entry else {
@@ -149,7 +156,7 @@ internal class AzooKeyDictionary(
             cachedAdditionalEntries = dynamicEntries
         }
         val cacheKey = ConversionCacheKey(katakana, conversionLimit, additionalDictionaryVersion)
-        val conversions = if (conversionLimit <= 0) emptyList() else conversionCache[cacheKey] ?: convert(
+        val conversions = if (conversionLimit <= 0) ConversionResult(emptyList(), null) else conversionCache[cacheKey] ?: convert(
             katakana,
             conversionLimit,
             dynamicEntries,
@@ -162,18 +169,35 @@ internal class AzooKeyDictionary(
             emptyList()
         }
         return DictionaryCandidates(
-            conversions,
+            conversions.values,
             predictions.map(ReadingPrediction::text),
             predictions.associate { it.text to it.reading },
+            conversions.canonical,
         )
+    }
+
+    /** Verify the entire proposed spelling against dictionary words consuming the entire reading. */
+    @Synchronized
+    fun validatesConversion(
+        reading: String,
+        text: String,
+        additionalEntries: List<AzooKeyHotfixDictionaryEntry> = emptyList(),
+    ): Boolean {
+        if (reading.isBlank() || text.isBlank()) return false
+        val entries = additionalEntries.map {
+            Entry(it.word, it.ruby.toKatakana(), it.lcid, it.rcid, it.mid,
+                it.wordWeight.toFloat(), isUserEntry = true, isLearned = it.isLearned)
+        }
+        return convert(reading.toKatakana(), 1, entries, text).values.firstOrNull() == text
     }
 
     private fun convert(
         reading: String,
         limit: Int,
         additionalEntries: List<Entry>,
-    ): List<String> {
-        val extendsCache = cachedLattice.isNotEmpty() &&
+        requiredText: String? = null,
+    ): ConversionResult {
+        val extendsCache = requiredText == null && cachedLattice.isNotEmpty() &&
             reading.startsWith(cachedLatticeReading) && cachedLatticeEntries == additionalEntries &&
             (reading.length < KANA_VARIANT_MIN_READING_LENGTH ||
                 cachedLatticeReading.length >= KANA_VARIANT_MIN_READING_LENGTH)
@@ -195,7 +219,7 @@ internal class AzooKeyDictionary(
 
         for (start in firstStart until reading.length) {
             val previous = lattice[start].flatMap { (contextKey, context) ->
-                val limit = if (contextKey >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
+                val limit = if (contextKey % LEARNED_CONTEXT_OFFSET >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
                 if (context.size > limit) trimContext(context, contextKey)
                 context
             }
@@ -221,7 +245,8 @@ internal class AzooKeyDictionary(
                     lattice[end],
                     previous,
                     entries.sortedByDescending(Entry::score),
-                    offerKanaAlternatives = reading.length >= KANA_VARIANT_MIN_READING_LENGTH,
+                    offerKanaAlternatives = requiredText == null && reading.length >= KANA_VARIANT_MIN_READING_LENGTH,
+                    requiredText = requiredText,
                 )
             }
             val ruby = reading[start].toString()
@@ -229,16 +254,22 @@ internal class AzooKeyDictionary(
                 appendPaths(lattice[start + 1], previous, listOf(
                     Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
                     Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
-                ))
+                ), requiredText = requiredText)
             }
         }
-        cachedLatticeReading = reading
-        cachedLatticeEntries = additionalEntries
-        cachedLattice = lattice
+        if (requiredText == null) {
+            cachedLatticeReading = reading
+            cachedLatticeEntries = additionalEntries
+            cachedLattice = lattice
+        }
 
-        val ranked = lattice.last().values.flatten().sortedByDescending {
+        val ranked = lattice.last().values.flatten().filter {
+            requiredText == null || it.text == requiredText
+        }.sortedByDescending {
             it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
         }
+        val canonical = ranked.firstOrNull { !it.usesLearning }?.text
+        if (requiredText != null) return ConversionResult(ranked.take(1).map(Path::text), canonical)
         val result = LinkedHashSet<String>()
         val leading = minOf(limit, if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH) 2 else 5)
         for (path in ranked) {
@@ -274,7 +305,11 @@ internal class AzooKeyDictionary(
             if (result.size >= limit) break
             if (path.text.isNotBlank()) result.add(path.text)
         }
-        return result.toList()
+        val values = result.toList()
+        val complete = if (canonical != null && canonical !in result && limit > 1) {
+            (values.take(1) + canonical + values.drop(1)).take(limit)
+        } else values
+        return ConversionResult(complete, canonical)
     }
 
     private fun kanaVariants(path: Path): List<Pair<String, Float>> {
@@ -311,6 +346,7 @@ internal class AzooKeyDictionary(
         previous: List<Path>,
         entries: List<Entry>,
         offerKanaAlternatives: Boolean = false,
+        requiredText: String? = null,
     ) {
         val kana = if (offerKanaAlternatives) entries.firstOrNull()?.ruby?.toHiragana().orEmpty() else ""
         val kanaScore = if (kana.isNotEmpty()) entries.asSequence()
@@ -331,9 +367,10 @@ internal class AzooKeyDictionary(
             val canOfferKana = kanaScore != null && entry.word != kana &&
                 entry.word.any { it in '\u3400'..'\u9fff' } &&
                 kana.length in 2..6 && entry.word.length <= 4
-            val touchedContexts = IntArray(1 shl MAX_TRACKED_ADDITIONAL_ENTRIES)
+            val touchedContexts = IntArray(2 shl MAX_TRACKED_ADDITIONAL_ENTRIES)
             var touchedCount = 0
             for (path in previous) {
+                if (requiredText != null && !requiredText.startsWith(path.text + entry.word)) continue
                 val mid = if (contributesMid(entry)) entry.mid else UNKNOWN_MID
                 val clauseMids = when {
                     path.clauseMids.isEmpty() || beginsClause(path.lastRcid, entry.lcid) ->
@@ -343,7 +380,9 @@ internal class AzooKeyDictionary(
                     else -> path.clauseMids
                 }
                 val mask = path.additionalMask or entry.additionalMask
-                val contextKey = entry.rcid + mask * CID_COUNT
+                val usesLearning = path.usesLearning || entry.isLearned
+                val contextKey = entry.rcid + mask * CID_COUNT +
+                    if (usesLearning) LEARNED_CONTEXT_OFFSET else 0
                 val context = destination.getOrPut(contextKey) { mutableListOf() }
                 context.add(
                     Path(
@@ -353,6 +392,7 @@ internal class AzooKeyDictionary(
                         lastRcid = entry.rcid,
                         clauseMids = clauseMids,
                         additionalMask = mask,
+                        usesLearning = usesLearning,
                         kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
                             KanaAlternative(
                                 path.text.length,
@@ -382,7 +422,7 @@ internal class AzooKeyDictionary(
     }
 
     private fun trimContext(context: MutableList<Path>, contextKey: Int) {
-        val limit = if (contextKey >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
+        val limit = if (contextKey % LEARNED_CONTEXT_OFFSET >= CID_COUNT) ADDITIONAL_PATHS_PER_CONTEXT else PATHS_PER_CONTEXT
         val best = context.sortedByDescending(Path::score).take(limit)
         context.clear()
         context.addAll(best)
@@ -661,6 +701,7 @@ internal class AzooKeyDictionary(
         private const val ADDITIONAL_PATHS_PER_CONTEXT = 1
         private const val CONTEXT_TRIM_THRESHOLD = 16
         private const val MAX_TRACKED_ADDITIONAL_ENTRIES = 4
+        private const val LEARNED_CONTEXT_OFFSET = CID_COUNT * (1 shl MAX_TRACKED_ADDITIONAL_ENTRIES)
         private const val DICTIONARY_THRESHOLD = -17f
         private const val DEFAULT_CONNECTION_SCORE = -25f
 

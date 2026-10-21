@@ -65,18 +65,18 @@ internal fun compositionCommitText(
     selectedIndex: Int = 0,
 ): String = if (useCandidate) candidates.getOrNull(selectedIndex) ?: candidates.firstOrNull() ?: reading else reading
 
-/** Give longer readings enough room to finish; capped requests are reranked without generation. */
+/** Try long conversions within a bounded budget; dictionary validation rejects partial output. */
 internal fun zenzaiGenerationTokenBudget(readingLength: Int, effort: Int): Int {
     val limit = when (effort) {
-        0 -> 64
-        2 -> 128
-        else -> 96
+        0 -> 96
+        2 -> 256
+        else -> 192
     }
-    return (readingLength * 3 + 16).coerceIn(16, limit)
+    return (readingLength * 2 + 16).coerceIn(16, limit)
 }
 
 internal fun shouldGenerateZenzaiCandidate(readingLength: Int, maxTokens: Int): Boolean =
-    readingLength * 3 + 16 <= maxTokens
+    readingLength + 16 <= maxTokens
 
 /** A complete conversion may lead live input; completions and bare kana may not. */
 internal fun bestLiveJapaneseConversion(
@@ -206,8 +206,14 @@ internal fun rerankedJapaneseCandidates(
     }.mapTo(mutableSetOf()) { it.text }
     val explicitlyPreferred = exactRegistrationTexts + strongLearnedWords
     val baseSet = baseCandidates.toSet()
+    // Model-confirmed kana such as 「になる」 or 「マスコット」 are complete spellings.
+    // Keep half-width katakana and unconfirmed literal forms as fallbacks.
+    val modelKana = preferredZenzaiCandidate?.takeIf {
+        it in setOf(katakanaToHiragana(reading), katakana) && it in baseSet
+    }
     fun complete(value: String) = value.isNotBlank() && value !in predictionTexts &&
-        value !in partialCandidates && (value !in fallback || value in explicitlyPreferred)
+        value !in partialCandidates &&
+        (value !in fallback || value in explicitlyPreferred || value == modelKana)
     // Zenzai's order applies to candidates grounded in the dictionary lattice.
     // A generated word joins after the first few complete paths.
     val established = ranked.filter { complete(it) && it in baseSet }

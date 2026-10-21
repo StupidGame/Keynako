@@ -42,9 +42,10 @@ class CandidatePredictionsTest {
     }
 
     @Test
-    fun longReadingsUseRerankingBeforeGenerationWouldBeTruncated() {
+    fun longReadingsCanGenerateCompleteConversionsWithinTheBudget() {
         assertEquals(96, zenzaiGenerationTokenBudget(40, 1))
-        assertTrue(!shouldGenerateZenzaiCandidate(40, 96))
+        assertTrue(shouldGenerateZenzaiCandidate(40, 96))
+        assertTrue(!shouldGenerateZenzaiCandidate(200, zenzaiGenerationTokenBudget(200, 1)))
         assertTrue(shouldGenerateZenzaiCandidate(8, zenzaiGenerationTokenBudget(8, 1)))
     }
 

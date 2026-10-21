@@ -147,13 +147,16 @@ internal fun pinJapaneseKanaCandidates(
 private val isolatedKatakana = Regex("(?<![゠-ヿ])[ァ-ヴ](?![゠-ヿ])")
 
 /** Prefer an existing spelling such as 作った over 作っタ, keeping both selectable. */
-private fun prioritizeHiraganaVariants(candidates: List<String>): List<String> {
+internal fun prioritizeHiraganaVariants(
+    candidates: List<String>,
+    protectedTexts: Set<String> = emptySet(),
+): List<String> {
     val available = candidates.toHashSet()
     return linkedSetOf<String>().apply {
         for (candidate in candidates) {
             // Only mixed Japanese text needs this preference. Whole katakana
             // words, prolonged sounds and small ヵ/ヶ counters stay intact.
-            if (candidate.any { it in 'ぁ'..'ゖ' || Character.isIdeographic(it.code) }) {
+            if (candidate !in protectedTexts && candidate.any { it in 'ぁ'..'ゖ' || Character.isIdeographic(it.code) }) {
                 val hiraganaVariant = isolatedKatakana.replace(candidate) {
                     katakanaToHiragana(it.value)
                 }

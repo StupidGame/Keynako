@@ -424,7 +424,8 @@ static std::string pure_greedy_decoding(
 
     std::string pre = preprocess_text(leftSideContext);
     auto prompt_tokens = tokenize_text(pre, /*add_bos=*/false, /*add_eos=*/false);
-    if (prompt_tokens.empty()) {
+    if (prompt_tokens.empty() || prompt_tokens.size() >= llama_n_ctx(ctx) ||
+        prompt_tokens.size() > llama_n_batch(ctx)) {
         llama_set_abort_callback(ctx, never_abort, nullptr);
         return "";
     }
@@ -453,6 +454,7 @@ static std::string pure_greedy_decoding(
     const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
 
     for (int i = 0; i < maxCount; ++i) {
+        if (prompt_tokens.size() + generated.size() >= llama_n_ctx(ctx)) break;
         float *logits = llama_get_logits_ith(ctx, -1);
         if (!logits) {
             LOGE("logits is null");
