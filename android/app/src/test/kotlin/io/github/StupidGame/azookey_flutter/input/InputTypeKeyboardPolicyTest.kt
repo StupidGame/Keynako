@@ -70,6 +70,16 @@ class InputTypeKeyboardPolicyTest {
         assertEquals(true, isSensitiveInputType(0x00000001 or 0x000000e0))
         assertEquals(false, isSensitiveInputType(0x00000001 or 0x00000020))
         assertEquals(false, isSensitiveInputType(0x00000002))
+        assertEquals(true, isSensitiveInputType(0x00000002 or 0x00000010))
+        assertEquals(true, isSensitiveInputType(0x00000001 or 0x00000090))
+    }
+
+    @Test
+    fun respectsTheEditorsNoPersonalizedLearningFlag() {
+        assertEquals(true, disablesPersonalizedLearning(0x1, 0x01000000))
+        assertEquals(true, disablesPersonalizedLearning(0x12, 0))
+        assertEquals(false, disablesPersonalizedLearning(0x1, 0x00000006))
+        assertEquals(false, isSensitiveInputType(0x1))
     }
 
     @Test

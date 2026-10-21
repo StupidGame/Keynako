@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 
@@ -362,34 +363,44 @@ class AppController extends ChangeNotifier {
     }
     final restored = AppData.decode(value);
     final themeImages = decoded['themeImages'];
-    if (themeImages is Map) {
+    final stagedImages = <String>[];
+    final importId = 'import_${DateTime.now().microsecondsSinceEpoch}_'
+        '${Random.secure().nextInt(0x100000000)}';
+    try {
       for (var index = 0; index < restored.themes.length; index++) {
-        final theme = restored.themes[index];
-        final encoded = themeImages[theme.id];
+        // File paths in a backup are untrusted and are not portable. Only
+        // embedded images, saved through the native image store, may be restored.
+        final theme = restored.themes[index].copyWith(clearBackgroundImage: true);
+        restored.themes[index] = theme;
+        final encoded = themeImages is Map ? themeImages[theme.id] : null;
         if (encoded is! String) continue;
+        if (encoded.length > ((8 * 1024 * 1024 + 2) ~/ 3) * 4) {
+          throw const FormatException('テーマ画像が大きすぎます。');
+        }
         final bytes = base64Decode(encoded);
         if (bytes.length > 8 * 1024 * 1024) {
           throw const FormatException('テーマ画像が大きすぎます。');
         }
         final path = await platform.saveKeyboardBackgroundImage(
-          themeId: theme.id,
+          // Stage under a fresh name so a later failure cannot overwrite an
+          // image still referenced by the current configuration.
+          themeId: '$importId-$index',
           bytes: bytes,
         );
         if (path == null) {
           throw const FormatException('テーマ画像を保存できませんでした。');
         }
+        stagedImages.add(path);
         restored.themes[index] = theme.copyWith(
           backgroundImage: path,
           backgroundImageRevision: DateTime.now().microsecondsSinceEpoch,
         );
       }
-    }
-    for (var index = 0; index < restored.themes.length; index++) {
-      final theme = restored.themes[index];
-      final path = theme.backgroundImage;
-      if (path != null && !await File(path).exists()) {
-        restored.themes[index] = theme.copyWith(clearBackgroundImage: true);
+    } catch (_) {
+      for (final path in stagedImages) {
+        await platform.deleteKeyboardBackgroundImage(path);
       }
+      rethrow;
     }
     data = restored;
     _dictionaryEdited = false;
@@ -425,12 +436,12 @@ class AppController extends ChangeNotifier {
       final theme = data.themes[index];
       final path = theme.backgroundImage;
       if (path == null) continue;
-      final file = File(path);
-      if (await file.exists()) {
-        if (await file.length() > 8 * 1024 * 1024) {
+      final bytes = await platform.readKeyboardBackgroundImage(path);
+      if (bytes != null) {
+        if (bytes.length > 8 * 1024 * 1024) {
           throw const FormatException('テーマ画像が大きすぎます。');
         }
-        images[theme.id] = base64Encode(await file.readAsBytes());
+        images[theme.id] = base64Encode(bytes);
       }
       themes[index].remove('backgroundImage');
     }

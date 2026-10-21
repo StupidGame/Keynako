@@ -112,6 +112,10 @@ class MainActivity : FlutterActivity() {
                             }
                     }
                 }
+                "readKeyboardBackgroundImage" -> {
+                    val path = call.argument<String>("path")
+                    result.success(path?.let { KeyboardBackgroundImages(backgroundImageDirectory()).read(it) })
+                }
                 "deleteKeyboardBackgroundImage" -> {
                     val path = call.argument<String>("path")
                     if (path != null) deleteKeyboardBackgroundImage(path)
@@ -265,7 +269,7 @@ class MainActivity : FlutterActivity() {
         try {
             val imageBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, imageBounds)
-            check(imageBounds.outWidth > 0 && imageBounds.outHeight > 0) {
+            check(KeyboardBackgroundImages.validDimensions(imageBounds.outWidth, imageBounds.outHeight)) {
                 "Could not decode the background image"
             }
             // Keep the source aspect ratio. The IME crops it against its actual

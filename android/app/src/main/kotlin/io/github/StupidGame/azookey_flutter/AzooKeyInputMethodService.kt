@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -41,7 +39,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.exifinterface.media.ExifInterface
+import io.github.StupidGame.azookey_flutter.input.disablesPersonalizedLearning
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeySpecialCandidates
@@ -97,7 +95,6 @@ import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationActio
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
 import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
-import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.closingDelimiterFor
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.custardVariationLongPressDuration
@@ -171,6 +168,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateSelectedExplicitly = false
     private val stableClauseCompletion = StableClauseCompletion()
     private var sensitiveInput = false
+    private var personalizedLearningDisabled = false
     private var allCapsInput = false
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
@@ -383,6 +381,25 @@ class AzooKeyInputMethodService : InputMethodService() {
         return inputViewFrame
     }
 
+    override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(info, restarting)
+        updateInputPrivacy(info)
+        invalidateCandidateLookup()
+        composing = ""
+        rawRoman = ""
+        displayedComposingText = ""
+        candidates.clear()
+        stableClauseCompletion.reset()
+    }
+
+    private fun updateInputPrivacy(info: EditorInfo?) {
+        val inputType = info?.inputType ?: InputType.TYPE_NULL
+        sensitiveInput = isSensitiveInputType(inputType)
+        personalizedLearningDisabled = disablesPersonalizedLearning(inputType, info?.imeOptions ?: 0)
+        allCapsInput = isAllCapsTextInput(inputType)
+        pendingReport = null
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         invalidateCandidateLookup()
         dictionaryMode = DictionaryMode.CLOSED
@@ -401,8 +418,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateSelectedExplicitly = false
         cursorBarVisible = false
         cursorBarView = null
-        sensitiveInput = isSensitiveInputType(info?.inputType ?: InputType.TYPE_NULL)
-        allCapsInput = isAllCapsTextInput(info?.inputType ?: InputType.TYPE_NULL)
+        updateInputPrivacy(info)
         val requestedMode = if (settings.optBoolean("automatic_keyboard_switching", true)) {
             requestedKeyboardMode(
                 inputType = info?.inputType ?: InputType.TYPE_NULL,
@@ -581,7 +597,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun applyKeyboardBackground() {
         inputViewFrame.setBackgroundColor(palette.background)
         val configuredPath = palette.backgroundImage
-        val file = configuredPath?.let(::File)?.takeIf { it.isFile }
+        val images = KeyboardBackgroundImages(File(filesDir, "theme_backgrounds"))
+        val file = configuredPath?.let(images::managedFile)?.takeIf { it.isFile }
         val signature = file?.let {
             val revision = palette.backgroundImageRevision ?: it.lastModified()
             "${it.absolutePath}:$revision"
@@ -595,7 +612,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 hasDrawable = inputViewFrame.hasKeyboardBackground,
             )
         ) {
-            val bitmap = file.let(::decodeKeyboardBackground)
+            val bitmap = file?.let { images.decode(it.absolutePath) }
             if (bitmap != null) {
                 inputViewFrame.setKeyboardBackground(bitmap)
                 backgroundImageSignature = signature
@@ -611,29 +628,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         // flashing the palette fallback until the next refresh.
         val hasImage = configuredPath != null && inputViewFrame.hasKeyboardBackground
         root.setBackgroundColor(if (hasImage) Color.TRANSPARENT else palette.background)
-    }
-
-    private fun decodeKeyboardBackground(file: File): Bitmap? {
-        val source = BitmapFactory.decodeFile(file.absolutePath) ?: return null
-        val exifOrientation = runCatching {
-            ExifInterface(file.absolutePath).getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL,
-            )
-        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-        val transform = backgroundImageOrientationTransform(exifOrientation)
-        if (transform.rotationDegrees == 0 && !transform.flipHorizontally) return source
-        val matrix = Matrix().apply {
-            if (transform.flipHorizontally) postScale(-1f, 1f)
-            if (transform.rotationDegrees != 0) postRotate(transform.rotationDegrees.toFloat())
-        }
-        return try {
-            Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true).also {
-                if (it !== source) source.recycle()
-            }
-        } catch (_: RuntimeException) {
-            source
-        }
     }
 
     private fun keyboardMetrics(
@@ -2761,6 +2755,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             editDictionaryText(value)
             return
         }
+        if (sensitiveInput && mode != "english") {
+            directCommit(value)
+            return
+        }
         val input = punctuationForInputMode(value, mode)
         if (input.isBlank()) {
             directCommit(input)
@@ -3498,6 +3496,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun maybeOfferReport(report: WrongConversionReport) {
+        if (personalizedLearningDisabled) return
         if (!settings.optBoolean("enable_wrong_conversion_report", false)) return
         if (report.selectedIndex == 0 || report.reading.isBlank()) return
         if (!report.reading.matches(Regex("[ぁ-ゖa-zA-Z0-9]+"))) return
@@ -3532,12 +3531,14 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun showLegacyReportPrompt(candidate: String, index: Int) {
+        if (personalizedLearningDisabled) return
         candidateExpanded = false
         setCandidatePanelVisible(false)
         candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
         addCandidateButton("「$candidate」を誤変換として報告") {}
         addCandidateButton("送信") {
+            if (personalizedLearningDisabled) return@addCandidateButton
             candidateRow.removeAllViews()
             addCandidateButton("送信中…") {}
             ReportClient.submitLegacyWrongConversion(
@@ -3582,6 +3583,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun maybeOfferReportWithoutFiltering(report: WrongConversionReport) {
+        if (personalizedLearningDisabled) return
         pendingReport = report
         candidateRow.removeAllViews()
         addCandidateButton("「${report.selected}」を選択") {}
@@ -3594,6 +3596,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun submitPendingReport() {
+        if (personalizedLearningDisabled) return
         val report = pendingReport ?: return
         candidateRow.removeAllViews()
         addCandidateButton("送信中…") {}
@@ -3628,7 +3631,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun learningScores(): Map<String, Int> {
-        if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) == 2) return emptyMap()
+        if (personalizedLearningDisabled || settings.optInt("memory_learining_styple_setting", 0) == 2) return emptyMap()
         val scores = state.optJSONObject("learning") ?: return emptyMap()
         if (scores === cachedLearningSource) return cachedLearningScores
         return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }.also {
@@ -3647,7 +3650,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         explicitSelection: Boolean = false,
         leftContext: String = "",
     ) {
-        if (sensitiveInput || shouldStopLearningForSearch() ||
+        if (personalizedLearningDisabled || shouldStopLearningForSearch() ||
             settings.optInt("memory_learining_styple_setting", 0) != 0) return
         val scores = learningScores().toMutableMap()
         recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
@@ -3706,8 +3709,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         prepareSelectionForInput()
         commitComposition()
-        val input = if (normalizePunctuation) punctuationForInputMode(value, mode) else value
-        val closingDelimiter = closingDelimiterFor(input)
+        val input = if (normalizePunctuation && !sensitiveInput) punctuationForInputMode(value, mode) else value
+        val closingDelimiter = if (sensitiveInput) null else closingDelimiterFor(input)
         currentInputConnection?.commitText(
             if (closingDelimiter == null) input else input + closingDelimiter,
             1,
@@ -4206,6 +4209,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun customInput(value: String) {
         if (value.isEmpty()) return
+        if (sensitiveInput) {
+            directCommit(value)
+            return
+        }
         val tab = activeCustomTab?.let(::customTabDefinition)
         if (tab == null) {
             inputText(value)
@@ -4277,6 +4284,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun custardInput(value: String) {
         if (value.isEmpty()) return
+        if (sensitiveInput) {
+            directCommit(value)
+            return
+        }
         if (value.isBlank()) {
             directCommit(value)
             return
