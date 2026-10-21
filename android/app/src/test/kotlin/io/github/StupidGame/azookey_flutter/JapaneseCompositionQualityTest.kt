@@ -76,6 +76,16 @@ class JapaneseCompositionQualityTest {
         assertTrue("言ってきた" in buildCandidates("いってきた", verbCandidates()))
     }
 
+    @Test fun aNounAndPastTenseFragmentDoesNotLeadTheActualServiceCandidates() {
+        val candidates = buildCandidates("いってきた", DictionaryCandidates(
+            listOf("一滴た", "言ってきた", "行ってきた"), emptyList(), canonicalConversion = "行ってきた",
+            parsedInflectionConversions = setOf("言ってきた", "行ってきた"),
+            invalidInflectionConversions = setOf("一滴た"),
+        ))
+        assertEquals("言ってきた", candidates.first())
+        assertTrue("一滴た" in candidates)
+    }
+
     @Test fun theDisplayedAlternativeCanBeTappedAndCommittedAsWritten() {
         val commits = mutableListOf<String>()
         val connection = Proxy.newProxyInstance(InputConnection::class.java.classLoader,

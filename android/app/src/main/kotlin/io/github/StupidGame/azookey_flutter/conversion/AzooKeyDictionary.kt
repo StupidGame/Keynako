@@ -17,6 +17,8 @@ internal data class DictionaryCandidates(
     val canonicalConversion: String? = conversions.firstOrNull(),
     /** Paths ending in parsed grammar or verb forms, with no raw kana fallback. */
     val parsedInflectionConversions: Set<String> = emptySet(),
+    /** Retained paths joining a noun directly to past tense; used for candidate ordering. */
+    val invalidInflectionConversions: Set<String> = emptySet(),
 )
 
 internal data class AzooKeyHotfixDictionaryEntry(
@@ -57,6 +59,8 @@ internal class AzooKeyDictionary(
         val kanaAlternatives: KanaAlternativeNode? = null,
         val usesLearning: Boolean = false,
         val usesFallback: Boolean = false,
+        val invalidInflection: Boolean = false,
+        val lastWasUserEntry: Boolean = false,
     )
 
     private data class KanaAlternative(
@@ -104,6 +108,7 @@ internal class AzooKeyDictionary(
         val values: List<String>,
         val canonical: String?,
         val parsedInflections: Set<String> = emptySet(),
+        val invalidInflections: Set<String> = emptySet(),
     )
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, ConversionResult>(128, 0.75f, true) {
@@ -181,6 +186,7 @@ internal class AzooKeyDictionary(
             predictions.associate { it.text to it.reading },
             conversions.canonical,
             conversions.parsedInflections,
+            conversions.invalidInflections,
         )
     }
 
@@ -280,10 +286,15 @@ internal class AzooKeyDictionary(
         // CID 147..554 are particles/auxiliaries; 561..1280 cover verb forms.
         // A bare noun at the end cannot prove that an unmatched registered-word
         // gap is a parsed inflection (for example an arbitrary katakana tail).
-        fun parsedInflection(path: Path) = !path.usesFallback &&
+        fun parsedInflection(path: Path) = !path.usesFallback && !path.invalidInflection &&
             (path.lastRcid in 147..554 || path.lastRcid in 561..1280)
         val parsedInflections = ranked.filter(::parsedInflection).mapTo(mutableSetOf(), Path::text)
-        if (requiredText != null) return ConversionResult(ranked.take(1).map(Path::text), canonical, parsedInflections)
+        val validSpellings = ranked.filter { !it.invalidInflection }.mapTo(mutableSetOf(), Path::text)
+        val invalidInflections = ranked.filter { it.invalidInflection && it.text !in validSpellings }
+            .mapTo(mutableSetOf(), Path::text)
+        if (requiredText != null) return ConversionResult(
+            ranked.take(1).map(Path::text), canonical, parsedInflections, invalidInflections,
+        )
         val result = LinkedHashSet<String>()
         val leading = minOf(limit, if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH) 2 else 5)
         for (path in ranked) {
@@ -327,7 +338,8 @@ internal class AzooKeyDictionary(
         val complete = if (canonical != null && canonical !in result && limit > 1) {
             (values.take(1) + canonical + values.drop(1)).take(limit)
         } else values
-        return ConversionResult(complete, canonical, parsedInflections.intersect(complete.toSet()))
+        return ConversionResult(complete, canonical, parsedInflections.intersect(complete.toSet()),
+            invalidInflections.intersect(complete.toSet()))
     }
 
     private fun kanaVariants(path: Path): List<Pair<String, Float>> {
@@ -413,6 +425,12 @@ internal class AzooKeyDictionary(
                         additionalMask = mask,
                         usesLearning = usesLearning,
                         usesFallback = path.usesFallback || fallback,
+                        // Past-tense た/だ attaches to an inflected predicate,
+                        // not directly to a noun such as 一滴. Custom stems
+                        // carry generic CIDs, so retain their existing behavior.
+                        invalidInflection = path.invalidInflection ||
+                            (!path.lastWasUserEntry && path.lastRcid in 1283..1309 && entry.lcid in 435..439),
+                        lastWasUserEntry = entry.isUserEntry,
                         kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
                             KanaAlternative(
                                 path.text.length,

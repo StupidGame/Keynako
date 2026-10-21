@@ -189,6 +189,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateCanonicalConversion: String? = null
     private var candidateOfficialRequest: OfficialLookupRequest? = null
     private var candidateTrustedCompleteTexts = emptySet<String>()
+    private var candidateInvalidInflectionTexts = emptySet<String>()
     private var candidateExpanded = false
     private data class OfficialLookupRequest(
         val reading: String,
@@ -2888,6 +2889,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                             request.additionalEntries.filter {
                                 !it.isLearned && katakanaToHiragana(it.ruby) == request.reading
                             }.mapTo(mutableSetOf()) { it.word },
+                            invalidInflectionTexts = official.invalidInflectionConversions,
                         ).firstOrNull()?.let {
                             liveConversionPreview.remember(previewSession, request.reading, it)
                         } == true && applyPendingLivePreview(displayReading())) {
@@ -3051,6 +3053,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val canonicalConversion = candidateCanonicalConversion
         val officialRequest = candidateOfficialRequest
         val trustedCompleteTexts = candidateTrustedCompleteTexts
+        val invalidInflectionTexts = candidateInvalidInflectionTexts
         val previewSession = liveConversionPreview.session
         zenzaiRuntime.rank(
             modelSize = size,
@@ -3102,6 +3105,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             }.mapTo(mutableSetOf()) { it.text }
             val reranked = keepKanaCandidatesVisible(reading, finalJapaneseCandidateSpellings(
                 registered, canonicalConversion, explicitDictionaryTexts, learnedTexts, generated,
+                invalidInflectionTexts,
             ))
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
@@ -3156,6 +3160,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateCanonicalConversion = null
         candidateOfficialRequest = null
         candidateTrustedCompleteTexts = emptySet()
+        candidateInvalidInflectionTexts = emptySet()
         if (input.isEmpty()) return emptyList()
         if (mode == "english") return buildEnglishCandidates(input)
         val reading = katakanaToHiragana(input)
@@ -3277,6 +3282,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val parsedInflectionConversions = officialCandidates.parsedInflectionConversions
             .intersect(allowedOfficialConversions.toSet())
+        candidateInvalidInflectionTexts = officialCandidates.invalidInflectionConversions
+            .intersect(allowedOfficialConversions.toSet())
         // A registered stem can look like an unfinished combination even when
         // the full dictionary has parsed the following verb or auxiliary.
         candidatePartialTexts = candidatePartialTexts - parsedInflectionConversions
@@ -3353,6 +3360,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         val explicitExactTexts = explicitDictionaryTexts + learned
         candidateExplicitDictionaryTexts = explicitDictionaryTexts
         candidateExactRegistrationTexts = explicitExactTexts
+        candidateInvalidInflectionTexts = candidateInvalidInflectionTexts - explicitExactTexts
+        candidatePartialTexts = candidatePartialTexts + candidateInvalidInflectionTexts
         candidateBlockedCombinationValues = if (dictionaryCombinationCandidates(
             reading, allCombinationEntries, 1,
         ).isEmpty()) allCombinationEntries.filter {
@@ -3427,6 +3436,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         return keepKanaCandidatesVisible(reading, finalJapaneseCandidateSpellings(
             preferSingleKanaReading(reading, contextual, exactRegistration),
             candidateCanonicalConversion, explicitDictionaryTexts, learnedTexts,
+            invalidInflectionTexts = candidateInvalidInflectionTexts,
         ))
     }
 

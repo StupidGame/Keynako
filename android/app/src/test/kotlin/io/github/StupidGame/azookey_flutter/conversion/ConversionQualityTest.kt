@@ -146,6 +146,45 @@ class ConversionQualityTest {
         ))
     }
 
+    @Test fun aNounFollowedByPastTenseCannotDisplaceTheActualVerb() {
+        val reading = "いってきた"
+        val result = dictionary.candidates(reading, 0)
+        val invalid = result.invalidInflectionConversions
+        assertTrue("一滴た" in result.conversions)
+        assertTrue("一滴た" in invalid)
+        assertTrue("Reading validation alone is not a default spelling preference",
+            dictionary.validatesConversion(reading, "一滴た"))
+        assertFalse("言ってきた" in invalid)
+        assertFalse("行ってきた" in invalid)
+        assertNull(completeZenzaiCandidate(reading, "一滴た", result.conversions, invalid) { true })
+        val ranked = listOf("一滴た", "言ってきた", "行ってきた")
+        val final = finalJapaneseCandidateSpellings(
+            ranked, result.canonicalConversion, modelPreferredText = "一滴た", invalidInflectionTexts = invalid,
+        )
+        assertEquals("言ってきた", final.first())
+        assertTrue("一滴た" in final)
+        assertEquals("言ってきた", compositionCommitText(reading, final, true))
+        assertEquals("一滴た", finalJapaneseCandidateSpellings(
+            ranked, result.canonicalConversion, registeredTexts = setOf("一滴た"), invalidInflectionTexts = invalid,
+        ).first())
+    }
+
+    @Test fun ordinaryPredicatesAndRegisteredVerbStemsAreNotClassifiedAsInvalidPastTense() {
+        for ((reading, expected) in listOf(
+            "ねこだ" to "猫だ", "すきだった" to "好きだった", "たべた" to "食べた",
+            "よんだ" to "読んだ", "たかかった" to "高かった", "いってきた" to "言ってきた",
+        )) {
+            val result = dictionary.candidates(reading, 0)
+            assertTrue("$reading must retain $expected", expected in result.conversions)
+            assertFalse("$expected cannot be marked invalid", expected in result.invalidInflectionConversions)
+        }
+        val result = dictionary.candidates("おとした", 0, additionalEntries = listOf(
+            AzooKeyHotfixDictionaryEntry("落とし", "おとし", -3.0, 1285, 1285, 501),
+        ))
+        assertTrue("落とした" in result.conversions)
+        assertFalse("落とした" in result.invalidInflectionConversions)
+    }
+
     @Test fun singleKanaParticlesSurviveRerankingWithoutLearning() {
         for ((reading, expected, fragmented) in listOf(
             Triple("ぱすたに", "パスタに", "パスタ煮"),

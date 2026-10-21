@@ -94,9 +94,15 @@ internal fun finalJapaneseCandidateSpellings(
     registeredTexts: Set<String> = emptySet(),
     learnedTexts: Set<String> = emptySet(),
     modelPreferredText: String? = null,
-): List<String> = preserveDictionaryKana(
-    canonicalConversion,
-    prioritizeHiraganaVariants(candidates, registeredTexts),
-    registeredTexts + learnedTexts,
-    modelPreferredText,
-)
+    invalidInflectionTexts: Set<String> = emptySet(),
+): List<String> {
+    val preferred = registeredTexts + learnedTexts
+    val invalid = invalidInflectionTexts - preferred
+    val grammatical = candidates.filter { it !in invalid } + candidates.filter { it in invalid }
+    return preserveDictionaryKana(
+        canonicalConversion?.takeIf { it !in invalid },
+        prioritizeHiraganaVariants(grammatical, registeredTexts),
+        preferred,
+        modelPreferredText,
+    )
+}
