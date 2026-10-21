@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   android:
-    name: Signed Android APK
+    name: ${{ github.event_name == 'pull_request' && 'Android validation (no APK distribution)' || 'Signed Android release APK' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 60
 
@@ -62,24 +62,38 @@ jobs:
       - name: Test Android signing preparation
         run: python3 -m unittest discover -s .github/scripts -p 'test_android_signing.py'
 
-      - name: Restore the existing CI signing key
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: .ci/keynako-ci-release.jks
-          key: keynako-ci-release-signing-v1
+      - name: Build the unsigned Android release for validation
+        if: github.event_name == 'pull_request'
+        working-directory: android
+        run: ./gradlew :app:assembleRelease -Pflutter.versionCode="$GITHUB_RUN_NUMBER"
+
+      - name: Explain where to download the Android release
+        if: github.event_name == 'pull_request'
+        env:
+          KEYNAKO_HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlencode
+          query = urlencode({"query": "event:push branch:" + os.environ["KEYNAKO_HEAD_BRANCH"]})
+          url = (os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"] +
+                 "/actions/workflows/build-app-files.yml?" + query)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("## Android APK\n\nこのPR実行はビルド検証のみで、APKを配布しません。\n\n")
+              summary.write("更新用APKは固定のリリース鍵で署名した "
+                            "`keynako-android-release-apk-*` を使ってください。\n\n")
+              summary.write("[同じブランチの配布ビルドを開く](" + url + ")\n")
+          PY
 
       - name: Prepare the Android signing key
-        id: android-signing
+        if: github.event_name != 'pull_request'
         env:
-          KEYNAKO_ANDROID_SIGNING_PASSPHRASE: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_SIGNING_PASSPHRASE || '' }}
-          KEYNAKO_REQUIRE_ENCRYPTED: ${{ github.event_name != 'pull_request' }}
-          KEYNAKO_ANDROID_KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_KEYSTORE_BASE64 || '' }}
-          KEYNAKO_ANDROID_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_STORE_PASSWORD || '' }}
-          KEYNAKO_ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_KEY_ALIAS || '' }}
-          KEYNAKO_ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEYNAKO_ANDROID_KEY_PASSWORD || '' }}
+          KEYNAKO_ANDROID_SIGNING_PASSPHRASE: ${{ secrets.KEYNAKO_ANDROID_SIGNING_PASSPHRASE }}
+          KEYNAKO_REQUIRE_ENCRYPTED: "true"
         run: python3 .github/scripts/android_signing.py
 
       - name: Build the signed APK
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -89,6 +103,7 @@ jobs:
             --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Verify the APK signature
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -100,9 +115,10 @@ jobs:
           python3 .github/scripts/android_signing.py --verify-apk-report build/app/outputs/flutter-apk/signature-report.txt
 
       - name: Upload Android files
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: ${{ steps.android-signing.outputs.kind == 'encrypted' && 'keynako-android-release-apk' || 'keynako-android-signed-apk' }}-${{ github.run_number }}
+          name: keynako-android-release-apk-${{ github.run_number }}
           if-no-files-found: error
           retention-days: 14
           path: |

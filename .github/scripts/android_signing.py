@@ -56,12 +56,11 @@ def verify_apk_report(path, environ):
 
 
 def prepare(environ):
-    # Never decode or export a release key during a pull-request build.
+    # Pull requests validate an unsigned build and must never publish another signer.
+    if environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        raise ValueError("Pull requests must not sign Android APKs. Build an unsigned release for validation.")
     values = [environ.get(name, "") for name in SECRET_NAMES]
     password = environ.get(ENCRYPTED_SECRET_NAME, "")
-    if environ.get("GITHUB_EVENT_NAME") == "pull_request":
-        values = [""] * len(SECRET_NAMES)
-        password = ""
 
     if environ.get("KEYNAKO_REQUIRE_ENCRYPTED", "").lower() == "true" and not password:
         raise ValueError("Set KEYNAKO_ANDROID_SIGNING_PASSPHRASE to build with the encrypted release key.")
@@ -95,17 +94,12 @@ def prepare(environ):
         keystore = Path(environ["RUNNER_TEMP"]) / "keynako-release.jks"
         kind = "release"
     else:
-        keystore = Path(environ["GITHUB_WORKSPACE"]) / ".ci/keynako-ci-release.jks"
-        if not keystore.is_file() or keystore.stat().st_size == 0:
-            raise ValueError(
-                "The existing Android CI signing key is unavailable. Refusing to generate "
-                "a replacement: it would break updates of installed APKs. Restore the original "
-                "keystore or configure the four KEYNAKO_ANDROID_* secrets with that key. "
-                "See docs/github_actions_builds.md."
-            )
-        store_password = key_password = "keynako-ci-release-v1"
-        alias = "keynako-ci"
-        kind = "ci"
+        raise ValueError(
+            "No Android release signer is configured. Refusing to generate a replacement "
+            "or reuse a cached CI key: it would break updates of installed APKs. "
+            "Set KEYNAKO_ANDROID_SIGNING_PASSPHRASE for the committed encrypted release key. "
+            "See docs/github_actions_builds.md."
+        )
 
     exported = {
         "KEYNAKO_KEYSTORE_PATH": str(keystore),
