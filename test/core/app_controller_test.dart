@@ -91,12 +91,19 @@ void main() {
             await destination.writeAsBytes(arguments['bytes'] as List<int>);
             return destination.path;
           }
+          if (call.method == 'readKeyboardBackgroundImage') {
+            final arguments = Map<String, Object?>.from(call.arguments as Map);
+            return File(arguments['path'] as String).readAsBytes();
+          }
           return null;
         });
     try {
       final source = File('${directory.path}/original.image');
       await source.writeAsBytes([1, 2, 3, 4]);
-      final exporter = AppController(storage: _MemoryStorage());
+      final exporter = AppController(
+        storage: _MemoryStorage(),
+        platform: PlatformService(channel: channel),
+      );
       await exporter.initialize();
       exporter.replaceTheme(
         exporter.data.themes.first.copyWith(backgroundImage: source.path),
@@ -114,6 +121,69 @@ void main() {
       exporter.dispose();
       imported.dispose();
     } finally {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('backup paths cannot request arbitrary files from the exporter', () async {
+    final directory = await Directory.systemTemp.createTemp('keynako-path-test-');
+    final sentinel = File('${directory.path}/private.txt');
+    await sentinel.writeAsString('private sentinel must not be exported');
+    final controller = AppController(storage: _MemoryStorage());
+    try {
+      final backup = controller.data.toJson();
+      (backup['themes'] as List).first['backgroundImage'] = sentinel.path;
+      await controller.importJson(jsonEncode(backup));
+      expect(controller.data.themes.first.backgroundImage, isNull);
+      final exported = jsonDecode(await controller.exportJson()) as Map;
+      expect(exported['themeImages'], isNull);
+      expect(jsonEncode(exported), isNot(contains(sentinel.path)));
+      expect(jsonEncode(exported), isNot(contains(base64Encode(await sentinel.readAsBytes()))));
+    } finally {
+      controller.dispose();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('a failed image import preserves current files and removes staged images', () async {
+    final directory = await Directory.systemTemp.createTemp('keynako-import-test-');
+    const channel = MethodChannel('net.azookey/failed-image-import-test');
+    final original = File('${directory.path}/classic.image');
+    await original.writeAsBytes([9, 8, 7]);
+    final staged = <File>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          final arguments = Map<String, Object?>.from(call.arguments as Map);
+          if (call.method == 'saveKeyboardBackgroundImage') {
+            final file = File('${directory.path}/${arguments['themeId']}.image');
+            await file.writeAsBytes(arguments['bytes'] as List<int>);
+            staged.add(file);
+            return file.path;
+          }
+          if (call.method == 'deleteKeyboardBackgroundImage') {
+            await File(arguments['path'] as String).delete();
+          }
+          return null;
+        });
+    final controller = AppController(
+      storage: _MemoryStorage(), platform: PlatformService(channel: channel),
+    );
+    try {
+      controller.replaceTheme(controller.data.themes.first.copyWith(backgroundImage: original.path));
+      final backup = controller.data.toJson();
+      backup['themeImages'] = {
+        controller.data.themes[0].id: 'AQIDBA==',
+        controller.data.themes[1].id: '%invalid-base64',
+      };
+      await expectLater(controller.importJson(jsonEncode(backup)), throwsFormatException);
+      expect(staged, hasLength(1));
+      expect(await staged.single.exists(), isFalse);
+      expect(await original.readAsBytes(), [9, 8, 7]);
+      expect(controller.data.themes.first.backgroundImage, original.path);
+    } finally {
+      controller.dispose();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
       await directory.delete(recursive: true);

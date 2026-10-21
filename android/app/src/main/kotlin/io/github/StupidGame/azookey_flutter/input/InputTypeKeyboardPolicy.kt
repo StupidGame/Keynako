@@ -82,9 +82,16 @@ internal fun isAllCapsTextInput(inputType: Int): Boolean =
 
 /** Password fields must not expose their contents in the candidate row. */
 internal fun isSensitiveInputType(inputType: Int): Boolean {
-    if (inputType and TYPE_MASK_CLASS != TYPE_CLASS_TEXT) return false
-    return inputType and TYPE_MASK_VARIATION in passwordTextVariations
+    val variation = inputType and TYPE_MASK_VARIATION
+    return when (inputType and TYPE_MASK_CLASS) {
+        TYPE_CLASS_TEXT -> variation in passwordTextVariations
+        TYPE_CLASS_NUMBER -> variation == 0x00000010 // TYPE_NUMBER_VARIATION_PASSWORD
+        else -> false
+    }
 }
+
+internal fun disablesPersonalizedLearning(inputType: Int, imeOptions: Int): Boolean =
+    isSensitiveInputType(inputType) || imeOptions and 0x01000000 != 0 // IME_FLAG_NO_PERSONALIZED_LEARNING
 
 private fun prefersEnglish(localeTags: List<String>): Boolean {
     val primaryLanguage = localeTags.firstOrNull()

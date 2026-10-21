@@ -1,6 +1,7 @@
 package io.github.StupidGame.azookey_flutter
 
 import org.json.JSONObject
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -152,9 +153,13 @@ object ReportClient {
         status: Int = connection.responseCode,
     ): Boolean {
         if (status !in 200..299) return false
-        val bytes = connection.inputStream.use { it.readNBytes(MAXIMUM_RESPONSE_BYTES + 1) }
-        return bytes.size <= MAXIMUM_RESPONSE_BYTES &&
-            responseAcceptsSubmission(String(bytes, StandardCharsets.UTF_8))
+        return connection.inputStream.use(::acceptsSharedSubmissionBody)
+    }
+
+    internal fun acceptsSharedSubmissionBody(input: InputStream): Boolean {
+        // InputStream.readNBytes(int) requires Android 13, while our minimum is 7.
+        val bytes = input.readBoundedBytes(MAXIMUM_RESPONSE_BYTES) ?: return false
+        return responseAcceptsSubmission(String(bytes, StandardCharsets.UTF_8))
     }
 
     private fun responseAcceptsSubmission(body: String): Boolean {
