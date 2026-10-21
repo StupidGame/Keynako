@@ -94,6 +94,58 @@ class ConversionQualityTest {
         assertEquals("マスコット", finalJapaneseCandidateSpellings(ranked, result.canonicalConversion).first())
     }
 
+    @Test fun parsedVerbsSurviveIncompleteRegisteredCombinationChecks() {
+        val reading = "いってきた"
+        val entries = listOf(
+            DictionaryCombinationEntry("いって", "言って"),
+            DictionaryCombinationEntry("た", "た"),
+        )
+        val result = dictionary.candidates(reading, 0, additionalEntries = entries.map {
+            AzooKeyHotfixDictionaryEntry(it.value, it.reading, -9.0, 1285, 1285, 501)
+        })
+        assertTrue(result.parsedInflectionConversions.containsAll(listOf("行ってきた", "言ってきた")))
+        val incomplete = incompleteDictionaryCombinations(reading, entries)
+            .mapTo(mutableSetOf(), ::katakanaToHiragana)
+        assertTrue("The registered-word heuristic must exercise the original rejection", "言ってきた" in incomplete)
+        assertFalse(isAllowedCombinationCandidate(
+            "言ってきた", emptySet(), incomplete, entries.map { it.value }, emptySet(),
+        ))
+        val remainingIncomplete = incomplete - result.parsedInflectionConversions.map(::katakanaToHiragana).toSet()
+        assertTrue(isAllowedCombinationCandidate(
+            "言ってきた", result.parsedInflectionConversions, remainingIncomplete, entries.map { it.value }, emptySet(),
+        ))
+        val generated = completeZenzaiCandidate(reading, "言ってきた", result.conversions, remainingIncomplete) {
+            dictionary.validatesConversion(reading, it)
+        }
+        val ranked = rerankedJapaneseCandidates(
+            reading, result.conversions, result.conversions, emptyMap(), emptyMap(),
+            preferredZenzaiCandidate = generated,
+        )
+        val final = finalJapaneseCandidateSpellings(ranked, result.canonicalConversion, modelPreferredText = generated)
+        assertEquals("言ってきた", final.first())
+        assertTrue("行ってきた" in final)
+        assertEquals("言ってきた", compositionCommitText(reading, final, true))
+    }
+
+    @Test fun unparsedRegisteredWordTailsAreNotPromotedToParsedInflections() {
+        val entries = listOf(
+            DictionaryCombinationEntry("まきな", "マキナ"), DictionaryCombinationEntry("れいな", "レイナ"),
+        )
+        val reading = "まきなとれいなぴょ"
+        val result = dictionary.candidates(reading, 0, additionalEntries = entries.map {
+            AzooKeyHotfixDictionaryEntry(it.value, it.reading, -9.0, 1285, 1285, 501)
+        })
+        assertFalse("Unclassified literal kana cannot prove a complete grammatical conversion",
+            "マキナとレイナピョ" in result.parsedInflectionConversions)
+        val incomplete = incompleteDictionaryCombinations(reading, entries)
+            .mapTo(mutableSetOf(), ::katakanaToHiragana) -
+            result.parsedInflectionConversions.map(::katakanaToHiragana).toSet()
+        assertFalse(isAllowedCombinationCandidate(
+            "マキナとレイナピョ", result.parsedInflectionConversions, incomplete,
+            entries.map { it.value }, emptySet(),
+        ))
+    }
+
     @Test fun singleKanaParticlesSurviveRerankingWithoutLearning() {
         for ((reading, expected, fragmented) in listOf(
             Triple("ぱすたに", "パスタに", "パスタ煮"),

@@ -3275,6 +3275,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         val allowedOfficialConversions = officialCandidates.conversions.filter {
             it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
         }
+        val parsedInflectionConversions = officialCandidates.parsedInflectionConversions
+            .intersect(allowedOfficialConversions.toSet())
+        // A registered stem can look like an unfinished combination even when
+        // the full dictionary has parsed the following verb or auxiliary.
+        candidatePartialTexts = candidatePartialTexts - parsedInflectionConversions
         values.addAll(allowedOfficialConversions.take(1))
         values.addAll(combinedWords)
         values.addAll(specialCandidates)
@@ -3339,7 +3344,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val learnedCombinations = (learnedOnlyCombinations + mixedCombinations).distinct().take(8)
         values.addAll(learnedCombinations)
         val allCombinationEntries = registeredCombinationEntries + learnedCombinationEntries
-        candidateTrustedCompleteTexts = if (hasLongOrdinaryGapBetweenRegisteredWords(
+        candidateTrustedCompleteTexts = parsedInflectionConversions + if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
         val explicitDictionaryTexts = (registeredExact + activeHotfixEntries.filter {
@@ -3355,7 +3360,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         }.map { it.value }.distinct() else emptyList()
         candidateNormalizedIncompleteCombinationTexts = incompleteDictionaryCombinations(
             reading, allCombinationEntries, explicitExactTexts,
-        ).mapTo(mutableSetOf(), ::katakanaToHiragana)
+        ).mapTo(mutableSetOf(), ::katakanaToHiragana) -
+            parsedInflectionConversions.mapTo(mutableSetOf(), ::katakanaToHiragana)
         val exactTexts = values.toSet() + learned
         val learnedPrefixes = learnedJapanesePrefixPredictions(
             reading, learning, exactTexts, predictionLimit,

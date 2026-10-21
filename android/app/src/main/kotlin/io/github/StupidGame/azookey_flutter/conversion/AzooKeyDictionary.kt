@@ -15,6 +15,8 @@ internal data class DictionaryCandidates(
     val predictions: List<String>,
     val predictionReadings: Map<String, String> = emptyMap(),
     val canonicalConversion: String? = conversions.firstOrNull(),
+    /** Paths ending in parsed grammar or verb forms, with no raw kana fallback. */
+    val parsedInflectionConversions: Set<String> = emptySet(),
 )
 
 internal data class AzooKeyHotfixDictionaryEntry(
@@ -54,6 +56,7 @@ internal class AzooKeyDictionary(
         val additionalMask: Int = 0,
         val kanaAlternatives: KanaAlternativeNode? = null,
         val usesLearning: Boolean = false,
+        val usesFallback: Boolean = false,
     )
 
     private data class KanaAlternative(
@@ -97,7 +100,11 @@ internal class AzooKeyDictionary(
     private var cachedLatticeEntries: List<Entry> = emptyList()
     private var cachedLattice: Array<MutableMap<Int, MutableList<Path>>> = emptyArray()
 
-    private data class ConversionResult(val values: List<String>, val canonical: String?)
+    private data class ConversionResult(
+        val values: List<String>,
+        val canonical: String?,
+        val parsedInflections: Set<String> = emptySet(),
+    )
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, ConversionResult>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, ConversionResult>): Boolean =
@@ -173,6 +180,7 @@ internal class AzooKeyDictionary(
             predictions.map(ReadingPrediction::text),
             predictions.associate { it.text to it.reading },
             conversions.canonical,
+            conversions.parsedInflections,
         )
     }
 
@@ -254,7 +262,7 @@ internal class AzooKeyDictionary(
                 appendPaths(lattice[start + 1], previous, listOf(
                     Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
                     Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
-                ), requiredText = requiredText)
+                ), requiredText = requiredText, fallback = true)
             }
         }
         if (requiredText == null) {
@@ -269,7 +277,13 @@ internal class AzooKeyDictionary(
             it.score + connectionScore(it.lastRcid, EOS_CID) + semanticScore(it.clauseMids)
         }
         val canonical = ranked.firstOrNull { !it.usesLearning }?.text
-        if (requiredText != null) return ConversionResult(ranked.take(1).map(Path::text), canonical)
+        // CID 147..554 are particles/auxiliaries; 561..1280 cover verb forms.
+        // A bare noun at the end cannot prove that an unmatched registered-word
+        // gap is a parsed inflection (for example an arbitrary katakana tail).
+        fun parsedInflection(path: Path) = !path.usesFallback &&
+            (path.lastRcid in 147..554 || path.lastRcid in 561..1280)
+        val parsedInflections = ranked.filter(::parsedInflection).mapTo(mutableSetOf(), Path::text)
+        if (requiredText != null) return ConversionResult(ranked.take(1).map(Path::text), canonical, parsedInflections)
         val result = LinkedHashSet<String>()
         val leading = minOf(limit, if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH) 2 else 5)
         for (path in ranked) {
@@ -282,7 +296,11 @@ internal class AzooKeyDictionary(
             // sentence can still offer hiragana in its middle.
             val plainHiragana = reading.toHiragana()
             val variants = ranked.asSequence().distinctBy(Path::text).take(3)
-                .flatMap { path -> kanaVariants(path).asSequence() }
+                .flatMap { path ->
+                    val alternatives = kanaVariants(path)
+                    if (parsedInflection(path)) parsedInflections.addAll(alternatives.map { it.first })
+                    alternatives.asSequence()
+                }
                 .filter { it.first !in result && it.first != plainHiragana }
                 .distinctBy { it.first }
                 .sortedByDescending { it.second }
@@ -309,7 +327,7 @@ internal class AzooKeyDictionary(
         val complete = if (canonical != null && canonical !in result && limit > 1) {
             (values.take(1) + canonical + values.drop(1)).take(limit)
         } else values
-        return ConversionResult(complete, canonical)
+        return ConversionResult(complete, canonical, parsedInflections.intersect(complete.toSet()))
     }
 
     private fun kanaVariants(path: Path): List<Pair<String, Float>> {
@@ -347,6 +365,7 @@ internal class AzooKeyDictionary(
         entries: List<Entry>,
         offerKanaAlternatives: Boolean = false,
         requiredText: String? = null,
+        fallback: Boolean = false,
     ) {
         val kana = if (offerKanaAlternatives) entries.firstOrNull()?.ruby?.toHiragana().orEmpty() else ""
         val kanaScore = if (kana.isNotEmpty()) entries.asSequence()
@@ -393,6 +412,7 @@ internal class AzooKeyDictionary(
                         clauseMids = clauseMids,
                         additionalMask = mask,
                         usesLearning = usesLearning,
+                        usesFallback = path.usesFallback || fallback,
                         kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
                             KanaAlternative(
                                 path.text.length,
