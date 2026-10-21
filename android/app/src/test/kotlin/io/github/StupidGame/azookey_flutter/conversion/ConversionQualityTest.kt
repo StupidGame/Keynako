@@ -19,6 +19,52 @@ class ConversionQualityTest {
         })
     }
 
+    @Test fun registeredAndLearnedWordsReplaceOnlyTheirAlignedSpansInSentences() {
+        val reading = "きょうさとうさんととうきょうにいく"
+        val original = "今日佐藤さんと東京に行く"
+        val entries = listOf(
+            AzooKeyHotfixDictionaryEntry("佐東", "さとう", -5.0, 1285, 1285, 501, isLearned = true),
+            AzooKeyHotfixDictionaryEntry("TOKYO", "とうきょう", -9.0, 1285, 1285, 501),
+        )
+        assertEquals("今日佐東さんとTOKYOに行く",
+            dictionary.preferredSentenceConversion(reading, original, entries))
+        assertTrue(dictionary.validatesConversion(reading, "今日佐東さんとTOKYOに行く", entries))
+        val actual = dictionary.candidates(reading, 0, additionalEntries = entries)
+        assertTrue(actual.preferredSentenceConversions.isNotEmpty())
+        assertTrue(actual.conversions.first().contains("佐東"))
+        assertTrue(actual.conversions.first().contains("TOKYO"))
+    }
+
+    @Test fun sentencePreferencesDoNotSplitTeachersOrReuseTheWrongReadingOfRawFish() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("姓", "せい", -9.0, 1285, 1285, 501))
+        assertNull(dictionary.preferredSentenceConversion(
+            "せんせいがなまのさかなをかう", "先生が生の魚を買う", entries,
+        ))
+    }
+
+    @Test fun aLearnedPhraseCannotHideARegisteredWordInsideIt() {
+        val entries = listOf(
+            AzooKeyHotfixDictionaryEntry("佐藤に会う", "さとうにあう", -1.0, 1285, 1285, 501, isLearned = true),
+            AzooKeyHotfixDictionaryEntry("佐東", "さとう", -9.0, 1285, 1285, 501),
+        )
+        assertEquals("佐東に会う", dictionary.preferredSentenceConversion("さとうにあう", "佐藤に会う", entries))
+    }
+
+    @Test fun wordPreferenceAlignmentDoesNotChangeTheIncrementalLatticeOrAcceptPredictions() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("TOKYO", "とうきょう", -9.0, 1285, 1285, 501))
+        val reading = "きょうとうきょうにいく"
+        dictionary.candidates(reading, 0, additionalEntries = entries)
+        assertNull(dictionary.preferredSentenceConversion("とう", "東京", entries))
+        dictionary.preferredSentenceConversion(reading, "今日東京に行く", entries)
+        val next = dictionary.candidates(reading + "ので", 0, additionalEntries = entries)
+        val fresh = AzooKeyDictionary(DictionaryAssetSource { path ->
+            val root = generateSequence(File(requireNotNull(System.getProperty("user.dir"))).absoluteFile) { it.parentFile }
+                .map { File(it, "third_party/azookey_dictionary_storage/Dictionary") }.first(File::isDirectory)
+            File(root, path).readBytes()
+        }).candidates(reading + "ので", 0, additionalEntries = entries)
+        assertEquals(fresh.conversions, next.conversions)
+    }
+
     @Test fun unlearnedInputKeepsVerbEndingsAndKatakanaWordsAfterEveryRankingStage() {
         for ((reading, expected, fragmented) in listOf(
             Triple("おとした", "落とした", "落としタ"),

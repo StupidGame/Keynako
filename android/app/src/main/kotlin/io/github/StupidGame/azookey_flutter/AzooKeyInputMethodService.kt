@@ -183,6 +183,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateBlockedCombinationValues = emptyList<String>()
     private var candidateExactRegistrationTexts = emptySet<String>()
     private var candidateExplicitDictionaryTexts = emptySet<String>()
+    private var candidatePreferredSentenceTexts = emptySet<String>()
     private var candidateOfficialLiteralReading = false
     private var candidateCanonicalConversion: String? = null
     private var candidateOfficialRequest: OfficialLookupRequest? = null
@@ -3047,6 +3048,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val blockedCombinationValues = candidateBlockedCombinationValues
         val exactRegistrationTexts = candidateExactRegistrationTexts
         val explicitDictionaryTexts = candidateExplicitDictionaryTexts
+        val sentencePreferenceTexts = candidatePreferredSentenceTexts
         val officialLiteralReading = candidateOfficialLiteralReading
         val canonicalConversion = candidateCanonicalConversion
         val officialRequest = candidateOfficialRequest
@@ -3066,28 +3068,36 @@ class AzooKeyInputMethodService : InputMethodService() {
                     reading, text, officialRequest.additionalEntries,
                 )
             },
-        ) { ranked, generated ->
+            preferGenerated = { text ->
+                officialRequest?.let {
+                    azooKeyDictionary.preferredSentenceConversion(reading, text, it.additionalEntries)
+                }
+            },
+        ) { ranked, generated, generatedUsesPreferences ->
             if (displayReading() != reading || ranked.isEmpty() ||
                 previewSession != liveConversionPreview.session) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
             val katakana = hiraganaToKatakana(reading)
             val learning = learningScores()
+            val generatedPreference = generated?.takeIf { generatedUsesPreferences }?.let(::setOf).orEmpty()
+            val preferredTexts = explicitDictionaryTexts + generatedPreference
+            val dictionaryCandidates = dictionaryPriority + generatedPreference
             val rankedCandidates = rerankedJapaneseCandidates(
                 reading = reading,
                 ranked = ranked,
                 baseCandidates = (listOfNotNull(generated) + baseCandidates).distinct(),
                 predictionReadings = predictionReadings,
                 learning = learning,
-                dictionaryCandidates = dictionaryPriority,
+                dictionaryCandidates = dictionaryCandidates,
                 learningCandidates = learningPriority,
                 partialCandidates = partialTexts,
                 preferredZenzaiCandidate = generated,
-                exactRegistrationTexts = explicitDictionaryTexts,
+                exactRegistrationTexts = preferredTexts,
                 dictionaryLedLiteral = officialLiteralReading,
             ).filter {
                 it == reading || it == katakana || isAllowedCombinationCandidate(
-                    it, trustedCompleteTexts, normalizedIncompleteTexts,
-                    blockedCombinationValues, exactRegistrationTexts,
+                    it, trustedCompleteTexts + generatedPreference, normalizedIncompleteTexts,
+                    blockedCombinationValues, exactRegistrationTexts + generatedPreference,
                 )
             }
             val contextual = prioritizeContextualJapaneseCandidates(
@@ -3095,14 +3105,14 @@ class AzooKeyInputMethodService : InputMethodService() {
             )
             val registered =
                 prioritizeRegisteredJapaneseCandidates(
-                    contextual, dictionaryPriority, predictionReadings.keys,
-                    partialTexts, explicitDictionaryTexts,
+                    contextual, dictionaryCandidates, predictionReadings.keys,
+                    partialTexts, preferredTexts, sentencePreferenceTexts + generatedPreference,
                 )
             val learnedTexts = learnedCandidates(learning).filter {
                 it.reading == katakanaToHiragana(reading) && it.score >= 4
             }.mapTo(mutableSetOf()) { it.text }
             val reranked = keepKanaCandidatesVisible(reading, finalJapaneseCandidateSpellings(
-                registered, canonicalConversion, explicitDictionaryTexts, learnedTexts, generated,
+                registered, canonicalConversion, preferredTexts, learnedTexts, generated,
                 invalidInflectionTexts,
             ))
             candidates = reranked.toMutableList()
@@ -3154,6 +3164,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateBlockedCombinationValues = emptyList()
         candidateExactRegistrationTexts = emptySet()
         candidateExplicitDictionaryTexts = emptySet()
+        candidatePreferredSentenceTexts = emptySet()
         candidateOfficialLiteralReading = false
         candidateCanonicalConversion = null
         candidateOfficialRequest = null
@@ -3278,13 +3289,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         val allowedOfficialConversions = officialCandidates.conversions.filter {
             it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
         }
+        val preferredSentences = officialCandidates.preferredSentenceConversions.intersect(allowedOfficialConversions.toSet())
+        candidatePreferredSentenceTexts = preferredSentences
+        candidateDictionaryPriority = (candidateDictionaryPriority + preferredSentences).distinct()
         val parsedInflectionConversions = officialCandidates.parsedInflectionConversions
             .intersect(allowedOfficialConversions.toSet())
         candidateInvalidInflectionTexts = officialCandidates.invalidInflectionConversions
             .intersect(allowedOfficialConversions.toSet())
         // A registered stem can look like an unfinished combination even when
         // the full dictionary has parsed the following verb or auxiliary.
-        candidatePartialTexts = candidatePartialTexts - parsedInflectionConversions
+        candidatePartialTexts = candidatePartialTexts - parsedInflectionConversions - preferredSentences
         values.addAll(allowedOfficialConversions.take(1))
         values.addAll(combinedWords)
         values.addAll(specialCandidates)
@@ -3349,12 +3363,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         val learnedCombinations = (learnedOnlyCombinations + mixedCombinations).distinct().take(8)
         values.addAll(learnedCombinations)
         val allCombinationEntries = registeredCombinationEntries + learnedCombinationEntries
-        candidateTrustedCompleteTexts = parsedInflectionConversions + if (hasLongOrdinaryGapBetweenRegisteredWords(
+        candidateTrustedCompleteTexts = parsedInflectionConversions + preferredSentences + if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
         val explicitDictionaryTexts = (registeredExact + activeHotfixEntries.filter {
             katakanaToHiragana(it.ruby) == reading
-        }.map { it.word }).toSet()
+        }.map { it.word }).toSet() + preferredSentences
         val explicitExactTexts = explicitDictionaryTexts + learned
         candidateExplicitDictionaryTexts = explicitDictionaryTexts
         candidateExactRegistrationTexts = explicitExactTexts
@@ -3368,7 +3382,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateNormalizedIncompleteCombinationTexts = incompleteDictionaryCombinations(
             reading, allCombinationEntries, explicitExactTexts,
         ).mapTo(mutableSetOf(), ::katakanaToHiragana) -
-            parsedInflectionConversions.mapTo(mutableSetOf(), ::katakanaToHiragana)
+            (parsedInflectionConversions + preferredSentences).mapTo(mutableSetOf(), ::katakanaToHiragana)
         val exactTexts = values.toSet() + learned
         val learnedPrefixes = learnedJapanesePrefixPredictions(
             reading, learning, exactTexts, predictionLimit,
