@@ -84,9 +84,8 @@ internal fun bestLiveJapaneseConversion(
     completeConversions: Set<String>,
     ranked: Iterable<String>,
 ): String? {
-    val hiragana = katakanaToHiragana(reading)
-    val katakana = hiraganaToKatakana(hiragana)
-    return ranked.firstOrNull { it in completeConversions && it != hiragana && it != katakana }
+    val literal = japaneseReadingForms(reading)
+    return ranked.firstOrNull { it in completeConversions && it !in literal }
 }
 
 /** Keep an uncommitted single kana literal until enough context has been typed. */
@@ -201,10 +200,14 @@ internal fun rerankedJapaneseCandidates(
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
     val predictionTexts = predictionReadings.keys + learnedPrefixes.map { it.text }
     val katakana = hiraganaToKatakana(katakanaToHiragana(reading))
-    val fallback = setOf(reading, katakana)
+    val fallback = japaneseReadingForms(reading)
+    val strongLearnedWords = learnedCandidates(learning).filter {
+        it.reading == katakanaToHiragana(reading) && it.score >= 4
+    }.mapTo(mutableSetOf()) { it.text }
+    val explicitlyPreferred = exactRegistrationTexts + strongLearnedWords
     val baseSet = baseCandidates.toSet()
     fun complete(value: String) = value.isNotBlank() && value !in predictionTexts &&
-        value !in partialCandidates && value !in fallback
+        value !in partialCandidates && (value !in fallback || value in explicitlyPreferred)
     // Zenzai's order applies to candidates grounded in the dictionary lattice.
     // A generated word joins after the first few complete paths.
     val established = ranked.filter { complete(it) && it in baseSet }
@@ -228,10 +231,6 @@ internal fun rerankedJapaneseCandidates(
         full.drop(predictionInsertion) +
         otherPredictions + partial + baseCandidates.filter { it in fallback } +
         ranked.filter { it in fallback }).filter(String::isNotBlank).distinct()
-    val strongLearnedWords = learnedCandidates(learning).filter {
-        it.reading == katakanaToHiragana(reading) && it.score >= 4
-    }.mapTo(mutableSetOf()) { it.text }
-    val explicitlyPreferred = exactRegistrationTexts + strongLearnedWords
     val exactRegistration = dictionaryCandidates.any { complete(it) } ||
         explicitlyPreferred.isNotEmpty()
     // A kana-only word or phrase can be a complete conversion. If the
@@ -277,8 +276,11 @@ internal fun rerankedJapaneseCandidates(
     val withCompound = if (protected != null) {
         listOf(protected) + stable.filter { it != protected }
     } else stable
+    val withKana = preserveDictionaryKana(
+        dictionaryFirst?.takeIf(::complete), withCompound, explicitlyPreferred,
+    )
     val dictionaryOrdered = prioritizeRegisteredJapaneseCandidates(
-        withCompound, dictionaryCandidates, predictionTexts, partialCandidates, exactRegistrationTexts,
+        withKana, dictionaryCandidates, predictionTexts, partialCandidates, exactRegistrationTexts,
     )
     return preferSingleKanaReading(reading, dictionaryOrdered, exactRegistration)
 }

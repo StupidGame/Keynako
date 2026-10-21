@@ -670,6 +670,9 @@ static bool prefill_prompt_prefix_locked(
 ) {
     llama_kv_cache_clear(ctx);
 
+    if (prompt_tokens.size() >= llama_n_ctx(ctx)) {
+        return false;
+    }
     if (prompt_tokens.size() <= 1) {
         return true;
     }
@@ -690,11 +693,18 @@ static bool prefill_prompt_prefix_locked(
     return rc == 0;
 }
 
+struct CandidateScoreCache {
+    std::vector<llama_token> tokens;
+    // Entry k is the log probability of the first k candidate tokens.
+    std::vector<float> prefix_scores{0.0f};
+};
+
 static float score_candidate_avg_logprob_reuse_prompt_locked(
         llama_context *ctx,
         const std::vector<llama_token> &prompt_tokens,
         const std::vector<llama_token> &candidate_tokens,
-        uint64_t request_seq
+        uint64_t request_seq,
+        CandidateScoreCache &cache
 ) {
     if (is_request_stale(request_seq)) {
         return -INFINITY;
@@ -702,23 +712,33 @@ static float score_candidate_avg_logprob_reuse_prompt_locked(
     if (prompt_tokens.empty() || candidate_tokens.empty()) {
         return -INFINITY;
     }
+    if (prompt_tokens.size() + candidate_tokens.size() > llama_n_ctx(ctx)) {
+        return -INFINITY;
+    }
 
-    const llama_pos suffix_start = (llama_pos) (prompt_tokens.size() - 1);
+    size_t shared = 0;
+    while (shared < cache.tokens.size() && shared < candidate_tokens.size() &&
+           cache.tokens[shared] == candidate_tokens[shared]) {
+        ++shared;
+    }
+    // Keep the common candidate prefix as well as the prompt. Re-decode its
+    // final token to obtain the logits for the first differing token.
+    const llama_pos suffix_start = (llama_pos) (prompt_tokens.size() + shared - 1);
     llama_kv_cache_seq_rm(ctx, 0, suffix_start, -1);
 
-    const int32_t cap = (int32_t) (1 + candidate_tokens.size());
+    const int32_t cap = (int32_t) (1 + candidate_tokens.size() - shared);
     llama_batch batch = llama_batch_init(cap, 0, 1);
 
-    batch.token[batch.n_tokens] = prompt_tokens.back();
+    batch.token[batch.n_tokens] = shared ? candidate_tokens[shared - 1] : prompt_tokens.back();
     batch.pos[batch.n_tokens] = suffix_start;
     batch.n_seq_id[batch.n_tokens] = 1;
     batch.seq_id[batch.n_tokens][0] = 0;
     batch.logits[batch.n_tokens] = 1;
     batch.n_tokens++;
 
-    for (size_t i = 0; i < candidate_tokens.size(); ++i) {
+    for (size_t i = shared; i < candidate_tokens.size(); ++i) {
         batch.token[batch.n_tokens] = candidate_tokens[i];
-        batch.pos[batch.n_tokens] = suffix_start + 1 + (llama_pos) i;
+        batch.pos[batch.n_tokens] = (llama_pos) (prompt_tokens.size() + i);
         batch.n_seq_id[batch.n_tokens] = 1;
         batch.seq_id[batch.n_tokens][0] = 0;
         batch.logits[batch.n_tokens] = 1;
@@ -730,6 +750,7 @@ static float score_candidate_avg_logprob_reuse_prompt_locked(
         if (!is_request_stale(request_seq)) {
             LOGE("score_candidate_avg_logprob_reuse_prompt_locked: llama_decode failed: %d", rc);
         }
+        cache = CandidateScoreCache{};
         llama_batch_free(batch);
         return -INFINITY;
     }
@@ -738,14 +759,16 @@ static float score_candidate_avg_logprob_reuse_prompt_locked(
     float *all_logits = llama_get_logits(ctx);
     if (!all_logits) {
         LOGE("score_candidate_avg_logprob_reuse_prompt_locked: all_logits is null");
+        cache = CandidateScoreCache{};
         llama_batch_free(batch);
         return -INFINITY;
     }
 
-    float total_score = 0.0f;
-    for (size_t i = 0; i < candidate_tokens.size(); ++i) {
+    float total_score = cache.prefix_scores[shared];
+    cache.prefix_scores.resize(shared + 1);
+    for (size_t i = shared; i < candidate_tokens.size(); ++i) {
         llama_token expected_token = candidate_tokens[i];
-        float *logits = all_logits + ((size_t) i * (size_t) n_vocab);
+        float *logits = all_logits + ((i - shared) * (size_t) n_vocab);
 
         float max_logit = logits[0];
         for (int32_t tid = 1; tid < n_vocab; ++tid) {
@@ -759,8 +782,10 @@ static float score_candidate_avg_logprob_reuse_prompt_locked(
             sum_exp += exp((double) logits[tid] - (double) max_logit);
         }
         total_score += logits[expected_token] - max_logit - (float) log(sum_exp);
+        cache.prefix_scores.push_back(total_score);
     }
 
+    cache.tokens = candidate_tokens;
     llama_batch_free(batch);
     return total_score / (float) candidate_tokens.size();
 }
@@ -1240,6 +1265,7 @@ static jfloatArray score_candidates_with_context(
         }
 
         std::vector<std::vector<llama_token>> candidate_tokens_list((size_t) candidate_count);
+        CandidateScoreCache score_cache;
         for (jsize i = 0; i < candidate_count; ++i) {
             if (candidate_strings[(size_t) i].empty()) {
                 continue;
@@ -1264,7 +1290,8 @@ static jfloatArray score_candidates_with_context(
                     ctx,
                     prompt_tokens,
                     candidate_tokens_list[(size_t) i],
-                    request_seq
+                    request_seq,
+                    score_cache
             );
         }
         llama_set_abort_callback(ctx, never_abort, nullptr);

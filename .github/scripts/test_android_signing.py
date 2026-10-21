@@ -42,12 +42,13 @@ class AndroidSigningTest(SigningFixture):
         self.assertFalse((self.root / ".ci").exists())
         self.assertFalse(Path(self.env["GITHUB_ENV"]).exists())
 
-    def test_existing_cached_key_is_reused_unchanged(self):
+    def test_cached_ci_key_is_never_published_as_a_release(self):
         key = self.cached_key()
-        prepare(self.env)
+        with self.assertRaisesRegex(ValueError, "cached CI key"):
+            prepare(self.env)
         self.assertEqual(key.read_bytes(), b"existing cached key")
-        self.assertIn(str(key), Path(self.env["GITHUB_ENV"]).read_text())
-        self.assertEqual(Path(self.env["GITHUB_OUTPUT"]).read_text(), "kind=ci\n")
+        self.assertFalse(Path(self.env["GITHUB_ENV"]).exists())
+        self.assertFalse(Path(self.env["GITHUB_OUTPUT"]).exists())
 
     def test_empty_cached_key_fails(self):
         self.cached_key().write_bytes(b"")
@@ -83,19 +84,19 @@ class AndroidSigningTest(SigningFixture):
                 self.assertFalse(Path(self.env["GITHUB_ENV"]).exists())
 
     def test_pull_request_never_decodes_or_exports_release_secrets(self):
-        cache = self.cached_key()
+        self.cached_key()
         self.release_secrets()
         self.env["GITHUB_EVENT_NAME"] = "pull_request"
-        prepare(self.env)
-        exported = Path(self.env["GITHUB_ENV"]).read_text()
-        self.assertIn(str(cache), exported)
-        self.assertNotIn("release-alias", exported)
+        with self.assertRaisesRegex(ValueError, "Pull requests must not sign"):
+            prepare(self.env)
+        self.assertFalse(Path(self.env["GITHUB_ENV"]).exists())
+        self.assertFalse(Path(self.env["GITHUB_OUTPUT"]).exists())
         self.assertFalse((self.root / "keynako-release.jks").exists())
 
     def test_pull_request_without_cached_key_cannot_fall_back_to_release_secrets(self):
         self.release_secrets()
         self.env["GITHUB_EVENT_NAME"] = "pull_request"
-        with self.assertRaisesRegex(ValueError, "Refusing to generate"):
+        with self.assertRaisesRegex(ValueError, "Pull requests must not sign"):
             prepare(self.env)
         self.assertFalse((self.root / "keynako-release.jks").exists())
 
@@ -171,10 +172,11 @@ class EncryptedAndroidSigningTest(SigningFixture):
         self.cached_key()
         self.encrypted_key()
         self.env["GITHUB_EVENT_NAME"] = "pull_request"
-        prepare(self.env)
-        self.assertEqual(Path(self.env["GITHUB_OUTPUT"]).read_text(), "kind=ci\n")
+        with self.assertRaisesRegex(ValueError, "Pull requests must not sign"):
+            prepare(self.env)
+        self.assertFalse(Path(self.env["GITHUB_OUTPUT"]).exists())
         self.assertFalse((self.root / "keynako-release.jks").exists())
-        self.assertNotIn("test-only-long-passphrase", Path(self.env["GITHUB_ENV"]).read_text())
+        self.assertFalse(Path(self.env["GITHUB_ENV"]).exists())
 
     def test_required_release_signing_fails_when_secret_is_missing(self):
         self.cached_key()

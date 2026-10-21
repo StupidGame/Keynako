@@ -116,7 +116,8 @@ class LiveConversionPreviewTest {
     @Test fun temporaryPrefixOnlyReplacesRawOrPartialCandidates() {
         val reading = "とうきょうにいきます"
         val converted = "東京にいきます"
-        for (base in listOf(listOf(reading), listOf("トウキョウニイキマス"), listOf("登録にいきます", reading))) {
+        for (base in listOf(listOf(reading), listOf("トウキョウニイキマス"),
+            listOf("ﾄｳｷｮｳﾆｲｷﾏｽ"), listOf("登録にいきます", reading))) {
             assertEquals(converted, pendingLiveConversionCandidates(
                 reading, base, converted, emptySet(), setOf("登録にいきます"),
             ).first())

@@ -7,6 +7,13 @@ internal fun katakanaToHalfWidth(value: String): String = buildString {
     for (character in decomposed) append(halfWidthKanaMap[character] ?: character.toString())
 }
 
+/** Literal script choices are not evidence of a completed kana-to-kanji conversion. */
+internal fun japaneseReadingForms(reading: String): Set<String> {
+    val hiragana = katakanaToHiragana(reading)
+    val katakana = hiraganaToKatakana(hiragana)
+    return setOf(reading, hiragana, katakana, katakanaToHalfWidth(katakana))
+}
+
 internal fun asciiToFullWidth(value: String): String = buildString {
     for (character in value) {
         append(
