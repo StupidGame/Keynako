@@ -19,6 +19,8 @@ internal data class DictionaryCandidates(
     val parsedInflectionConversions: Set<String> = emptySet(),
     /** Retained paths joining a noun directly to past tense; used for candidate ordering. */
     val invalidInflectionConversions: Set<String> = emptySet(),
+    /** Complete sentences with registered or deliberately learned word spellings. */
+    val preferredSentenceConversions: Set<String> = emptySet(),
 )
 
 internal data class AzooKeyHotfixDictionaryEntry(
@@ -61,7 +63,11 @@ internal class AzooKeyDictionary(
         val usesFallback: Boolean = false,
         val invalidInflection: Boolean = false,
         val lastWasUserEntry: Boolean = false,
+        val alignment: AlignmentNode? = null,
+        val usesPreferredEntry: Boolean = false,
     )
+
+    private class AlignmentNode(val span: ConversionWordSpan, val previous: AlignmentNode?)
 
     private data class KanaAlternative(
         val start: Int,
@@ -109,7 +115,20 @@ internal class AzooKeyDictionary(
         val canonical: String?,
         val parsedInflections: Set<String> = emptySet(),
         val invalidInflections: Set<String> = emptySet(),
+        val alignment: List<ConversionWordSpan> = emptyList(),
+        val fullyParsed: Boolean = true,
+        val preferredSentences: Set<String> = emptySet(),
     )
+
+    private data class PreferenceCacheKey(
+        val reading: String,
+        val text: String,
+        val preferences: List<AzooKeyHotfixDictionaryEntry>,
+    )
+
+    private val preferenceCache = object : LinkedHashMap<PreferenceCacheKey, String?>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PreferenceCacheKey, String?>): Boolean = size > 128
+    }
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, ConversionResult>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, ConversionResult>): Boolean =
@@ -180,14 +199,61 @@ internal class AzooKeyDictionary(
         } else {
             emptyList()
         }
+        val preferred = (conversions.values.take(3).mapNotNull {
+            preferredSentenceConversion(reading, it, additionalEntries)
+        } + conversions.preferredSentences.filter { text -> additionalEntries.none {
+            it.ruby.toKatakana() == katakana && it.word == text
+        } }).distinct()
+        val complete = if (preferred.isEmpty()) conversions.values else {
+            (preferred.take(3) + listOfNotNull(conversions.canonical) +
+                preferred.drop(3) + conversions.values).distinct().take(conversionLimit.coerceAtLeast(0))
+        }
         return DictionaryCandidates(
-            conversions.values,
+            complete,
             predictions.map(ReadingPrediction::text),
             predictions.associate { it.text to it.reading },
             conversions.canonical,
             conversions.parsedInflections,
             conversions.invalidInflections,
+            preferred.toSet().intersect(complete.toSet()),
         )
+    }
+
+    /** Align a candidate to its reading before applying personal word spellings. */
+    @Synchronized
+    fun preferredSentenceConversion(
+        reading: String,
+        text: String,
+        additionalEntries: List<AzooKeyHotfixDictionaryEntry>,
+    ): String? {
+        val normalized = reading.toKatakana()
+        if (additionalEntries.any { !it.isLearned && it.ruby.toKatakana() == normalized && it.word == text }) return null
+        val relevant = additionalEntries.filter {
+            it.ruby.isNotBlank() && it.word.isNotBlank() && it.ruby.length < reading.length &&
+                normalized.contains(it.ruby.toKatakana())
+        }
+        if (relevant.isEmpty()) return null
+        val key = PreferenceCacheKey(normalized, text, relevant)
+        if (preferenceCache.containsKey(key)) return preferenceCache[key]
+        // A learned whole phrase must not hide the boundaries of a registered
+        // word inside it. Parse its ordinary words instead when possible.
+        val entries = relevant.filter { learned ->
+            !learned.isLearned || relevant.none { registered ->
+                !registered.isLearned && registered.ruby.length < learned.ruby.length &&
+                    learned.ruby.toKatakana().contains(registered.ruby.toKatakana())
+            }
+        }.map {
+            Entry(it.word, it.ruby.toKatakana(), it.lcid, it.rcid, it.mid,
+                it.wordWeight.toFloat(), isUserEntry = true, isLearned = it.isLearned)
+        }
+        val parsed = convert(normalized, 1, entries, text)
+        val result = if (!parsed.fullyParsed || parsed.values.isEmpty() || text in parsed.invalidInflections) null else {
+            preferredSentenceSpelling(reading, text, parsed.alignment, relevant.map {
+                SentenceWordPreference(it.ruby, it.word, it.isLearned, it.wordWeight)
+            })
+        }
+        preferenceCache[key] = result
+        return result
     }
 
     /** Verify the entire proposed spelling against dictionary words consuming the entire reading. */
@@ -294,6 +360,8 @@ internal class AzooKeyDictionary(
             .mapTo(mutableSetOf(), Path::text)
         if (requiredText != null) return ConversionResult(
             ranked.take(1).map(Path::text), canonical, parsedInflections, invalidInflections,
+            generateSequence(ranked.firstOrNull()?.alignment) { it.previous }.map { it.span }.toList().asReversed(),
+            fullyParsed = ranked.firstOrNull()?.usesFallback == false,
         )
         val result = LinkedHashSet<String>()
         val leading = minOf(limit, if (reading.length >= KANA_VARIANT_MIN_READING_LENGTH) 2 else 5)
@@ -339,7 +407,10 @@ internal class AzooKeyDictionary(
             (values.take(1) + canonical + values.drop(1)).take(limit)
         } else values
         return ConversionResult(complete, canonical, parsedInflections.intersect(complete.toSet()),
-            invalidInflections.intersect(complete.toSet()))
+            invalidInflections.intersect(complete.toSet()),
+            preferredSentences = ranked.filter {
+                it.usesPreferredEntry && !it.usesFallback && !it.invalidInflection && it.text in complete
+            }.mapTo(linkedSetOf(), Path::text))
     }
 
     private fun kanaVariants(path: Path): List<Pair<String, Float>> {
@@ -431,6 +502,14 @@ internal class AzooKeyDictionary(
                         invalidInflection = path.invalidInflection ||
                             (!path.lastWasUserEntry && path.lastRcid in 1283..1309 && entry.lcid in 435..439),
                         lastWasUserEntry = entry.isUserEntry,
+                        usesPreferredEntry = path.usesPreferredEntry || entry.isUserEntry,
+                        alignment = if (requiredText != null) AlignmentNode(
+                            ConversionWordSpan(
+                                path.alignment?.span?.readingEnd ?: 0,
+                                (path.alignment?.span?.readingEnd ?: 0) + entry.ruby.length,
+                                path.text.length, path.text.length + entry.word.length,
+                            ), path.alignment,
+                        ) else null,
                         kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
                             KanaAlternative(
                                 path.text.length,

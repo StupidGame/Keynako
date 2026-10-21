@@ -86,6 +86,24 @@ class JapaneseCompositionQualityTest {
         assertTrue("一滴た" in candidates)
     }
 
+    @Test fun registeredAndLearnedSpellingsInsideACompleteSentenceRemainPreferred() {
+        val reading = "きょうさとうさんととうきょうにいく"
+        val original = "今日佐藤さんと東京に行く"
+        val preferred = "今日佐東さんとTOKYOに行く"
+        val state = ReflectionHelpers.getField<JSONObject>(service, "state")
+        state.put("userDictionary", JSONArray().put(JSONObject()
+            .put("ruby", "とうきょう").put("word", "TOKYO").put("importance", 3)))
+        state.put("learning", JSONObject().put("さとう\t佐東", 4))
+        val candidates = buildCandidates(reading, DictionaryCandidates(
+            listOf(original, preferred), emptyList(), canonicalConversion = original,
+            preferredSentenceConversions = setOf(preferred),
+        ))
+        assertEquals(preferred, candidates.first())
+        assertTrue(original in candidates)
+        assertFalse(preferred in ReflectionHelpers.getField<Set<String>>(service, "candidatePartialTexts"))
+        assertTrue(preferred in ReflectionHelpers.getField<Set<String>>(service, "candidateTrustedCompleteTexts"))
+    }
+
     @Test fun theDisplayedAlternativeCanBeTappedAndCommittedAsWritten() {
         val commits = mutableListOf<String>()
         val connection = Proxy.newProxyInstance(InputConnection::class.java.classLoader,

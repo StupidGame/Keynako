@@ -46,7 +46,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
         maxTokens: Int,
         incompleteTexts: Set<String> = emptySet(),
         validateGenerated: (String) -> Boolean = { false },
-        callback: (List<String>, String?) -> Unit,
+        preferGenerated: (String) -> String? = { null },
+        callback: (List<String>, String?, Boolean) -> Unit,
     ) {
         if (closed) return
         val request = requestSequence.incrementAndGet()
@@ -58,8 +59,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
             if (closed || request != requestSequence.get()) return@Runnable
             val startedAt = System.nanoTime()
             val result = runCatching {
-                if (!ensureModel(modelSize)) return@runCatching emptyList<String>() to null
-                if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
+                if (!ensureModel(modelSize)) return@runCatching Triple(emptyList<String>(), null, false)
+                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, false)
 
                 val generatedText = if (shouldGenerateZenzaiCandidate(reading.length, maxTokens)) {
                     ZenzEngine.generateWithContextAndConditionsV32(
@@ -77,18 +78,20 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 } else {
                     ""
                 }
-                if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
+                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, false)
                 // The proposal must consume the whole reading through the dictionary.
                 // This also rejects truncated output and invented words/readings.
-                val generated = completeZenzaiCandidate(
+                val complete = completeZenzaiCandidate(
                     reading, generatedText, baseCandidates, incompleteTexts, validateGenerated,
                 ).orEmpty()
-                if (request != requestSequence.get()) return@runCatching emptyList<String>() to null
+                val preferred = complete.takeIf(String::isNotEmpty)?.let(preferGenerated)
+                val generated = preferred ?: complete
+                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, false)
 
                 val values = linkedSetOf<String>()
                 if (generated.isNotEmpty()) values.add(generated)
                 values.addAll(baseCandidates.filter { it.isNotBlank() })
-                if (values.isEmpty()) return@runCatching emptyList<String>() to null
+                if (values.isEmpty()) return@runCatching Triple(emptyList<String>(), null, false)
 
                 // Scoring every entry in the large dictionary makes inference lag behind typing.
                 // Zenzai reranks the strongest entries and preserves the remaining dictionary order.
@@ -111,10 +114,10 @@ internal class AndroidZenzaiRuntime(context: Context) {
                             ?: Float.NEGATIVE_INFINITY
                     }.thenBy { it.index },
                 ).map { it.value } + candidates.filter { it !in rerankedCandidates }
-                ranked to generated.takeIf { it.isNotEmpty() }
+                Triple(ranked, generated.takeIf { it.isNotEmpty() }, preferred != null)
             }.getOrElse { error ->
                 Log.e(LOG_TAG, "Candidate ranking failed", error)
-                emptyList<String>() to null
+                Triple(emptyList<String>(), null, false)
             }
 
             if (result.first.isEmpty() || closed || request != requestSequence.get()) {
@@ -127,7 +130,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
                     "${(System.nanoTime() - startedAt) / 1_000_000} ms",
             )
             mainHandler.post {
-                if (!closed && request == requestSequence.get()) callback(result.first, result.second)
+                if (!closed && request == requestSequence.get()) callback(result.first, result.second, result.third)
             }
         }
         val submit = Runnable {
