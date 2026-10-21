@@ -37,6 +37,8 @@ class JapaneseCompositionQualityTest {
         for ((reading, natural, mixed) in listOf(
             Triple("おとした", "落とした", "落としタ"),
             Triple("ますこっと", "マスコット", "真スコット"),
+            Triple("ぱすたに", "パスタに", "パスタ煮"),
+            Triple("ぱすたにちーずをかける", "パスタにチーズをかける", "パスタ煮チーズをかける"),
             Triple("きのうすまほをおとしたからがめんがわれてしまった",
                 "昨日スマホを落としたから画面が割れてしまった",
                 "昨日スマホを落としタから画面が割れてしまっタ"),

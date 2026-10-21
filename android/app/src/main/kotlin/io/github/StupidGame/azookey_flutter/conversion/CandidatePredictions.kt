@@ -283,7 +283,7 @@ internal fun rerankedJapaneseCandidates(
         listOf(protected) + stable.filter { it != protected }
     } else stable
     val withKana = preserveDictionaryKana(
-        dictionaryFirst?.takeIf(::complete), withCompound, explicitlyPreferred,
+        dictionaryFirst?.takeIf(::complete), withCompound, explicitlyPreferred, preferred,
     )
     val dictionaryOrdered = prioritizeRegisteredJapaneseCandidates(
         withKana, dictionaryCandidates, predictionTexts, partialCandidates, exactRegistrationTexts,

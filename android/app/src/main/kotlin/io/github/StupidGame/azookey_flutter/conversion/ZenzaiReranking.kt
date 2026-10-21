@@ -41,6 +41,7 @@ internal fun preserveDictionaryKana(
     reference: String?,
     ranked: List<String>,
     preferredTexts: Set<String>,
+    modelPreferredText: String? = null,
 ): List<String> {
     val leading = ranked.firstOrNull() ?: return ranked
     if (reference == null || reference == leading || reference !in ranked ||
@@ -58,8 +59,21 @@ internal fun preserveDictionaryKana(
     while (kanaEnd < reference.length && inKana(reference[kanaEnd])) kanaEnd++
     if (katakanaWord) {
         if (kanaEnd - kanaStart < 3) return ranked
-    } else if (kanaStart == 0 || reference[kanaStart - 1] !in '\u3400'..'\u9fff' ||
-        kanaEnd - kanaStart < 2) return ranked
+    } else {
+        if (kanaStart == 0) return ranked
+        val previous = reference[kanaStart - 1]
+        if (previous !in '\u3400'..'\u9fff' && previous !in '\u30a1'..'\u30fa' && previous != 'ー') {
+            return ranked
+        }
+        if (kanaEnd - kanaStart == 1) {
+            // Keep a parsed particle such as パスタに when scoring or context
+            // preferences split it into パスタ煮. A confirmed model conversion
+            // can still choose a noun suffix, as in 味噌煮 or 角煮.
+            if (reference[kanaStart] !in "にをがへとではものや" || leading == modelPreferredText) {
+                return ranked
+            }
+        }
+    }
     var referenceEnd = reference.length
     var leadingEnd = leading.length
     while (referenceEnd > start && leadingEnd > start &&
@@ -79,8 +93,10 @@ internal fun finalJapaneseCandidateSpellings(
     canonicalConversion: String?,
     registeredTexts: Set<String> = emptySet(),
     learnedTexts: Set<String> = emptySet(),
+    modelPreferredText: String? = null,
 ): List<String> = preserveDictionaryKana(
     canonicalConversion,
     prioritizeHiraganaVariants(candidates, registeredTexts),
     registeredTexts + learnedTexts,
+    modelPreferredText,
 )

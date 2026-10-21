@@ -94,6 +94,58 @@ class ConversionQualityTest {
         assertEquals("マスコット", finalJapaneseCandidateSpellings(ranked, result.canonicalConversion).first())
     }
 
+    @Test fun singleKanaParticlesSurviveRerankingWithoutLearning() {
+        for ((reading, expected, fragmented) in listOf(
+            Triple("ぱすたに", "パスタに", "パスタ煮"),
+            Triple("ぱすたが", "パスタが", "パスタ画"),
+            Triple("ぱすたで", "パスタで", "パスタ出"),
+            Triple("すまほに", "スマホに", "スマホ煮"),
+            Triple("ともだちに", "友達に", "友達二"),
+            Triple("ぱすたにちーずをかける", "パスタにチーズをかける", "パスタ煮チーズをかける"),
+            Triple("ぱすたにした", "パスタにした", "パスタ煮した"),
+        )) {
+            val result = dictionary.candidates(reading, 0)
+            assertEquals(reading, expected, result.canonicalConversion)
+            val ranked = rerankedJapaneseCandidates(
+                reading, listOf(fragmented) + result.conversions, result.conversions,
+                emptyMap(), emptyMap(),
+            )
+            val final = finalJapaneseCandidateSpellings(ranked, result.canonicalConversion)
+            assertEquals(reading, expected, final.first())
+            assertTrue(fragmented in final)
+            assertEquals(expected, compositionCommitText(reading, final, true))
+            assertEquals(fragmented, compositionCommitText(reading, final, true, final.indexOf(fragmented)))
+            // Context preferences run after model ranking. Apply the same
+            // protection there, using the independently retained dictionary path.
+            assertEquals(expected, finalJapaneseCandidateSpellings(
+                listOf(fragmented) + final, result.canonicalConversion, modelPreferredText = expected,
+            ).first())
+        }
+    }
+
+    @Test fun confirmedNounSuffixesAndRegisteredSpellingsCanStillUseKanji() {
+        for ((reading, noun) in listOf(
+            "みそに" to "味噌煮", "かくに" to "角煮", "にこみ" to "煮込み", "さかなをにる" to "魚を煮る",
+        )) {
+            val result = dictionary.candidates(reading, 0)
+            val generated = completeZenzaiCandidate(reading, noun, result.conversions, emptySet()) {
+                dictionary.validatesConversion(reading, it)
+            }
+            assertEquals(noun, generated)
+            val base = (listOf(noun) + result.conversions).distinct()
+            val ranked = rerankedJapaneseCandidates(
+                reading, base, base, emptyMap(), emptyMap(), preferredZenzaiCandidate = generated,
+            )
+            assertEquals(noun, finalJapaneseCandidateSpellings(
+                ranked, result.canonicalConversion, modelPreferredText = generated,
+            ).first())
+        }
+        assertEquals("パスタ煮", finalJapaneseCandidateSpellings(
+            listOf("パスタ煮", "パスタに"), "パスタに", registeredTexts = setOf("パスタ煮"),
+            modelPreferredText = "パスタに",
+        ).first())
+    }
+
     @Test fun runtimeAcceptsOnlyCompleteDictionaryGroundedProposalsAndKeepsFullWidthKana() {
         for ((reading, proposal) in listOf(
             "になる" to "になる", "ますこっと" to "マスコット",

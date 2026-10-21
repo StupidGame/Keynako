@@ -3101,7 +3101,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 it.reading == katakanaToHiragana(reading) && it.score >= 4
             }.mapTo(mutableSetOf()) { it.text }
             val reranked = keepKanaCandidatesVisible(reading, finalJapaneseCandidateSpellings(
-                registered, canonicalConversion, explicitDictionaryTexts, learnedTexts,
+                registered, canonicalConversion, explicitDictionaryTexts, learnedTexts, generated,
             ))
             candidates = reranked.toMutableList()
             if (selectedText != null && selectedText !in candidates &&
