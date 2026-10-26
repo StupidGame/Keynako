@@ -259,10 +259,14 @@ class KeyboardCursorRepeatTest {
 
     private fun mount(view: View) {
         if (view.parent == null) activity.setContentView(view)
+        shadowOf(Looper.getMainLooper()).idle()
         view.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
             if (view === frame) View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST)
             else View.MeasureSpec.makeMeasureSpec(50, View.MeasureSpec.EXACTLY))
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        assertTrue("keyboard must be attached", view.isAttachedToWindow)
+        assertTrue("keyboard must be shown", view.isShown)
+        assertEquals("keyboard window must be visible", View.VISIBLE, view.windowVisibility)
     }
 
     private fun idle(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))

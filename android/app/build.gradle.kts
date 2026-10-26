@@ -33,6 +33,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        unitTests.all {
+            it.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
+    }
+
     defaultConfig {
         applicationId = "io.github.StupidGame.azookey_flutter"
         // You can update the following values to match your application needs.
