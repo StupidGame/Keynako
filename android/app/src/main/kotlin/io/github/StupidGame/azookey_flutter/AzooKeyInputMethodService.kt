@@ -118,6 +118,7 @@ import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
 import io.github.StupidGame.azookey_flutter.input.shiftedInputLabel
 import io.github.StupidGame.azookey_flutter.view.KeyboardBodyScrollView
+import io.github.StupidGame.azookey_flutter.view.KeyboardCursorRepeat
 import io.github.StupidGame.azookey_flutter.view.expandKeyboardKeyHitAreas
 import io.github.StupidGame.azookey_flutter.view.keyboardContentInsets
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
@@ -1217,7 +1218,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var continueDeleteVariationOnRelease = false
         var centerLongPressCheckpoint: CompositionSnapshot? = null
         val longPressSelection = FlickLongPressSelection(key)
-        val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
+        val longPressData = custardLongPressActions(key)
         val startActions = longPressData.optJSONArray("start") ?: JSONArray()
         var activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
         val pcVariations = if (variationsEnabled && keyStyle == "pc_style") {
@@ -1227,20 +1228,24 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val handlesLongPress = startActions.length() > 0 || activeRepeatActions.length() > 0 ||
             pcVariations.isNotEmpty() || flickVariations.any { variation ->
-                val variationLongPress = variation.optJSONObject("key")?.optJSONObject("longpress_actions")
+                val variationLongPress = variation.optJSONObject("key")?.let(::custardLongPressActions)
                 (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                     (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
             }
         val repeatAction = object : Runnable {
             override fun run() {
-                if (!repeating) return
+                if (!repeating || !view.isShown || view.windowVisibility != View.VISIBLE) {
+                    repeating = false
+                    return
+                }
                 dispatchActions(activeRepeatActions)
                 handler.postDelayed(this, 70)
             }
         }
         val longPress = Runnable {
+            if (!view.isShown || view.windowVisibility != View.VISIBLE) return@Runnable
             val selectedKey = longPressSelection.target ?: return@Runnable
-            val selectedLongPress = selectedKey.optJSONObject("longpress_actions") ?: JSONObject()
+            val selectedLongPress = custardLongPressActions(selectedKey)
             val selectedStartActions = selectedLongPress.optJSONArray("start") ?: JSONArray()
             activeRepeatActions = selectedLongPress.optJSONArray("repeat") ?: JSONArray()
             if (selectedStartActions.length() == 0 && activeRepeatActions.length() == 0 && pcVariations.isEmpty()) {
@@ -1401,7 +1406,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                                 }
                             }
                         }
-                        val variationLongPress = longPressSelection.target?.optJSONObject("longpress_actions")
+                        val variationLongPress = longPressSelection.target?.let(::custardLongPressActions)
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
@@ -1426,7 +1431,38 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> true
             }
         }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+            override fun onViewDetachedFromWindow(view: View) {
+                repeating = false
+                handler.removeCallbacks(longPress)
+                handler.removeCallbacks(repeatAction)
+                view.isPressed = false
+            }
+        })
         return view
+    }
+
+    private fun cursorMovementCount(action: JSONObject?): Int {
+        if (action == null) return 0
+        return when (action.optString("type")) {
+            "moveCursor" -> action.optString("value").toIntOrNull() ?: 0
+            "move_cursor" -> action.optInt("count")
+            else -> 0
+        }
+    }
+
+    private fun custardLongPressActions(key: JSONObject): JSONObject {
+        val configured = key.optJSONObject("longpress_actions") ?: JSONObject()
+        if ((configured.optJSONArray("start")?.length() ?: 0) > 0 ||
+            (configured.optJSONArray("repeat")?.length() ?: 0) > 0 ||
+            custardVariations(key, "longpress_variation").isNotEmpty()) return configured
+        val press = key.optJSONArray("press_actions") ?: return configured
+        if (press.length() == 0 || (0 until press.length()).any { cursorMovementCount(press.optJSONObject(it)) == 0 }) {
+            return configured
+        }
+        // Keep imported definitions intact and respect explicitly assigned holds.
+        return JSONObject(configured.toString()).put("start", press).put("repeat", press)
     }
 
     private fun createCustardSystemKey(type: String, scale: Double): View {
@@ -1602,21 +1638,30 @@ class AzooKeyInputMethodService : InputMethodService() {
         var longPressed = false
         var repeating = false
         var longPressFlicked = false
+        val cursorRepeat = tapAction?.takeIf {
+            cursorMovementCount(it) != 0 && key.optJSONObject("longPress") == null &&
+                key.optJSONObject("longPressRepeat") == null
+        }
+        val longPressAction = key.optJSONObject("longPress") ?: cursorRepeat
+        val repeatedAction = key.optJSONObject("longPressRepeat") ?: cursorRepeat
+        val flickCursorRepeat = KeyboardCursorRepeat(view, { longPressDelay() }, ::moveCursor)
         val repeatAction = object : Runnable {
             override fun run() {
-                if (!repeating) return
-                dispatchAction(key.optJSONObject("longPressRepeat"))
+                if (!repeating || !view.isShown || view.windowVisibility != View.VISIBLE) {
+                    repeating = false
+                    return
+                }
+                dispatchAction(repeatedAction)
                 handler.postDelayed(this, 70)
             }
         }
         val longPress = Runnable {
-            val action = key.optJSONObject("longPress")
-            val repeated = key.optJSONObject("longPressRepeat")
-            if (action == null && repeated == null) return@Runnable
+            if (!view.isShown || view.windowVisibility != View.VISIBLE ||
+                (longPressAction == null && repeatedAction == null)) return@Runnable
             longPressed = true
             dismissFlickGuide()
-            dispatchAction(action)
-            if (repeated != null) {
+            dispatchAction(longPressAction)
+            if (repeatedAction != null) {
                 repeating = true
                 handler.postDelayed(repeatAction, 70)
             }
@@ -1626,6 +1671,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     target.parent?.requestDisallowInterceptTouchEvent(true)
+                    flickCursorRepeat.reset()
                     startX = event.x
                     startY = event.y
                     longPressed = false
@@ -1647,6 +1693,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val direction = flickDirection(event.x - startX, event.y - startY)
+                    flickCursorRepeat.select(cursorMovementCount(direction?.let { key.optJSONObject(it) }))
                     if (direction != null) {
                         handler.removeCallbacks(longPress)
                         if (longPressed) {
@@ -1660,11 +1707,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    flickCursorRepeat.stop()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
                     target.isPressed = false
                     dismissFlickGuide()
+                    if (flickCursorRepeat.didRepeat) return@setOnTouchListener true
                     if (!longPressed || longPressFlicked) {
                         val dx = event.x - startX
                         val dy = event.y - startY
@@ -1688,6 +1737,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    flickCursorRepeat.reset()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
@@ -1698,6 +1748,15 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> true
             }
         }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+            override fun onViewDetachedFromWindow(view: View) {
+                repeating = false
+                handler.removeCallbacks(longPress)
+                handler.removeCallbacks(repeatAction)
+                view.isPressed = false
+            }
+        })
         return view
     }
 
@@ -1715,6 +1774,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val isDelete = key.action == "delete"
         val isSpace = key.action == "space"
         val isAa = key.action == "upperLowerEnglish"
+        val flickCursorRepeat = KeyboardCursorRepeat(view, { longPressDelay() }, ::moveCursor)
         val repeat = object : Runnable {
             override fun run() {
                 if (!repeating) return
@@ -1750,6 +1810,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     target.parent?.requestDisallowInterceptTouchEvent(true)
+                    flickCursorRepeat.reset()
                     startX = event.x
                     startY = event.y
                     longPressed = false
@@ -1785,6 +1846,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                         return@setOnTouchListener true
                     }
                     val direction = flickDirection(event.x - startX, event.y - startY)
+                    if (isSpace) {
+                        flickCursorRepeat.select(when (direction) {
+                            "left" -> -1
+                            "right" -> 1
+                            else -> 0
+                        })
+                    }
                     if (direction != null) {
                         handler.removeCallbacks(longPress)
                         if (longPressed) {
@@ -1798,6 +1866,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    flickCursorRepeat.stop()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeat)
@@ -1823,6 +1892,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         else -> key.center
                     }
                     dismissFlickGuide()
+                    if (flickCursorRepeat.didRepeat) return@setOnTouchListener true
                     if (!longPressed || longPressFlicked) {
                         if (isSpace && direction == "left") {
                             moveCursor(-1)
@@ -1851,6 +1921,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    flickCursorRepeat.reset()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeat)
@@ -1863,6 +1934,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> true
             }
         }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+            override fun onViewDetachedFromWindow(view: View) {
+                repeating = false
+                handler.removeCallbacks(longPress)
+                handler.removeCallbacks(repeat)
+                textDragSession?.cancel()
+                view.isPressed = false
+            }
+        })
         return view
     }
 
@@ -4683,16 +4764,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         private var autoDismiss: Runnable? = null
         private val arrowRepeat = object : Runnable {
             override fun run() {
-                if (!arrowLongPressed) return
+                if (!arrowLongPressed || !isShown || windowVisibility != View.VISIBLE) return
                 move(arrowOffset)
                 handler.postDelayed(this, 100)
             }
         }
         private val arrowLongPress = Runnable {
-            if (arrowOffset == 0) return@Runnable
+            if (arrowOffset == 0 || !isShown || windowVisibility != View.VISIBLE) return@Runnable
             arrowLongPressed = true
             move(arrowOffset)
-            handler.post(arrowRepeat)
+            handler.postDelayed(arrowRepeat, 100)
             feedback(this)
         }
 
@@ -4711,7 +4792,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             val left = before.substringAfterLast('\n')
             line = (left + after).map { it.toString() } + listOf("⏎")
             val half = itemCount / 2
-            displayLeftIndex = line.size - half
+            displayLeftIndex = left.length - half
             displayRightIndex = displayLeftIndex + itemCount
             invalidate()
         }
@@ -4739,10 +4820,12 @@ class AzooKeyInputMethodService : InputMethodService() {
 
         private fun move(count: Int) {
             val center = displayLeftIndex + itemCount / 2
-            if (center + count < -1 || line.size < center + count) return
-            displayLeftIndex += count
-            displayRightIndex += count
-            moveCursor(count)
+            val destination = (center + count).coerceIn(0, line.lastIndex.coerceAtLeast(0))
+            val distance = destination - center
+            if (distance == 0) return
+            displayLeftIndex += distance
+            displayRightIndex += distance
+            moveCursor(distance)
             invalidate()
         }
 
@@ -4789,6 +4872,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         override fun onTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    handler.removeCallbacks(arrowLongPress)
+                    handler.removeCallbacks(arrowRepeat)
                     downX = event.x
                     downY = event.y
                     lastX = downX
@@ -4810,6 +4896,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     val distance = kotlin.math.hypot(event.x - downX, event.y - downY)
                     if (distance > dp(20)) {
                         handler.removeCallbacks(arrowLongPress)
+                        handler.removeCallbacks(arrowRepeat)
                         if (arrowOffset == 0) moving = true
                     }
                     if (arrowOffset == 0 && moving) {
@@ -4837,16 +4924,27 @@ class AzooKeyInputMethodService : InputMethodService() {
                         tap(downX)
                     }
                     arrowOffset = 0
+                    arrowLongPressed = false
                     return true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(arrowLongPress)
                     handler.removeCallbacks(arrowRepeat)
                     arrowOffset = 0
+                    arrowLongPressed = false
                     return true
                 }
             }
             return true
+        }
+
+        override fun onDetachedFromWindow() {
+            handler.removeCallbacks(arrowLongPress)
+            handler.removeCallbacks(arrowRepeat)
+            autoDismiss?.let(handler::removeCallbacks)
+            arrowOffset = 0
+            arrowLongPressed = false
+            super.onDetachedFromWindow()
         }
     }
 
