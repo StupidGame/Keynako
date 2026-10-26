@@ -19,6 +19,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.After
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -28,12 +29,15 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
 import org.robolectric.annotation.LooperMode
 import org.robolectric.util.ReflectionHelpers
+import org.robolectric.junit.rules.TimeoutRule
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 36], manifest = Config.NONE)
 @ConscryptMode(ConscryptMode.Mode.OFF)
 @LooperMode(LooperMode.Mode.PAUSED)
 class KeyboardCursorRepeatTest {
+    @get:Rule val timeout: TimeoutRule = TimeoutRule.seconds(20)
+
     private lateinit var service: AzooKeyInputMethodService
     private lateinit var activity: Activity
     private lateinit var frame: ViewGroup
