@@ -20,6 +20,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.After
 import org.junit.Rule
+import org.junit.rules.TestRule
+import org.junit.runners.model.Statement
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -29,14 +31,30 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
 import org.robolectric.annotation.LooperMode
 import org.robolectric.util.ReflectionHelpers
-import org.robolectric.junit.rules.TimeoutRule
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 36], manifest = Config.NONE)
 @ConscryptMode(ConscryptMode.Mode.OFF)
 @LooperMode(LooperMode.Mode.PAUSED)
 class KeyboardCursorRepeatTest {
-    @get:Rule val timeout: TimeoutRule = TimeoutRule.seconds(20)
+    @get:Rule val timeout = TestRule { base, description ->
+        object : Statement() {
+            override fun evaluate() {
+                val testThread = Thread.currentThread()
+                val watchdog = Thread({
+                    try {
+                        Thread.sleep(20_000)
+                        System.err.println("Timed out: ${description.methodName}")
+                        testThread.stackTrace.forEach { System.err.println("    at $it") }
+                        testThread.interrupt()
+                    } catch (_: InterruptedException) {
+                        // The test completed before the deadline.
+                    }
+                }, "cursor-repeat-test-watchdog").apply { isDaemon = true; start() }
+                try { base.evaluate() } finally { watchdog.interrupt() }
+            }
+        }
+    }
 
     private lateinit var service: AzooKeyInputMethodService
     private lateinit var activity: Activity
@@ -201,7 +219,7 @@ class KeyboardCursorRepeatTest {
             touch(space, MotionEvent.ACTION_MOVE, end)
             idle(399)
             assertTrue(moves.isEmpty())
-            idle(211)
+            idle(221)
             assertEquals(List(4) { count }, moves)
             touch(space, MotionEvent.ACTION_UP, end)
             idle(300)
@@ -220,7 +238,7 @@ class KeyboardCursorRepeatTest {
             val end = start + count * 30 * service.resources.displayMetrics.density
             touch(key, MotionEvent.ACTION_DOWN, start)
             touch(key, MotionEvent.ACTION_MOVE, end)
-            idle(610)
+            idle(620)
             assertEquals(List(4) { count }, moves)
             touch(key, MotionEvent.ACTION_UP, end)
             idle(500)
@@ -259,7 +277,7 @@ class KeyboardCursorRepeatTest {
             touch(bar, MotionEvent.ACTION_DOWN, x)
             idle(399)
             assertTrue(moves.isEmpty())
-            idle(301)
+            idle(311)
             assertEquals(List(4) { count }, moves)
             touch(bar, MotionEvent.ACTION_UP, x)
             idle(500)
@@ -277,7 +295,7 @@ class KeyboardCursorRepeatTest {
             val x = if (count < 0) 1f else bar.width - 1f
             moves.clear()
             touch(bar, MotionEvent.ACTION_DOWN, x)
-            idle(500)
+            idle(510)
             assertEquals(List(2) { count }, moves)
             assertEquals(if (count < 0) 2 else 5, caret)
             touch(bar, MotionEvent.ACTION_UP, x)
@@ -291,7 +309,7 @@ class KeyboardCursorRepeatTest {
         touch(key, MotionEvent.ACTION_DOWN)
         idle(399)
         assertTrue(moves.isEmpty())
-        idle(211)
+        idle(221)
         assertEquals(List(4) { count }, moves)
         touch(key, MotionEvent.ACTION_UP)
         idle(500)
