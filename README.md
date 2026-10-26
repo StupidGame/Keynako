@@ -87,6 +87,8 @@ Androidではジェスチャー操作・3ボタン操作のどちらも、画面
 
 Androidのカーソル移動キーとスペースキーの左右フリックは、押さえ続けると連続でカーソルを移動します。短く操作した場合は1回だけ移動します。カスタムキーとCustardのカーソル移動にも対応し、別の長押し操作が指定されているキーはその設定を優先します。
 
+文中の登録語・学習語の優先置換は、標準辞書の単語の区切りを守ります。たとえば「ふ → 不」を覚えていても「フルフレックス」の途中へ割り込ませません。Zenzaiが生成した全角カタカナの複合語も、他の変換候補と一緒に評価します。
+
 ### iOS
 
 iOS 17以上を対象にしています。macOSで`ios/Runner.xcworkspace`をXcodeから開き、RunnerとAzooKeyKeyboardの両ターゲットに同じDevelopment Teamを設定してください。両ターゲットでApp Groupを有効にし、環境に合わせてbundle identifierと`group.com.azooKey.keyboard`をプロビジョニングします。その後Runnerをビルドし、iOSの「設定 > 一般 > キーボード > キーボード」からKeynakoを追加します。
@@ -109,7 +111,7 @@ flutter run -d windows # linux、macosも指定可能
 
 ### GitHub Actions
 
-「Build app files」ワークフローは、ブランチ・タグのpushと手動実行で、署名済みAndroid APK、未署名iOS IPA、Simulator用アプリ、各PC OSへ登録できるIMEとZenzai入り設定アプリを同じ実行のArtifactsへ配布します。各成果物には共通の実行番号が付きます。Pull Requestは全OSのビルド検証のみで、成果物を配布しません。Androidのリリース鍵はAndroid Studio相当の手順で作成したJKSを暗号化してGitに保存し、GitHub Secretsのパスフレーズで復号します。配布用ビルドは復号用Secretがない場合に停止し、別の鍵を生成しません。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
+「Build app files」ワークフローは、ブランチ・vタグのpushと手動実行で、コード検証と全OSの配布ファイル生成を同じ実行内で並列に行います。署名済みAndroid APK、未署名iOS IPA、Simulator用アプリ、各PC OSへ登録できるIMEとZenzai入り設定アプリは、共通の実行番号で同じArtifactsに並びます。PR更新時もブランチpushの1回で検証と配布を行い、PR専用の検証実行は重複起動しません。Androidのリリース鍵はAndroid Studio相当の手順で作成したJKSを暗号化してGitに保存し、GitHub Secretsのパスフレーズで復号します。配布用ビルドは復号用Secretがない場合に停止し、別の鍵を生成しません。実行方法と署名上の制約は[docs/github_actions_builds.md](docs/github_actions_builds.md)を参照してください。
 
 ## azooKey / Custard互換性
 

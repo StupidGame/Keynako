@@ -1,9 +1,8 @@
 name: Build app files
-run-name: ${{ github.event_name == 'pull_request' && 'Validate all platforms' || 'Build all app files' }} · ${{ github.ref_name }}
+run-name: Build and validate app files · ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
-  pull_request:
   push:
     branches:
       - "**"
@@ -18,10 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  android:
-    name: ${{ github.event_name == 'pull_request' && 'Android validation (no APK distribution)' || 'Signed Android release APK' }}
+  android-validation:
+    name: Android validation
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       - name: Check out source and submodules
@@ -58,40 +57,43 @@ jobs:
       - name: Test Android signing preparation
         run: python3 -m unittest discover -s .github/scripts -p 'test_android_signing.py'
 
-      - name: Build the unsigned Android release for validation
-        if: github.event_name == 'pull_request'
-        working-directory: android
-        run: ./gradlew :app:assembleRelease -Pflutter.versionCode="$GITHUB_RUN_NUMBER"
+  android:
+    name: Signed Android release APK
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
 
-      - name: Explain where to download all release files
-        if: github.event_name == 'pull_request'
-        env:
-          KEYNAKO_HEAD_BRANCH: ${{ github.head_ref }}
-        run: |
-          python3 - <<'PY'
-          import os
-          from urllib.parse import urlencode
-          query = urlencode({"query": "event:push branch:" + os.environ["KEYNAKO_HEAD_BRANCH"]})
-          url = (os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"] +
-                 "/actions/workflows/build-app-files.yml?" + query)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("## アプリの配布ファイル\n\nこのPR実行は全OSのビルド検証のみで、成果物を配布しません。\n\n")
-              summary.write("同じブランチのpush実行、または手動実行のArtifactsに、"
-                            "Android APK・iOS・Windows・Linux・macOSの配布ファイルがそろいます。\n\n")
-              summary.write("更新用APKは固定のリリース鍵で署名した "
-                            "`keynako-android-release-apk-*` を使ってください。\n\n")
-              summary.write("[同じブランチの配布ビルドを開く](" + url + ")\n")
-          PY
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Validate the Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v6.4.0
+
+      - name: Set up Java
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter packages
+        run: flutter pub get
 
       - name: Prepare the Android signing key
-        if: github.event_name != 'pull_request'
         env:
           KEYNAKO_ANDROID_SIGNING_PASSPHRASE: ${{ secrets.KEYNAKO_ANDROID_SIGNING_PASSPHRASE }}
           KEYNAKO_REQUIRE_ENCRYPTED: "true"
         run: python3 .github/scripts/android_signing.py
 
       - name: Build the signed APK
-        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -101,7 +103,6 @@ jobs:
             --dart-define=KEYNAKO_DICTIONARY_SUBMISSION_URL="${{ vars.KEYNAKO_DICTIONARY_SUBMISSION_URL }}"
 
       - name: Verify the APK signature
-        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -113,7 +114,6 @@ jobs:
           python3 .github/scripts/android_signing.py --verify-apk-report build/app/outputs/flutter-apk/signature-report.txt
 
       - name: Upload Android files
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-android-release-apk-${{ github.run_number }}
@@ -190,7 +190,6 @@ jobs:
           } > build/ios/ARTIFACTS.txt
 
       - name: Upload iOS files
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-ios-files-${{ github.run_number }}
@@ -413,7 +412,6 @@ jobs:
             Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
 
       - name: Upload the signed Windows desktop app
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-windows-installer-${{ steps.windows-signing.outputs.kind }}-signed-${{ github.run_number }}
@@ -497,7 +495,6 @@ jobs:
           tar -C "$RUNNER_TEMP" -czf build/Keynako-linux-x64.tar.gz Keynako
 
       - name: Upload the Linux desktop app
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-linux-x64-${{ github.run_number }}
@@ -582,7 +579,6 @@ jobs:
             "$package_root" build/Keynako-macos.zip
 
       - name: Upload the macOS desktop app
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-macos-${{ github.run_number }}
