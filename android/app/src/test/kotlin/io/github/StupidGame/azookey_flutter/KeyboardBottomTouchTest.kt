@@ -65,17 +65,17 @@ class KeyboardBottomTouchTest {
     @Config(sdk = [24, 28])
     @Suppress("DEPRECATION")
     fun legacyThreeButtonNavigationUpdatesWhenTheBarMovesOrDisappears() {
-        frame.dispatchApplyWindowInsets(WindowInsets(Rect(0, 0, 0, 48)))
+        frame.dispatchApplyWindowInsets(legacyInsets(Rect(0, 0, 0, 48)))
         layout()
         assertEquals(48, frame.paddingBottom)
-        frame.dispatchApplyWindowInsets(WindowInsets(Rect(30, 0, 0, 0)))
+        frame.dispatchApplyWindowInsets(legacyInsets(Rect(30, 0, 0, 0)))
         layout()
         assertEquals(30, frame.paddingLeft)
         assertEquals(0, frame.paddingBottom)
         val surface = ReflectionHelpers.getField<FrameLayout>(service, "keyboardSurface")
         assertEquals(30, surface.left)
         assertEquals(570, surface.width)
-        frame.dispatchApplyWindowInsets(WindowInsets(Rect()))
+        frame.dispatchApplyWindowInsets(legacyInsets(Rect()))
         layout()
         assertEquals(0, frame.paddingLeft)
         assertEquals(600, surface.width)
@@ -169,6 +169,11 @@ class KeyboardBottomTouchTest {
     }
 
     private fun dp(value: Int) = (value * service.resources.displayMetrics.density).toInt()
+
+    // The Rect constructor exists on these old SDKs but is hidden from SDK stubs.
+    private fun legacyInsets(rect: Rect): WindowInsets = ReflectionHelpers.callConstructor(
+        WindowInsets::class.java, ReflectionHelpers.ClassParameter.from(Rect::class.java, rect),
+    )
 
     private fun touch(view: View, action: Int, x: Float, y: Float) {
         val now = SystemClock.uptimeMillis()
