@@ -20,13 +20,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.After
 import org.junit.Rule
-import org.junit.rules.TestRule
-import org.junit.runners.model.Statement
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowChoreographer
+import org.robolectric.junit.rules.TimeoutRule
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
 import org.robolectric.annotation.LooperMode
@@ -37,24 +37,7 @@ import org.robolectric.util.ReflectionHelpers
 @ConscryptMode(ConscryptMode.Mode.OFF)
 @LooperMode(LooperMode.Mode.PAUSED)
 class KeyboardCursorRepeatTest {
-    @get:Rule val timeout = TestRule { base, description ->
-        object : Statement() {
-            override fun evaluate() {
-                val testThread = Thread.currentThread()
-                val watchdog = Thread({
-                    try {
-                        Thread.sleep(20_000)
-                        System.err.println("Timed out: ${description.methodName}")
-                        testThread.stackTrace.forEach { System.err.println("    at $it") }
-                        testThread.interrupt()
-                    } catch (_: InterruptedException) {
-                        // The test completed before the deadline.
-                    }
-                }, "cursor-repeat-test-watchdog").apply { isDaemon = true; start() }
-                try { base.evaluate() } finally { watchdog.interrupt() }
-            }
-        }
-    }
+    @get:Rule val timeout: TimeoutRule = TimeoutRule.seconds(20)
 
     private lateinit var service: AzooKeyInputMethodService
     private lateinit var activity: Activity
@@ -64,8 +47,16 @@ class KeyboardCursorRepeatTest {
     private var document = "abcdefghijklmnopqrstuvwxyz".repeat(3)
     private var caret = 30
     private var previousWindowVisibilityProperty: String? = null
+    private var previousChoreographerPaused = false
+    private var previousFrameDelay = Duration.ZERO
 
     @Before fun setUp() {
+        // Auto-advancing vsync can keep scrollbar/popup animations running
+        // inside idleFor indefinitely. Advance frames only with the test clock.
+        previousChoreographerPaused = ShadowChoreographer.isPaused()
+        previousFrameDelay = ShadowChoreographer.getFrameDelay()
+        ShadowChoreographer.setPaused(true)
+        ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
         // Legacy Robolectric graphics leave windows hidden unless requested.
         previousWindowVisibilityProperty = System.getProperty("robolectric.areWindowsMarkedVisible")
         System.setProperty("robolectric.areWindowsMarkedVisible", "true")
@@ -106,6 +97,8 @@ class KeyboardCursorRepeatTest {
         val previous = previousWindowVisibilityProperty
         if (previous == null) System.clearProperty("robolectric.areWindowsMarkedVisible")
         else System.setProperty("robolectric.areWindowsMarkedVisible", previous)
+        ShadowChoreographer.setFrameDelay(previousFrameDelay)
+        ShadowChoreographer.setPaused(previousChoreographerPaused)
     }
 
     @Test fun customCursorKeysRepeatInBothDirectionsAndDoNotMoveAgainOnRelease() {
@@ -329,7 +322,7 @@ class KeyboardCursorRepeatTest {
 
     private fun mount(view: View) {
         if (view.parent == null) activity.setContentView(view)
-        shadowOf(Looper.getMainLooper()).idle()
+        idle(20) // Complete the first visible frame before sending input.
         view.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
             if (view === frame) View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST)
             else View.MeasureSpec.makeMeasureSpec(50, View.MeasureSpec.EXACTLY))

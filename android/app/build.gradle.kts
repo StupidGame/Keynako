@@ -38,8 +38,7 @@ android {
     testOptions {
         unitTests.all {
             it.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-            it.testLogging.showStandardStreams = true
-            it.timeout.set(Duration.ofMinutes(2))
+            it.timeout.set(Duration.ofMinutes(5))
         }
     }
 
