@@ -38,7 +38,7 @@ class KeyboardCursorRepeatTest {
     private lateinit var frame: ViewGroup
     private val moves = mutableListOf<Int>()
     private val commits = mutableListOf<String>()
-    private val document = "abcdefghijklmnopqrstuvwxyz".repeat(3)
+    private var document = "abcdefghijklmnopqrstuvwxyz".repeat(3)
     private var caret = 30
 
     @Before fun setUp() {
@@ -142,6 +142,23 @@ class KeyboardCursorRepeatTest {
         assertEquals(listOf(-1, -1), moves)
     }
 
+    @Test fun hidingTheInputWindowStopsCursorRepeats() {
+        val key = custom(JSONObject().put("tap", moveAction(1)))
+        mount(key)
+        touch(key, MotionEvent.ACTION_DOWN)
+        idle(400)
+        assertEquals(1, moves.size)
+        windowVisibility(key, View.GONE)
+        idle(500)
+        assertEquals(1, moves.size)
+        windowVisibility(key, View.VISIBLE)
+        touch(key, MotionEvent.ACTION_CANCEL)
+        touch(key, MotionEvent.ACTION_DOWN)
+        idle(400)
+        assertEquals(2, moves.size)
+        touch(key, MotionEvent.ACTION_UP)
+    }
+
     @Test fun explicitCustardLongPressAndRepeatArePreserved() {
         val key = custard(JSONObject().put("press_actions", JSONArray().put(custardMove(-1)))
             .put("longpress_actions", JSONObject().put("duration", "light")
@@ -234,6 +251,25 @@ class KeyboardCursorRepeatTest {
         }
     }
 
+    @Test fun heldCursorBarArrowsCrossLineBreaksInBothDirections() {
+        document = "abc\ndef"
+        for (count in listOf(-1, 1)) {
+            caret = if (count < 0) 4 else 3
+            ReflectionHelpers.callInstanceMethod<Unit>(service, "renderCursorBar")
+            mount(frame)
+            val bar = ReflectionHelpers.getField<View>(service, "cursorBarView")
+            val x = if (count < 0) 1f else bar.width - 1f
+            moves.clear()
+            touch(bar, MotionEvent.ACTION_DOWN, x)
+            idle(500)
+            assertEquals(List(2) { count }, moves)
+            assertEquals(if (count < 0) 2 else 5, caret)
+            touch(bar, MotionEvent.ACTION_UP, x)
+            idle(500)
+            assertEquals(2, moves.size)
+        }
+    }
+
     private fun assertHold(key: View, count: Int) {
         moves.clear()
         touch(key, MotionEvent.ACTION_DOWN)
@@ -260,6 +296,9 @@ class KeyboardCursorRepeatTest {
     private fun mount(view: View) {
         if (view.parent == null) activity.setContentView(view)
         shadowOf(Looper.getMainLooper()).idle()
+        // The service's test window starts hidden. Model Android showing the
+        // input window before sending a held key; isShown alone omits this state.
+        windowVisibility(view, View.VISIBLE)
         view.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
             if (view === frame) View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST)
             else View.MeasureSpec.makeMeasureSpec(50, View.MeasureSpec.EXACTLY))
@@ -267,6 +306,12 @@ class KeyboardCursorRepeatTest {
         assertTrue("keyboard must be attached", view.isAttachedToWindow)
         assertTrue("keyboard must be shown", view.isShown)
         assertEquals("keyboard window must be visible", View.VISIBLE, view.windowVisibility)
+    }
+
+    private fun windowVisibility(view: View, visibility: Int) {
+        ReflectionHelpers.setField(ReflectionHelpers.getField<Any>(view, "mAttachInfo"),
+            "mWindowVisibility", visibility)
+        view.rootView.dispatchWindowVisibilityChanged(visibility)
     }
 
     private fun idle(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))

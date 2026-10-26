@@ -4819,13 +4819,11 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
 
         private fun move(count: Int) {
-            val center = displayLeftIndex + itemCount / 2
-            val destination = (center + count).coerceIn(0, line.lastIndex.coerceAtLeast(0))
-            val distance = destination - center
-            if (distance == 0) return
-            displayLeftIndex += distance
-            displayRightIndex += distance
-            moveCursor(distance)
+            // The preview shows the current line, but cursor arrows must also
+            // cross line breaks. The editor owns the actual document bounds.
+            displayLeftIndex += count
+            displayRightIndex += count
+            moveCursor(count)
             invalidate()
         }
 
