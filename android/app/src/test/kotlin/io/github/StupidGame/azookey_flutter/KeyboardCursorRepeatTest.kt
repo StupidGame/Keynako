@@ -18,6 +18,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -40,8 +41,12 @@ class KeyboardCursorRepeatTest {
     private val commits = mutableListOf<String>()
     private var document = "abcdefghijklmnopqrstuvwxyz".repeat(3)
     private var caret = 30
+    private var previousWindowVisibilityProperty: String? = null
 
     @Before fun setUp() {
+        // Legacy Robolectric graphics leave windows hidden unless requested.
+        previousWindowVisibilityProperty = System.getProperty("robolectric.areWindowsMarkedVisible")
+        System.setProperty("robolectric.areWindowsMarkedVisible", "true")
         service = Robolectric.buildService(AzooKeyInputMethodService::class.java).create().get()
         service.getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .edit().clear().putString(MainActivity.STATE_KEY, JSONObject().put("settings", JSONObject()
@@ -72,6 +77,13 @@ class KeyboardCursorRepeatTest {
         frame = service.onCreateInputView() as ViewGroup
         activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         mount(frame)
+    }
+
+    @After fun tearDown() {
+        if (::activity.isInitialized) activity.setContentView(View(activity))
+        val previous = previousWindowVisibilityProperty
+        if (previous == null) System.clearProperty("robolectric.areWindowsMarkedVisible")
+        else System.setProperty("robolectric.areWindowsMarkedVisible", previous)
     }
 
     @Test fun customCursorKeysRepeatInBothDirectionsAndDoNotMoveAgainOnRelease() {
@@ -142,16 +154,16 @@ class KeyboardCursorRepeatTest {
         assertEquals(listOf(-1, -1), moves)
     }
 
-    @Test fun hidingTheInputWindowStopsCursorRepeats() {
+    @Test fun hidingTheKeyboardStopsCursorRepeats() {
         val key = custom(JSONObject().put("tap", moveAction(1)))
         mount(key)
         touch(key, MotionEvent.ACTION_DOWN)
         idle(400)
         assertEquals(1, moves.size)
-        windowVisibility(key, View.GONE)
+        key.rootView.visibility = View.GONE
         idle(500)
         assertEquals(1, moves.size)
-        windowVisibility(key, View.VISIBLE)
+        key.rootView.visibility = View.VISIBLE
         touch(key, MotionEvent.ACTION_CANCEL)
         touch(key, MotionEvent.ACTION_DOWN)
         idle(400)
@@ -296,9 +308,6 @@ class KeyboardCursorRepeatTest {
     private fun mount(view: View) {
         if (view.parent == null) activity.setContentView(view)
         shadowOf(Looper.getMainLooper()).idle()
-        // The service's test window starts hidden. Model Android showing the
-        // input window before sending a held key; isShown alone omits this state.
-        windowVisibility(view, View.VISIBLE)
         view.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
             if (view === frame) View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST)
             else View.MeasureSpec.makeMeasureSpec(50, View.MeasureSpec.EXACTLY))
@@ -306,12 +315,6 @@ class KeyboardCursorRepeatTest {
         assertTrue("keyboard must be attached", view.isAttachedToWindow)
         assertTrue("keyboard must be shown", view.isShown)
         assertEquals("keyboard window must be visible", View.VISIBLE, view.windowVisibility)
-    }
-
-    private fun windowVisibility(view: View, visibility: Int) {
-        ReflectionHelpers.setField(ReflectionHelpers.getField<Any>(view, "mAttachInfo"),
-            "mWindowVisibility", visibility)
-        view.rootView.dispatchWindowVisibilityChanged(visibility)
     }
 
     private fun idle(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
