@@ -1,3 +1,5 @@
+import java.time.Duration
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -36,7 +38,7 @@ android {
     testOptions {
         unitTests.all {
             it.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-            it.timeout.set(java.time.Duration.ofMinutes(2))
+            it.timeout.set(Duration.ofMinutes(2))
         }
     }
 
