@@ -83,6 +83,8 @@ flutter run
 
 インストール後、Androidの「システム > キーボード > 画面キーボード」でKeynakoを有効化して選択します。release署名は`KEYNAKO_KEYSTORE_PATH`、`KEYNAKO_STORE_PASSWORD`、`KEYNAKO_KEY_ALIAS`、`KEYNAKO_KEY_PASSWORD`の環境変数から読み込みます。
 
+Androidではナビゲーションバーを非表示にしたジェスチャー操作でも、画面下端の操作領域を避けてキーを配置します。キー同士の小さなすき間からもタップやフリックを始められます。横向きでナビゲーションバーが左右へ移動した場合や片手モードでも、その余白を考慮します。
+
 ### iOS
 
 iOS 17以上を対象にしています。macOSで`ios/Runner.xcworkspace`をXcodeから開き、RunnerとAzooKeyKeyboardの両ターゲットに同じDevelopment Teamを設定してください。両ターゲットでApp Groupを有効にし、環境に合わせてbundle identifierと`group.com.azooKey.keyboard`をプロビジョニングします。その後Runnerをビルドし、iOSの「設定 > 一般 > キーボード > キーボード」からKeynakoを追加します。

@@ -20,6 +20,10 @@ internal class CustardGridLayout(
     private val positions = linkedMapOf<View, Position>()
     private val gap = (2 * resources.displayMetrics.density).toInt()
 
+    init {
+        expandKeyboardKeyHitAreas(gap * 2)
+    }
+
     fun addPositionedView(
         view: View,
         x: Double,

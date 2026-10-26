@@ -29,7 +29,6 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.HorizontalScrollView
@@ -119,6 +118,8 @@ import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
 import io.github.StupidGame.azookey_flutter.input.shiftedInputLabel
 import io.github.StupidGame.azookey_flutter.view.KeyboardBodyScrollView
+import io.github.StupidGame.azookey_flutter.view.expandKeyboardKeyHitAreas
+import io.github.StupidGame.azookey_flutter.view.keyboardContentInsets
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -305,8 +306,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                     MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
                         val origin = IntArray(2)
                         inputViewFrame.getLocationOnScreen(origin)
-                        val available = inputViewFrame.width.coerceAtLeast(1)
-                        val x = event.rawX - origin[0]
+                        val available = (inputViewFrame.width - inputViewFrame.paddingLeft - inputViewFrame.paddingRight)
+                            .coerceAtLeast(1)
+                        val x = event.rawX - origin[0] - inputViewFrame.paddingLeft
                         oneHandedWidth = (if (oneHandedMode == "right")
                             (available - x) / available else x / available).coerceIn(0.6f, 0.92f)
                         applyKeyboardWidth()
@@ -323,16 +325,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         resizeHandle?.let { keyboardSurface.addView(it, FrameLayout.LayoutParams(dp(22), dp(64))) }
         applyKeyboardBackground()
         applyKeyboardWidth()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            inputViewFrame.setOnApplyWindowInsetsListener { view, insets ->
-                val bottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
-                if (view.paddingBottom != bottom) {
-                    view.setPadding(0, 0, 0, bottom)
-                    applyKeyboardHeightConstraints()
-                    view.requestLayout()
-                }
-                insets
+        inputViewFrame.setOnApplyWindowInsetsListener { view, insets ->
+            val safe = keyboardContentInsets(insets)
+            if (view.paddingLeft != safe.left || view.paddingRight != safe.right || view.paddingBottom != safe.bottom) {
+                view.setPadding(safe.left, 0, safe.right, safe.bottom)
+                applyKeyboardHeightConstraints()
+                applyKeyboardWidth()
+                view.requestLayout()
             }
+            insets
         }
         candidateScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -379,6 +380,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         renderCandidates()
         renderKeyboard()
         prepareZenzaiIfNeeded()
+        inputViewFrame.requestApplyInsets()
         return inputViewFrame
     }
 
@@ -450,6 +452,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             renderCandidates()
             renderKeyboard()
             prepareZenzaiIfNeeded()
+            inputViewFrame.requestApplyInsets()
         }
     }
 
@@ -1089,7 +1092,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             val cellWidth = (resources.displayMetrics.widthPixels / visibleCount).toInt()
             val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (start in elements.indices step crossCount) {
-                val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                val column = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    expandKeyboardKeyHitAreas(dp(4))
+                }
                 for (index in start until minOf(start + crossCount, elements.size)) {
                     column.addView(
                         createCustardKey(elements[index], keyStyle, scale, variationsEnabled = false),
@@ -1985,6 +1991,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             textSize = if (textSizeSetting > 0) textSizeSetting.toFloat() else keyTextSize(label)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             isAllCaps = false
+            isClickable = true
             background = roundedDrawable(if (special) palette.special else palette.key, dp(6).toFloat())
             val vertical = (dp(2) * scale).toInt().coerceAtLeast(1)
             val horizontal = dp(2)
@@ -2157,6 +2164,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
         setPadding(dp(2), dp(2), dp(2), dp(2))
+        expandKeyboardKeyHitAreas(dp(4))
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             keyRowHeight(scale),
@@ -2645,7 +2653,8 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun applyKeyboardWidth() {
         if (!::root.isInitialized) return
-        val availableWidth = inputViewFrame.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val frameWidth = inputViewFrame.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val availableWidth = (frameWidth - inputViewFrame.paddingLeft - inputViewFrame.paddingRight).coerceAtLeast(1)
         val width = if (oneHandedMode == "full") {
             FrameLayout.LayoutParams.MATCH_PARENT
         } else {
