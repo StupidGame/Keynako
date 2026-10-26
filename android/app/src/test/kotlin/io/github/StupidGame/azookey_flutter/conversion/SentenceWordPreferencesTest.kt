@@ -11,7 +11,7 @@ class SentenceWordPreferencesTest {
                 ConversionWordSpan(0, 1, 0, 1), ConversionWordSpan(1, 2, 1, 2),
                 ConversionWordSpan(2, 7, 2, 7),
             ), listOf(SentenceWordPreference("ふ", "不", learned = true)),
-            referenceWordBoundaries = setOf(0, 2, 7),
+            referenceWords = listOf(ConversionWordSpan(0, 2, 0, 2), ConversionWordSpan(2, 7, 2, 7)),
         ))
     }
 

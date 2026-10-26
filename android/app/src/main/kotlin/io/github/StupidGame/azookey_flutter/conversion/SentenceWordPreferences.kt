@@ -6,6 +6,7 @@ internal data class ConversionWordSpan(
     val readingEnd: Int,
     val textStart: Int,
     val textEnd: Int,
+    val isContentWord: Boolean = true,
 )
 
 internal data class SentenceWordPreference(
@@ -15,16 +16,17 @@ internal data class SentenceWordPreference(
     val weight: Double = 0.0,
 )
 
-/** Replaces whole parsed words, retaining every other part of the candidate. */
+/** Replaces whole parsed words; learned lexical spellings cannot replace grammar alone. */
 internal fun preferredSentenceSpelling(
     reading: String,
     text: String,
     spans: List<ConversionWordSpan>,
     preferences: List<SentenceWordPreference>,
-    referenceWordBoundaries: Set<Int>? = null,
+    referenceWords: List<ConversionWordSpan>? = null,
 ): String? {
     if (spans.isEmpty() || preferences.isEmpty()) return null
     val normalized = katakanaToHiragana(reading)
+    val referenceBoundaries = referenceWords?.mapTo(mutableSetOf(0)) { it.readingEnd }
     val boundaries = mutableMapOf(0 to 0)
     for (span in spans) boundaries[span.readingEnd] = span.textEnd
     data class Match(val start: Int, val end: Int, val preference: SentenceWordPreference)
@@ -37,8 +39,11 @@ internal fun preferredSentenceSpelling(
             val textStart = boundaries[start]
             val textEnd = boundaries[start + ruby.length]
             if (textStart != null && textEnd != null && textStart < textEnd &&
-                (referenceWordBoundaries == null ||
-                    (start in referenceWordBoundaries && start + ruby.length in referenceWordBoundaries))
+                (referenceBoundaries == null ||
+                    (start in referenceBoundaries && start + ruby.length in referenceBoundaries)) &&
+                (!preference.learned || referenceWords == null || referenceWords.any {
+                    it.isContentWord && it.readingStart >= start && it.readingEnd <= start + ruby.length
+                })
             ) {
                 matches.add(Match(textStart, textEnd, preference))
             }

@@ -58,6 +58,24 @@ class ConversionQualityTest {
         assertEquals("不を書く", dictionary.preferredSentenceConversion("ふをかく", "符を書く", entries))
     }
 
+    @Test fun aLearnedNounCannotOverwriteAParticleInsideASentence() {
+        val reading = "ぱすたにちーずをかける"
+        val normal = "パスタにチーズをかける"
+        val learned = AzooKeyHotfixDictionaryEntry("煮", "に", -5.0, 1285, 1285, 501, isLearned = true)
+        assertNull(dictionary.preferredSentenceConversion(reading, normal, listOf(learned)))
+        assertTrue(dictionary.candidates(reading, 0, additionalEntries = listOf(learned))
+            .preferredSentenceConversions.isEmpty())
+        // An explicit registration is intentional even for a function word.
+        assertEquals("パスタ煮チーズをかける", dictionary.preferredSentenceConversion(
+            reading, normal, listOf(learned.copy(isLearned = false)),
+        ))
+    }
+
+    @Test fun learnedLexicalHomophonesStillReplaceAWholeWord() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("雲", "くも", -5.0, 1285, 1285, 501, isLearned = true))
+        assertEquals("雲を見る", dictionary.preferredSentenceConversion("くもをみる", "蜘蛛を見る", entries))
+    }
+
     @Test fun registeredAndLearnedWordsReplaceOnlyTheirAlignedSpansInSentences() {
         val reading = "きょうさとうさんととうきょうにいく"
         val original = "今日佐藤さんと東京に行く"

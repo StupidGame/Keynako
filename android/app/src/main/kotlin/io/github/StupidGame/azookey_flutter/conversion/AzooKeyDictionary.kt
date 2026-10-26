@@ -132,8 +132,8 @@ internal class AzooKeyDictionary(
 
     // Personal spellings must not create their own word boundaries inside a
     // bundled word (e.g. ふ -> 不 inside フル, or せい -> 姓 inside 先生).
-    private val referenceBoundaryCache = object : LinkedHashMap<String, Set<Int>>(128, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Set<Int>>): Boolean = size > 128
+    private val referenceWordsCache = object : LinkedHashMap<String, List<ConversionWordSpan>>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ConversionWordSpan>>): Boolean = size > 128
     }
 
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, ConversionResult>(128, 0.75f, true) {
@@ -242,12 +242,8 @@ internal class AzooKeyDictionary(
         if (relevant.isEmpty()) return null
         val key = PreferenceCacheKey(normalized, text, relevant)
         if (preferenceCache.containsKey(key)) return preferenceCache[key]
-        val referenceBoundaries = referenceBoundaryCache.getOrPut(normalized) {
-            val reference = convert(normalized, 1, emptyList(), cacheLattice = false)
-            buildSet {
-                add(0)
-                reference.alignment.forEach { add(it.readingEnd) }
-            }
+        val referenceWords = referenceWordsCache.getOrPut(normalized) {
+            convert(normalized, 1, emptyList(), cacheLattice = false).alignment
         }
         // A learned whole phrase must not hide the boundaries of a registered
         // word inside it. Parse its ordinary words instead when possible.
@@ -264,7 +260,7 @@ internal class AzooKeyDictionary(
         val result = if (!parsed.fullyParsed || parsed.values.isEmpty() || text in parsed.invalidInflections) null else {
             preferredSentenceSpelling(reading, text, parsed.alignment, relevant.map {
                 SentenceWordPreference(it.ruby, it.word, it.isLearned, it.wordWeight)
-            }, referenceBoundaries)
+            }, referenceWords)
         }
         preferenceCache[key] = result
         return result
@@ -527,6 +523,7 @@ internal class AzooKeyDictionary(
                                 path.alignment?.span?.readingEnd ?: 0,
                                 (path.alignment?.span?.readingEnd ?: 0) + entry.ruby.length,
                                 path.text.length, path.text.length + entry.word.length,
+                                isContentWord = entry.lcid !in 147..554 || entry.rcid !in 147..554,
                             ), path.alignment,
                         ) else null,
                         kanaAlternatives = if (canOfferKana) KanaAlternativeNode(
