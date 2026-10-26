@@ -5,6 +5,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ZenzaiRerankingTest {
+    @Test fun aGeneratedKatakanaCompoundIsScoredAlongsideOtherCompleteConversions() {
+        val base = listOf("旧フレックス", "不るフレックス", "フルフレックス", "ふるふれっくす", "ﾌﾙﾌﾚｯｸｽ")
+        val pool = zenzaiRerankingCandidates("フルフレックス", base, modelGenerated = "フルフレックス")
+        assertTrue("フルフレックス" in pool)
+        assertTrue("ふるふれっくす" !in pool)
+        assertTrue("ﾌﾙﾌﾚｯｸｽ" !in pool)
+        assertTrue("ﾌﾙﾌﾚｯｸｽ" !in zenzaiRerankingCandidates(
+            "フルフレックス", base, modelGenerated = "ﾌﾙﾌﾚｯｸｽ",
+        ))
+    }
+
     @Test fun halfWidthKanaNeverDisplacesACompleteLongSentenceAfterModelRanking() {
         val reading = "せんせいにいわれたからしゅくだいをしました"
         val converted = "先生に言われたから宿題をしました"

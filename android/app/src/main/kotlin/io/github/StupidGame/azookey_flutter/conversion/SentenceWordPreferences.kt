@@ -21,6 +21,7 @@ internal fun preferredSentenceSpelling(
     text: String,
     spans: List<ConversionWordSpan>,
     preferences: List<SentenceWordPreference>,
+    referenceWordBoundaries: Set<Int>? = null,
 ): String? {
     if (spans.isEmpty() || preferences.isEmpty()) return null
     val normalized = katakanaToHiragana(reading)
@@ -35,7 +36,10 @@ internal fun preferredSentenceSpelling(
         while (start >= 0) {
             val textStart = boundaries[start]
             val textEnd = boundaries[start + ruby.length]
-            if (textStart != null && textEnd != null && textStart < textEnd) {
+            if (textStart != null && textEnd != null && textStart < textEnd &&
+                (referenceWordBoundaries == null ||
+                    (start in referenceWordBoundaries && start + ruby.length in referenceWordBoundaries))
+            ) {
                 matches.add(Match(textStart, textEnd, preference))
             }
             start = normalized.indexOf(ruby, start + 1)

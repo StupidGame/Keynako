@@ -5,6 +5,16 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SentenceWordPreferencesTest {
+    @Test fun alternativeParsesCannotInventWordBoundariesForPersonalSpellings() {
+        assertNull(preferredSentenceSpelling(
+            "ふるふれっくす", "不るフレックス", listOf(
+                ConversionWordSpan(0, 1, 0, 1), ConversionWordSpan(1, 2, 1, 2),
+                ConversionWordSpan(2, 7, 2, 7),
+            ), listOf(SentenceWordPreference("ふ", "不", learned = true)),
+            referenceWordBoundaries = setOf(0, 2, 7),
+        ))
+    }
+
     @Test fun replacesTheMiddleAndBothRepeatedOccurrencesWithoutChangingTheRest() {
         val spans = listOf(
             ConversionWordSpan(0, 3, 0, 2), // 今日

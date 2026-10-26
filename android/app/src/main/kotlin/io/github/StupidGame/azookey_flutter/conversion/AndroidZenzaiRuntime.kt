@@ -96,7 +96,7 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 // Scoring every entry in the large dictionary makes inference lag behind typing.
                 // Zenzai reranks the strongest entries and preserves the remaining dictionary order.
                 val candidates = values.toList()
-                val rerankedCandidates = zenzaiRerankingCandidates(reading, candidates, incompleteTexts)
+                val rerankedCandidates = zenzaiRerankingCandidates(reading, candidates, incompleteTexts, generated)
                 val scores = ZenzEngine.scoreCandidatesV32(
                     null,
                     null,

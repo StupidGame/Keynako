@@ -130,6 +130,12 @@ internal class AzooKeyDictionary(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PreferenceCacheKey, String?>): Boolean = size > 128
     }
 
+    // Personal spellings must not create their own word boundaries inside a
+    // bundled word (e.g. ふ -> 不 inside フル, or せい -> 姓 inside 先生).
+    private val referenceBoundaryCache = object : LinkedHashMap<String, Set<Int>>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Set<Int>>): Boolean = size > 128
+    }
+
     private val conversionCache = object : LinkedHashMap<ConversionCacheKey, ConversionResult>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ConversionCacheKey, ConversionResult>): Boolean =
             size > 128
@@ -199,11 +205,12 @@ internal class AzooKeyDictionary(
         } else {
             emptyList()
         }
-        val preferred = (conversions.values.take(3).mapNotNull {
+        // A path merely using a personal entry is not proof of a whole-word
+        // preference: it may have split a normal word to fit that entry.
+        val preferred = (conversions.values.take(3) + listOfNotNull(conversions.canonical) +
+            conversions.preferredSentences.take(3)).distinct().mapNotNull {
             preferredSentenceConversion(reading, it, additionalEntries)
-        } + conversions.preferredSentences.filter { text -> additionalEntries.none {
-            it.ruby.toKatakana() == katakana && it.word == text
-        } }).distinct()
+        }.distinct()
         val complete = if (preferred.isEmpty()) conversions.values else {
             (preferred.take(3) + listOfNotNull(conversions.canonical) +
                 preferred.drop(3) + conversions.values).distinct().take(conversionLimit.coerceAtLeast(0))
@@ -235,6 +242,13 @@ internal class AzooKeyDictionary(
         if (relevant.isEmpty()) return null
         val key = PreferenceCacheKey(normalized, text, relevant)
         if (preferenceCache.containsKey(key)) return preferenceCache[key]
+        val referenceBoundaries = referenceBoundaryCache.getOrPut(normalized) {
+            val reference = convert(normalized, 1, emptyList(), cacheLattice = false)
+            buildSet {
+                add(0)
+                reference.alignment.forEach { add(it.readingEnd) }
+            }
+        }
         // A learned whole phrase must not hide the boundaries of a registered
         // word inside it. Parse its ordinary words instead when possible.
         val entries = relevant.filter { learned ->
@@ -250,7 +264,7 @@ internal class AzooKeyDictionary(
         val result = if (!parsed.fullyParsed || parsed.values.isEmpty() || text in parsed.invalidInflections) null else {
             preferredSentenceSpelling(reading, text, parsed.alignment, relevant.map {
                 SentenceWordPreference(it.ruby, it.word, it.isLearned, it.wordWeight)
-            })
+            }, referenceBoundaries)
         }
         preferenceCache[key] = result
         return result
@@ -276,8 +290,9 @@ internal class AzooKeyDictionary(
         limit: Int,
         additionalEntries: List<Entry>,
         requiredText: String? = null,
+        cacheLattice: Boolean = true,
     ): ConversionResult {
-        val extendsCache = requiredText == null && cachedLattice.isNotEmpty() &&
+        val extendsCache = cacheLattice && requiredText == null && cachedLattice.isNotEmpty() &&
             reading.startsWith(cachedLatticeReading) && cachedLatticeEntries == additionalEntries &&
             (reading.length < KANA_VARIANT_MIN_READING_LENGTH ||
                 cachedLatticeReading.length >= KANA_VARIANT_MIN_READING_LENGTH)
@@ -327,6 +342,7 @@ internal class AzooKeyDictionary(
                     entries.sortedByDescending(Entry::score),
                     offerKanaAlternatives = requiredText == null && reading.length >= KANA_VARIANT_MIN_READING_LENGTH,
                     requiredText = requiredText,
+                    trackAlignment = !cacheLattice,
                 )
             }
             val ruby = reading[start].toString()
@@ -334,10 +350,10 @@ internal class AzooKeyDictionary(
                 appendPaths(lattice[start + 1], previous, listOf(
                     Entry(ruby.toHiragana(), ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -13f),
                     Entry(ruby, ruby, PROPER_NOUN_CID, PROPER_NOUN_CID, GENERAL_MID, -14f),
-                ), requiredText = requiredText, fallback = true)
+                ), requiredText = requiredText, fallback = true, trackAlignment = !cacheLattice)
             }
         }
-        if (requiredText == null) {
+        if (cacheLattice && requiredText == null) {
             cachedLatticeReading = reading
             cachedLatticeEntries = additionalEntries
             cachedLattice = lattice
@@ -408,6 +424,8 @@ internal class AzooKeyDictionary(
         } else values
         return ConversionResult(complete, canonical, parsedInflections.intersect(complete.toSet()),
             invalidInflections.intersect(complete.toSet()),
+            alignment = generateSequence(ranked.firstOrNull()?.alignment) { it.previous }
+                .map { it.span }.toList().asReversed(),
             preferredSentences = ranked.filter {
                 it.usesPreferredEntry && !it.usesFallback && !it.invalidInflection && it.text in complete
             }.mapTo(linkedSetOf(), Path::text))
@@ -449,6 +467,7 @@ internal class AzooKeyDictionary(
         offerKanaAlternatives: Boolean = false,
         requiredText: String? = null,
         fallback: Boolean = false,
+        trackAlignment: Boolean = false,
     ) {
         val kana = if (offerKanaAlternatives) entries.firstOrNull()?.ruby?.toHiragana().orEmpty() else ""
         val kanaScore = if (kana.isNotEmpty()) entries.asSequence()
@@ -503,7 +522,7 @@ internal class AzooKeyDictionary(
                             (!path.lastWasUserEntry && path.lastRcid in 1283..1309 && entry.lcid in 435..439),
                         lastWasUserEntry = entry.isUserEntry,
                         usesPreferredEntry = path.usesPreferredEntry || entry.isUserEntry,
-                        alignment = if (requiredText != null) AlignmentNode(
+                        alignment = if (requiredText != null || trackAlignment) AlignmentNode(
                             ConversionWordSpan(
                                 path.alignment?.span?.readingEnd ?: 0,
                                 (path.alignment?.span?.readingEnd ?: 0) + entry.ruby.length,
