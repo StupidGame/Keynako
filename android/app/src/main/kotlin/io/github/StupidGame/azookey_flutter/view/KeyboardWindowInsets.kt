@@ -20,7 +20,16 @@ internal fun keyboardContentInsets(insets: WindowInsets): KeyboardContentInsets 
         // visible side obstructions; home gestures at the bottom remain active.
         return KeyboardContentInsets(visible.left, visible.right, maxOf(visible.bottom, gestures.bottom))
     }
-    val cutout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) insets.displayCutout else null
+    var left = insets.systemWindowInsetLeft
+    var right = insets.systemWindowInsetRight
+    var cutoutBottom = 0
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        insets.displayCutout?.let { cutout ->
+            left = maxOf(left, cutout.safeInsetLeft)
+            right = maxOf(right, cutout.safeInsetRight)
+            cutoutBottom = cutout.safeInsetBottom
+        }
+    }
     val bottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         maxOf(
             insets.systemWindowInsetBottom,
@@ -31,9 +40,5 @@ internal fun keyboardContentInsets(insets: WindowInsets): KeyboardContentInsets 
     } else {
         insets.systemWindowInsetBottom
     }
-    return KeyboardContentInsets(
-        maxOf(insets.systemWindowInsetLeft, cutout?.safeInsetLeft ?: 0),
-        maxOf(insets.systemWindowInsetRight, cutout?.safeInsetRight ?: 0),
-        maxOf(bottom, cutout?.safeInsetBottom ?: 0),
-    )
+    return KeyboardContentInsets(left, right, maxOf(bottom, cutoutBottom))
 }
