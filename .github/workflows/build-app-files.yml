@@ -1,4 +1,5 @@
 name: Build app files
+run-name: ${{ github.event_name == 'pull_request' && 'Validate all platforms' || 'Build all app files' }} · ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
@@ -8,12 +9,6 @@ on:
       - "**"
     tags:
       - "v*"
-    paths:
-      - "android/**"
-      - "signing/**"
-      - ".github/scripts/android_signing.py"
-      - ".github/scripts/test_android_signing.py"
-      - ".github/workflows/build-app-files.yml"
 
 permissions:
   contents: read
@@ -68,7 +63,7 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease -Pflutter.versionCode="$GITHUB_RUN_NUMBER"
 
-      - name: Explain where to download the Android release
+      - name: Explain where to download all release files
         if: github.event_name == 'pull_request'
         env:
           KEYNAKO_HEAD_BRANCH: ${{ github.head_ref }}
@@ -80,7 +75,9 @@ jobs:
           url = (os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"] +
                  "/actions/workflows/build-app-files.yml?" + query)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("## Android APK\n\nこのPR実行はビルド検証のみで、APKを配布しません。\n\n")
+              summary.write("## アプリの配布ファイル\n\nこのPR実行は全OSのビルド検証のみで、成果物を配布しません。\n\n")
+              summary.write("同じブランチのpush実行、または手動実行のArtifactsに、"
+                            "Android APK・iOS・Windows・Linux・macOSの配布ファイルがそろいます。\n\n")
               summary.write("更新用APKは固定のリリース鍵で署名した "
                             "`keynako-android-release-apk-*` を使ってください。\n\n")
               summary.write("[同じブランチの配布ビルドを開く](" + url + ")\n")
@@ -132,7 +129,6 @@ jobs:
         run: rm -f -- "$RUNNER_TEMP/keynako-release.jks"
 
   ios:
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     name: Unsigned iOS files
     runs-on: macos-26
     timeout-minutes: 90
@@ -194,6 +190,7 @@ jobs:
           } > build/ios/ARTIFACTS.txt
 
       - name: Upload iOS files
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-ios-files-${{ github.run_number }}
@@ -205,7 +202,6 @@ jobs:
             build/ios/ARTIFACTS.txt
 
   desktop-tests:
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     name: Desktop conversion tests
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -237,7 +233,6 @@ jobs:
           flutter test
 
   desktop-windows:
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     name: Windows desktop IME
     runs-on: windows-2025-vs2026
     timeout-minutes: 120
@@ -418,6 +413,7 @@ jobs:
             Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
 
       - name: Upload the signed Windows desktop app
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-windows-installer-${{ steps.windows-signing.outputs.kind }}-signed-${{ github.run_number }}
@@ -433,7 +429,6 @@ jobs:
         run: Remove-Item -LiteralPath $env:KEYNAKO_WINDOWS_CERTIFICATE_PATH -Force -ErrorAction SilentlyContinue
 
   desktop-linux:
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     name: Linux desktop IME
     runs-on: ubuntu-26.04
     timeout-minutes: 120
@@ -502,6 +497,7 @@ jobs:
           tar -C "$RUNNER_TEMP" -czf build/Keynako-linux-x64.tar.gz Keynako
 
       - name: Upload the Linux desktop app
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-linux-x64-${{ github.run_number }}
@@ -510,7 +506,6 @@ jobs:
           path: build/Keynako-linux-x64.tar.gz
 
   desktop-macos:
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     name: macOS desktop IME
     runs-on: macos-26
     timeout-minutes: 120
@@ -587,6 +582,7 @@ jobs:
             "$package_root" build/Keynako-macos.zip
 
       - name: Upload the macOS desktop app
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-macos-${{ github.run_number }}
