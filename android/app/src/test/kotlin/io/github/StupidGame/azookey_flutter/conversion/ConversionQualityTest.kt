@@ -76,6 +76,30 @@ class ConversionQualityTest {
         assertEquals("雲を見る", dictionary.preferredSentenceConversion("くもをみる", "蜘蛛を見る", entries))
     }
 
+    @Test fun katakanaCompoundsNeedNeitherAModelNorPersonalLearning() {
+        for ((reading, expected) in listOf(
+            "ふるふれっくす" to "フルフレックス",
+            "ふるふれっくすではたらく" to "フルフレックスで働く",
+            "ふるたいむ" to "フルタイム", "ふるりもーと" to "フルリモート",
+            "ふるすたっく" to "フルスタック", "おーぷんそーす" to "オープンソース",
+            "はーどでぃすく" to "ハードディスク",
+        )) {
+            val result = dictionary.candidates(reading, 0)
+            assertEquals(reading, expected, result.canonicalConversion)
+            assertEquals(expected, result.conversions.first())
+            assertEquals(expected, compositionCommitText(reading, finalJapaneseCandidateSpellings(
+                result.conversions, result.canonicalConversion,
+            ), true))
+        }
+        val result = dictionary.candidates("ふるふれっくす", 0)
+        assertTrue("旧フレックス" in result.conversions)
+        val ranked = rerankedJapaneseCandidates(
+            "ふるふれっくす", listOf("旧フレックス") + result.conversions,
+            result.conversions, emptyMap(), emptyMap(),
+        )
+        assertEquals("フルフレックス", finalJapaneseCandidateSpellings(ranked, result.canonicalConversion).first())
+    }
+
     @Test fun registeredAndLearnedWordsReplaceOnlyTheirAlignedSpansInSentences() {
         val reading = "きょうさとうさんととうきょうにいく"
         val original = "今日佐藤さんと東京に行く"

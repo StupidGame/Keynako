@@ -65,6 +65,7 @@ internal class AzooKeyDictionary(
         val lastWasUserEntry: Boolean = false,
         val alignment: AlignmentNode? = null,
         val usesPreferredEntry: Boolean = false,
+        val endsWithKatakanaWord: Boolean = false,
     )
 
     private class AlignmentNode(val span: ConversionWordSpan, val previous: AlignmentNode?)
@@ -471,6 +472,9 @@ internal class AzooKeyDictionary(
             .maxOfOrNull(Entry::score) else null
         val hasKatakanaSpelling = entries.any { it.word == it.ruby }
         for (entry in entries) {
+            val katakanaWord = !fallback && entry.word == entry.ruby && entry.word.length >= 2 &&
+                entry.word.all { it in 'ァ'..'ヺ' || it == 'ー' } &&
+                (entry.lcid in 1283..1296 || entry.lcid in 11..52 || entry.lcid in 557..560)
             // The dictionary contains some all-capitals aliases with a slightly
             // higher cost than their ordinary katakana spelling. In a sentence
             // that small difference can put an English fragment ahead of the
@@ -488,9 +492,16 @@ internal class AzooKeyDictionary(
             var touchedCount = 0
             for (path in previous) {
                 if (requiredText != null && !requiredText.startsWith(path.text + entry.word)) continue
+                // Loanword compounds such as フル + フレックス behave like a
+                // prefix followed by a noun, within one semantic word group.
+                // Otherwise a rare kanji prefix can beat the actual compound.
+                val katakanaCompound = path.endsWithKatakanaWord && katakanaWord
+                val connection = connectionScore(path.lastRcid, entry.lcid).let {
+                    if (katakanaCompound) maxOf(it, connectionScore(KATAKANA_COMPOUND_PREFIX_CID, entry.lcid)) else it
+                }
                 val mid = if (contributesMid(entry)) entry.mid else UNKNOWN_MID
                 val clauseMids = when {
-                    path.clauseMids.isEmpty() || beginsClause(path.lastRcid, entry.lcid) ->
+                    path.clauseMids.isEmpty() || (!katakanaCompound && beginsClause(path.lastRcid, entry.lcid)) ->
                         path.clauseMids + mid
                     (path.clauseMids.last() == UNKNOWN_MID && entry.mid != UNKNOWN_MID) ||
                         contributesMid(entry) -> path.clauseMids.dropLast(1) + entry.mid
@@ -505,7 +516,7 @@ internal class AzooKeyDictionary(
                     Path(
                         text = path.text + entry.word,
                         score = path.score + entry.score + spellingAdjustment +
-                            connectionScore(path.lastRcid, entry.lcid),
+                            connection,
                         lastRcid = entry.rcid,
                         clauseMids = clauseMids,
                         additionalMask = mask,
@@ -518,6 +529,7 @@ internal class AzooKeyDictionary(
                             (!path.lastWasUserEntry && path.lastRcid in 1283..1309 && entry.lcid in 435..439),
                         lastWasUserEntry = entry.isUserEntry,
                         usesPreferredEntry = path.usesPreferredEntry || entry.isUserEntry,
+                        endsWithKatakanaWord = katakanaWord,
                         alignment = if (requiredText != null || trackAlignment) AlignmentNode(
                             ConversionWordSpan(
                                 path.alignment?.span?.readingEnd ?: 0,
@@ -820,6 +832,7 @@ internal class AzooKeyDictionary(
         private const val BOS_CID = 0
         private const val EOS_CID = 1316
         private const val PROPER_NOUN_CID = 1288
+        private const val KATAKANA_COMPOUND_PREFIX_CID = 560
         private const val GENERAL_MID = 501
         private const val UNKNOWN_MID = 500
         private const val MID_COUNT = 502
