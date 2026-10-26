@@ -29,6 +29,12 @@ class KeyboardWindowInsetsTest {
         )))
     }
 
+    @Test fun threeButtonNavigationNeedsNoGestureInsets() {
+        assertEquals(KeyboardContentInsets(0, 0, 48), keyboardContentInsets(windowInsets(
+            navigation = Insets.of(0, 0, 0, 48),
+        )))
+    }
+
     @Test fun sideNavigationIsReservedWithoutBlockingSideBackGestures() {
         assertEquals(KeyboardContentInsets(48, 12, 0), keyboardContentInsets(windowInsets(
             navigation = Insets.of(48, 0, 12, 0), gestures = Insets.of(100, 0, 100, 0),

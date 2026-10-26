@@ -3,6 +3,7 @@ package io.github.StupidGame.azookey_flutter
 import android.app.Activity
 import android.content.Context
 import android.graphics.Insets
+import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -58,6 +59,26 @@ class KeyboardBottomTouchTest {
         frame.dispatchApplyWindowInsets(gestureInsets(bottom = 0))
         layout()
         assertEquals(0, frame.paddingBottom)
+    }
+
+    @Test
+    @Config(sdk = [24, 28])
+    @Suppress("DEPRECATION")
+    fun legacyThreeButtonNavigationUpdatesWhenTheBarMovesOrDisappears() {
+        frame.dispatchApplyWindowInsets(WindowInsets(Rect(0, 0, 0, 48)))
+        layout()
+        assertEquals(48, frame.paddingBottom)
+        frame.dispatchApplyWindowInsets(WindowInsets(Rect(30, 0, 0, 0)))
+        layout()
+        assertEquals(30, frame.paddingLeft)
+        assertEquals(0, frame.paddingBottom)
+        val surface = ReflectionHelpers.getField<FrameLayout>(service, "keyboardSurface")
+        assertEquals(30, surface.left)
+        assertEquals(570, surface.width)
+        frame.dispatchApplyWindowInsets(WindowInsets(Rect()))
+        layout()
+        assertEquals(0, frame.paddingLeft)
+        assertEquals(600, surface.width)
     }
 
     @Test fun bottomFlickKeyAcceptsItsGapAndKeepsTheFlickDirection() {
