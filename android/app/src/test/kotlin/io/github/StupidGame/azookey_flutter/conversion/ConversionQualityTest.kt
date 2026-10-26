@@ -19,6 +19,133 @@ class ConversionQualityTest {
         })
     }
 
+    @Test fun personalWordPreferencesCannotSplitBundledWordsAfterLatticeRanking() {
+        for ((reading, normal, preference) in listOf(
+            Triple("ふるふれっくす", "フルフレックス", "ふ" to "不"),
+            Triple("ふるふれっくすせいど", "フルフレックス制度", "ふ" to "不"),
+            Triple("せんせいにいわれたから", "先生に言われたから", "せい" to "姓"),
+            Triple("きょうあめりかにいく", "今日アメリカに行く", "あめ" to "雨"),
+        )) for (learned in listOf(false, true)) {
+            val entries = listOf(AzooKeyHotfixDictionaryEntry(
+                preference.second, preference.first, -5.0, 1285, 1285, 501, isLearned = learned,
+            ))
+            val result = dictionary.candidates(reading, 0, additionalEntries = entries)
+            assertTrue("$reading: ${result.preferredSentenceConversions}",
+                result.preferredSentenceConversions.isEmpty())
+            assertNull(dictionary.preferredSentenceConversion(reading, normal, entries))
+            // Both bundled models generate these complete spellings. No
+            // artificial personal-word path may push them back down afterward.
+            val generated = completeZenzaiCandidate(reading, normal, result.conversions, emptySet()) {
+                dictionary.validatesConversion(reading, it, entries)
+            }
+            assertEquals(normal, generated)
+            val base = (listOfNotNull(generated) + result.conversions).distinct()
+            val ranked = rerankedJapaneseCandidates(
+                reading, base, base, emptyMap(), emptyMap(),
+                dictionaryCandidates = result.preferredSentenceConversions.toList(),
+                preferredZenzaiCandidate = generated,
+                exactRegistrationTexts = result.preferredSentenceConversions,
+            )
+            assertEquals(normal, finalJapaneseCandidateSpellings(
+                ranked, result.canonicalConversion,
+                registeredTexts = result.preferredSentenceConversions, modelPreferredText = generated,
+            ).first())
+        }
+    }
+
+    @Test fun theSameShortRegistrationStillWorksWhenItIsAWholeWord() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("不", "ふ", -5.0, 1285, 1285, 501))
+        assertEquals("不を書く", dictionary.preferredSentenceConversion("ふをかく", "符を書く", entries))
+    }
+
+    @Test fun aLearnedNounCannotOverwriteAParticleInsideASentence() {
+        val reading = "ぱすたにちーずをかける"
+        val normal = "パスタにチーズをかける"
+        val learned = AzooKeyHotfixDictionaryEntry("煮", "に", -5.0, 1285, 1285, 501, isLearned = true)
+        assertNull(dictionary.preferredSentenceConversion(reading, normal, listOf(learned)))
+        assertTrue(dictionary.candidates(reading, 0, additionalEntries = listOf(learned))
+            .preferredSentenceConversions.isEmpty())
+        // An explicit registration is intentional even for a function word.
+        assertEquals("パスタ煮チーズをかける", dictionary.preferredSentenceConversion(
+            reading, normal, listOf(learned.copy(isLearned = false)),
+        ))
+    }
+
+    @Test fun learnedLexicalHomophonesStillReplaceAWholeWord() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("雲", "くも", -5.0, 1285, 1285, 501, isLearned = true))
+        assertEquals("雲を見る", dictionary.preferredSentenceConversion("くもをみる", "蜘蛛を見る", entries))
+    }
+
+    @Test fun katakanaCompoundsNeedNeitherAModelNorPersonalLearning() {
+        for ((reading, expected) in listOf(
+            "ふるふれっくす" to "フルフレックス",
+            "ふるふれっくすではたらく" to "フルフレックスで働く",
+            "ふるたいむ" to "フルタイム", "ふるりもーと" to "フルリモート",
+            "ふるすたっく" to "フルスタック", "おーぷんそーす" to "オープンソース",
+            "はーどでぃすく" to "ハードディスク",
+        )) {
+            val result = dictionary.candidates(reading, 0)
+            assertEquals(reading, expected, result.canonicalConversion)
+            assertEquals(expected, result.conversions.first())
+            assertEquals(expected, compositionCommitText(reading, finalJapaneseCandidateSpellings(
+                result.conversions, result.canonicalConversion,
+            ), true))
+        }
+        val result = dictionary.candidates("ふるふれっくす", 0)
+        assertTrue("旧フレックス" in result.conversions)
+        val ranked = rerankedJapaneseCandidates(
+            "ふるふれっくす", listOf("旧フレックス") + result.conversions,
+            result.conversions, emptyMap(), emptyMap(),
+        )
+        assertEquals("フルフレックス", finalJapaneseCandidateSpellings(ranked, result.canonicalConversion).first())
+    }
+
+    @Test fun registeredAndLearnedWordsReplaceOnlyTheirAlignedSpansInSentences() {
+        val reading = "きょうさとうさんととうきょうにいく"
+        val original = "今日佐藤さんと東京に行く"
+        val entries = listOf(
+            AzooKeyHotfixDictionaryEntry("佐東", "さとう", -5.0, 1285, 1285, 501, isLearned = true),
+            AzooKeyHotfixDictionaryEntry("TOKYO", "とうきょう", -9.0, 1285, 1285, 501),
+        )
+        assertEquals("今日佐東さんとTOKYOに行く",
+            dictionary.preferredSentenceConversion(reading, original, entries))
+        assertTrue(dictionary.validatesConversion(reading, "今日佐東さんとTOKYOに行く", entries))
+        val actual = dictionary.candidates(reading, 0, additionalEntries = entries)
+        assertTrue(actual.preferredSentenceConversions.isNotEmpty())
+        assertTrue(actual.conversions.first().contains("佐東"))
+        assertTrue(actual.conversions.first().contains("TOKYO"))
+    }
+
+    @Test fun sentencePreferencesDoNotSplitTeachersOrReuseTheWrongReadingOfRawFish() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("姓", "せい", -9.0, 1285, 1285, 501))
+        assertNull(dictionary.preferredSentenceConversion(
+            "せんせいがなまのさかなをかう", "先生が生の魚を買う", entries,
+        ))
+    }
+
+    @Test fun aLearnedPhraseCannotHideARegisteredWordInsideIt() {
+        val entries = listOf(
+            AzooKeyHotfixDictionaryEntry("佐藤に会う", "さとうにあう", -1.0, 1285, 1285, 501, isLearned = true),
+            AzooKeyHotfixDictionaryEntry("佐東", "さとう", -9.0, 1285, 1285, 501),
+        )
+        assertEquals("佐東に会う", dictionary.preferredSentenceConversion("さとうにあう", "佐藤に会う", entries))
+    }
+
+    @Test fun wordPreferenceAlignmentDoesNotChangeTheIncrementalLatticeOrAcceptPredictions() {
+        val entries = listOf(AzooKeyHotfixDictionaryEntry("TOKYO", "とうきょう", -9.0, 1285, 1285, 501))
+        val reading = "きょうとうきょうにいく"
+        dictionary.candidates(reading, 0, additionalEntries = entries)
+        assertNull(dictionary.preferredSentenceConversion("とう", "東京", entries))
+        dictionary.preferredSentenceConversion(reading, "今日東京に行く", entries)
+        val next = dictionary.candidates(reading + "ので", 0, additionalEntries = entries)
+        val fresh = AzooKeyDictionary(DictionaryAssetSource { path ->
+            val root = generateSequence(File(requireNotNull(System.getProperty("user.dir"))).absoluteFile) { it.parentFile }
+                .map { File(it, "third_party/azookey_dictionary_storage/Dictionary") }.first(File::isDirectory)
+            File(root, path).readBytes()
+        }).candidates(reading + "ので", 0, additionalEntries = entries)
+        assertEquals(fresh.conversions, next.conversions)
+    }
+
     @Test fun unlearnedInputKeepsVerbEndingsAndKatakanaWordsAfterEveryRankingStage() {
         for ((reading, expected, fragmented) in listOf(
             Triple("おとした", "落とした", "落としタ"),

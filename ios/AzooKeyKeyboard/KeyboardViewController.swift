@@ -1,4 +1,5 @@
 import UIKit
+import ImageIO
 import AzooKeyConverterBridge
 
 final class KeyboardViewController: UIInputViewController {
@@ -296,7 +297,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func applyKeyboardBackground() {
         view.backgroundColor = palette.background
-        let path = palette.backgroundImage
+        let path = palette.backgroundImage.flatMap { managedBackgroundImageURL($0)?.path }
         var modificationDate: Date?
         if let path,
            let attributes = try? FileManager.default.attributesOfItem(atPath: path) {
@@ -315,7 +316,7 @@ final class KeyboardViewController: UIInputViewController {
             backgroundImageSignature = nil
         } else if let signature,
                   (signature != backgroundImageSignature || backgroundImageView.image == nil),
-                  let image = path.flatMap({ UIImage(contentsOfFile: $0) }) {
+                  let image = path.flatMap({ downsampleBackgroundImage($0) }) {
             backgroundImageView.image = image
             backgroundImageSignature = signature
         }
@@ -325,6 +326,35 @@ final class KeyboardViewController: UIInputViewController {
         backgroundImageView.isHidden = !hasImage
         rootStack.backgroundColor = hasImage ? .clear : palette.background
         keyboardStack.backgroundColor = hasImage ? .clear : palette.background
+    }
+
+    private func managedBackgroundImageURL(_ path: String) -> URL? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
+        ) else { return nil }
+        let directory = container.appendingPathComponent("ThemeBackgrounds", isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+        return target.pathExtension == "image" && target.deletingLastPathComponent() == directory ? target : nil
+    }
+
+    private func downsampleBackgroundImage(_ path: String) -> UIImage? {
+        guard let file = managedBackgroundImageURL(path),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+              let size = attributes[.size] as? NSNumber, size.int64Value <= 8 * 1024 * 1024,
+              let source = CGImageSourceCreateWithURL(file as CFURL,
+                [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+              width > 0, height > 0, width * height <= 250_000_000,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2048,
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
     }
 
     private func renderKeyboard() {

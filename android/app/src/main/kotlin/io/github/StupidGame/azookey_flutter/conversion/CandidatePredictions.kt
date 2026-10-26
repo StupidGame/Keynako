@@ -172,9 +172,14 @@ internal fun prioritizeRegisteredJapaneseCandidates(
     predictionTexts: Set<String> = emptySet(),
     partialTexts: Set<String> = emptySet(),
     exactRegistrationTexts: Set<String> = emptySet(),
+    sentencePreferenceTexts: Set<String> = emptySet(),
 ): List<String> {
     val available = candidates.toSet()
-    val registered = dictionaryCandidates.filter {
+    // Word spelling overrides the model; sentence substitutions retain its
+    // grammar/context ordering once all of them contain the preferred words.
+    val priority = dictionaryCandidates.filter { it !in sentencePreferenceTexts } +
+        candidates.filter { it in sentencePreferenceTexts && it in dictionaryCandidates }
+    val registered = priority.filter {
         it.isNotBlank() && it in available &&
             (it in exactRegistrationTexts || (it !in predictionTexts && it !in partialTexts))
     }.distinct()

@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -31,7 +29,6 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.HorizontalScrollView
@@ -41,7 +38,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.exifinterface.media.ExifInterface
+import io.github.StupidGame.azookey_flutter.input.disablesPersonalizedLearning
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeySpecialCandidates
@@ -97,7 +94,6 @@ import io.github.StupidGame.azookey_flutter.input.CustardDeleteContinuationActio
 import io.github.StupidGame.azookey_flutter.input.TextSelectionSession
 import io.github.StupidGame.azookey_flutter.input.backwardSmartDeleteContinuationStartIndex
 import io.github.StupidGame.azookey_flutter.input.backwardWordDeleteCount
-import io.github.StupidGame.azookey_flutter.input.backgroundImageOrientationTransform
 import io.github.StupidGame.azookey_flutter.input.closingDelimiterFor
 import io.github.StupidGame.azookey_flutter.input.custardFlickDirection
 import io.github.StupidGame.azookey_flutter.input.custardVariationLongPressDuration
@@ -122,6 +118,9 @@ import io.github.StupidGame.azookey_flutter.input.surroundingDeleteFor
 import io.github.StupidGame.azookey_flutter.input.shouldUseQuickWordDelete
 import io.github.StupidGame.azookey_flutter.input.shiftedInputLabel
 import io.github.StupidGame.azookey_flutter.view.KeyboardBodyScrollView
+import io.github.StupidGame.azookey_flutter.view.KeyboardCursorRepeat
+import io.github.StupidGame.azookey_flutter.view.expandKeyboardKeyHitAreas
+import io.github.StupidGame.azookey_flutter.view.keyboardContentInsets
 import io.github.StupidGame.azookey_flutter.view.CustardGridLayout
 import io.github.StupidGame.azookey_flutter.view.DirectionalKeyView
 import io.github.StupidGame.azookey_flutter.view.custardSystemImageLabel
@@ -171,6 +170,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateSelectedExplicitly = false
     private val stableClauseCompletion = StableClauseCompletion()
     private var sensitiveInput = false
+    private var personalizedLearningDisabled = false
     private var allCapsInput = false
     private var activeCustomTab: String? = null
     private var oneHandedMode = "full"
@@ -185,6 +185,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var candidateBlockedCombinationValues = emptyList<String>()
     private var candidateExactRegistrationTexts = emptySet<String>()
     private var candidateExplicitDictionaryTexts = emptySet<String>()
+    private var candidatePreferredSentenceTexts = emptySet<String>()
     private var candidateOfficialLiteralReading = false
     private var candidateCanonicalConversion: String? = null
     private var candidateOfficialRequest: OfficialLookupRequest? = null
@@ -306,8 +307,9 @@ class AzooKeyInputMethodService : InputMethodService() {
                     MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
                         val origin = IntArray(2)
                         inputViewFrame.getLocationOnScreen(origin)
-                        val available = inputViewFrame.width.coerceAtLeast(1)
-                        val x = event.rawX - origin[0]
+                        val available = (inputViewFrame.width - inputViewFrame.paddingLeft - inputViewFrame.paddingRight)
+                            .coerceAtLeast(1)
+                        val x = event.rawX - origin[0] - inputViewFrame.paddingLeft
                         oneHandedWidth = (if (oneHandedMode == "right")
                             (available - x) / available else x / available).coerceIn(0.6f, 0.92f)
                         applyKeyboardWidth()
@@ -324,16 +326,15 @@ class AzooKeyInputMethodService : InputMethodService() {
         resizeHandle?.let { keyboardSurface.addView(it, FrameLayout.LayoutParams(dp(22), dp(64))) }
         applyKeyboardBackground()
         applyKeyboardWidth()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            inputViewFrame.setOnApplyWindowInsetsListener { view, insets ->
-                val bottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
-                if (view.paddingBottom != bottom) {
-                    view.setPadding(0, 0, 0, bottom)
-                    applyKeyboardHeightConstraints()
-                    view.requestLayout()
-                }
-                insets
+        inputViewFrame.setOnApplyWindowInsetsListener { view, insets ->
+            val safe = keyboardContentInsets(insets)
+            if (view.paddingLeft != safe.left || view.paddingRight != safe.right || view.paddingBottom != safe.bottom) {
+                view.setPadding(safe.left, 0, safe.right, safe.bottom)
+                applyKeyboardHeightConstraints()
+                applyKeyboardWidth()
+                view.requestLayout()
             }
+            insets
         }
         candidateScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -380,7 +381,27 @@ class AzooKeyInputMethodService : InputMethodService() {
         renderCandidates()
         renderKeyboard()
         prepareZenzaiIfNeeded()
+        inputViewFrame.requestApplyInsets()
         return inputViewFrame
+    }
+
+    override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(info, restarting)
+        updateInputPrivacy(info)
+        invalidateCandidateLookup()
+        composing = ""
+        rawRoman = ""
+        displayedComposingText = ""
+        candidates.clear()
+        stableClauseCompletion.reset()
+    }
+
+    private fun updateInputPrivacy(info: EditorInfo?) {
+        val inputType = info?.inputType ?: InputType.TYPE_NULL
+        sensitiveInput = isSensitiveInputType(inputType)
+        personalizedLearningDisabled = disablesPersonalizedLearning(inputType, info?.imeOptions ?: 0)
+        allCapsInput = isAllCapsTextInput(inputType)
+        pendingReport = null
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -401,8 +422,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateSelectedExplicitly = false
         cursorBarVisible = false
         cursorBarView = null
-        sensitiveInput = isSensitiveInputType(info?.inputType ?: InputType.TYPE_NULL)
-        allCapsInput = isAllCapsTextInput(info?.inputType ?: InputType.TYPE_NULL)
+        updateInputPrivacy(info)
         val requestedMode = if (settings.optBoolean("automatic_keyboard_switching", true)) {
             requestedKeyboardMode(
                 inputType = info?.inputType ?: InputType.TYPE_NULL,
@@ -433,6 +453,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             renderCandidates()
             renderKeyboard()
             prepareZenzaiIfNeeded()
+            inputViewFrame.requestApplyInsets()
         }
     }
 
@@ -581,7 +602,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     private fun applyKeyboardBackground() {
         inputViewFrame.setBackgroundColor(palette.background)
         val configuredPath = palette.backgroundImage
-        val file = configuredPath?.let(::File)?.takeIf { it.isFile }
+        val images = KeyboardBackgroundImages(File(filesDir, "theme_backgrounds"))
+        val file = configuredPath?.let(images::managedFile)?.takeIf { it.isFile }
         val signature = file?.let {
             val revision = palette.backgroundImageRevision ?: it.lastModified()
             "${it.absolutePath}:$revision"
@@ -595,7 +617,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 hasDrawable = inputViewFrame.hasKeyboardBackground,
             )
         ) {
-            val bitmap = file.let(::decodeKeyboardBackground)
+            val bitmap = file?.let { images.decode(it.absolutePath) }
             if (bitmap != null) {
                 inputViewFrame.setKeyboardBackground(bitmap)
                 backgroundImageSignature = signature
@@ -611,29 +633,6 @@ class AzooKeyInputMethodService : InputMethodService() {
         // flashing the palette fallback until the next refresh.
         val hasImage = configuredPath != null && inputViewFrame.hasKeyboardBackground
         root.setBackgroundColor(if (hasImage) Color.TRANSPARENT else palette.background)
-    }
-
-    private fun decodeKeyboardBackground(file: File): Bitmap? {
-        val source = BitmapFactory.decodeFile(file.absolutePath) ?: return null
-        val exifOrientation = runCatching {
-            ExifInterface(file.absolutePath).getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL,
-            )
-        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-        val transform = backgroundImageOrientationTransform(exifOrientation)
-        if (transform.rotationDegrees == 0 && !transform.flipHorizontally) return source
-        val matrix = Matrix().apply {
-            if (transform.flipHorizontally) postScale(-1f, 1f)
-            if (transform.rotationDegrees != 0) postRotate(transform.rotationDegrees.toFloat())
-        }
-        return try {
-            Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true).also {
-                if (it !== source) source.recycle()
-            }
-        } catch (_: RuntimeException) {
-            source
-        }
     }
 
     private fun keyboardMetrics(
@@ -1094,7 +1093,10 @@ class AzooKeyInputMethodService : InputMethodService() {
             val cellWidth = (resources.displayMetrics.widthPixels / visibleCount).toInt()
             val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (start in elements.indices step crossCount) {
-                val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                val column = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    expandKeyboardKeyHitAreas(dp(4))
+                }
                 for (index in start until minOf(start + crossCount, elements.size)) {
                     column.addView(
                         createCustardKey(elements[index], keyStyle, scale, variationsEnabled = false),
@@ -1216,7 +1218,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         var continueDeleteVariationOnRelease = false
         var centerLongPressCheckpoint: CompositionSnapshot? = null
         val longPressSelection = FlickLongPressSelection(key)
-        val longPressData = key.optJSONObject("longpress_actions") ?: JSONObject()
+        val longPressData = custardLongPressActions(key)
         val startActions = longPressData.optJSONArray("start") ?: JSONArray()
         var activeRepeatActions = longPressData.optJSONArray("repeat") ?: JSONArray()
         val pcVariations = if (variationsEnabled && keyStyle == "pc_style") {
@@ -1226,20 +1228,24 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         val handlesLongPress = startActions.length() > 0 || activeRepeatActions.length() > 0 ||
             pcVariations.isNotEmpty() || flickVariations.any { variation ->
-                val variationLongPress = variation.optJSONObject("key")?.optJSONObject("longpress_actions")
+                val variationLongPress = variation.optJSONObject("key")?.let(::custardLongPressActions)
                 (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                     (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
             }
         val repeatAction = object : Runnable {
             override fun run() {
-                if (!repeating) return
+                if (!repeating || !view.isShown || view.windowVisibility != View.VISIBLE) {
+                    repeating = false
+                    return
+                }
                 dispatchActions(activeRepeatActions)
                 handler.postDelayed(this, 70)
             }
         }
         val longPress = Runnable {
+            if (!view.isShown || view.windowVisibility != View.VISIBLE) return@Runnable
             val selectedKey = longPressSelection.target ?: return@Runnable
-            val selectedLongPress = selectedKey.optJSONObject("longpress_actions") ?: JSONObject()
+            val selectedLongPress = custardLongPressActions(selectedKey)
             val selectedStartActions = selectedLongPress.optJSONArray("start") ?: JSONArray()
             activeRepeatActions = selectedLongPress.optJSONArray("repeat") ?: JSONArray()
             if (selectedStartActions.length() == 0 && activeRepeatActions.length() == 0 && pcVariations.isEmpty()) {
@@ -1400,7 +1406,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                                 }
                             }
                         }
-                        val variationLongPress = longPressSelection.target?.optJSONObject("longpress_actions")
+                        val variationLongPress = longPressSelection.target?.let(::custardLongPressActions)
                         val hasVariationLongPress = (variationLongPress?.optJSONArray("start")?.length() ?: 0) > 0 ||
                             (variationLongPress?.optJSONArray("repeat")?.length() ?: 0) > 0
                         if (hasVariationLongPress) {
@@ -1425,7 +1431,38 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> true
             }
         }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+            override fun onViewDetachedFromWindow(view: View) {
+                repeating = false
+                handler.removeCallbacks(longPress)
+                handler.removeCallbacks(repeatAction)
+                view.isPressed = false
+            }
+        })
         return view
+    }
+
+    private fun cursorMovementCount(action: JSONObject?): Int {
+        if (action == null) return 0
+        return when (action.optString("type")) {
+            "moveCursor" -> action.optString("value").toIntOrNull() ?: 0
+            "move_cursor" -> action.optInt("count")
+            else -> 0
+        }
+    }
+
+    private fun custardLongPressActions(key: JSONObject): JSONObject {
+        val configured = key.optJSONObject("longpress_actions") ?: JSONObject()
+        if ((configured.optJSONArray("start")?.length() ?: 0) > 0 ||
+            (configured.optJSONArray("repeat")?.length() ?: 0) > 0 ||
+            custardVariations(key, "longpress_variation").isNotEmpty()) return configured
+        val press = key.optJSONArray("press_actions") ?: return configured
+        if (press.length() == 0 || (0 until press.length()).any { cursorMovementCount(press.optJSONObject(it)) == 0 }) {
+            return configured
+        }
+        // Keep imported definitions intact and respect explicitly assigned holds.
+        return JSONObject(configured.toString()).put("start", press).put("repeat", press)
     }
 
     private fun createCustardSystemKey(type: String, scale: Double): View {
@@ -1601,21 +1638,30 @@ class AzooKeyInputMethodService : InputMethodService() {
         var longPressed = false
         var repeating = false
         var longPressFlicked = false
+        val cursorRepeat = tapAction?.takeIf {
+            cursorMovementCount(it) != 0 && key.optJSONObject("longPress") == null &&
+                key.optJSONObject("longPressRepeat") == null
+        }
+        val longPressAction = key.optJSONObject("longPress") ?: cursorRepeat
+        val repeatedAction = key.optJSONObject("longPressRepeat") ?: cursorRepeat
+        val flickCursorRepeat = KeyboardCursorRepeat(view, { longPressDelay() }, ::moveCursor)
         val repeatAction = object : Runnable {
             override fun run() {
-                if (!repeating) return
-                dispatchAction(key.optJSONObject("longPressRepeat"))
+                if (!repeating || !view.isShown || view.windowVisibility != View.VISIBLE) {
+                    repeating = false
+                    return
+                }
+                dispatchAction(repeatedAction)
                 handler.postDelayed(this, 70)
             }
         }
         val longPress = Runnable {
-            val action = key.optJSONObject("longPress")
-            val repeated = key.optJSONObject("longPressRepeat")
-            if (action == null && repeated == null) return@Runnable
+            if (!view.isShown || view.windowVisibility != View.VISIBLE ||
+                (longPressAction == null && repeatedAction == null)) return@Runnable
             longPressed = true
             dismissFlickGuide()
-            dispatchAction(action)
-            if (repeated != null) {
+            dispatchAction(longPressAction)
+            if (repeatedAction != null) {
                 repeating = true
                 handler.postDelayed(repeatAction, 70)
             }
@@ -1625,6 +1671,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     target.parent?.requestDisallowInterceptTouchEvent(true)
+                    flickCursorRepeat.reset()
                     startX = event.x
                     startY = event.y
                     longPressed = false
@@ -1646,6 +1693,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val direction = flickDirection(event.x - startX, event.y - startY)
+                    flickCursorRepeat.select(cursorMovementCount(direction?.let { key.optJSONObject(it) }))
                     if (direction != null) {
                         handler.removeCallbacks(longPress)
                         if (longPressed) {
@@ -1659,11 +1707,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    flickCursorRepeat.stop()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
                     target.isPressed = false
                     dismissFlickGuide()
+                    if (flickCursorRepeat.didRepeat) return@setOnTouchListener true
                     if (!longPressed || longPressFlicked) {
                         val dx = event.x - startX
                         val dy = event.y - startY
@@ -1687,6 +1737,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    flickCursorRepeat.reset()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeatAction)
@@ -1697,6 +1748,15 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> true
             }
         }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+            override fun onViewDetachedFromWindow(view: View) {
+                repeating = false
+                handler.removeCallbacks(longPress)
+                handler.removeCallbacks(repeatAction)
+                view.isPressed = false
+            }
+        })
         return view
     }
 
@@ -1714,6 +1774,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val isDelete = key.action == "delete"
         val isSpace = key.action == "space"
         val isAa = key.action == "upperLowerEnglish"
+        val flickCursorRepeat = KeyboardCursorRepeat(view, { longPressDelay() }, ::moveCursor)
         val repeat = object : Runnable {
             override fun run() {
                 if (!repeating) return
@@ -1749,6 +1810,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     target.parent?.requestDisallowInterceptTouchEvent(true)
+                    flickCursorRepeat.reset()
                     startX = event.x
                     startY = event.y
                     longPressed = false
@@ -1784,6 +1846,13 @@ class AzooKeyInputMethodService : InputMethodService() {
                         return@setOnTouchListener true
                     }
                     val direction = flickDirection(event.x - startX, event.y - startY)
+                    if (isSpace) {
+                        flickCursorRepeat.select(when (direction) {
+                            "left" -> -1
+                            "right" -> 1
+                            else -> 0
+                        })
+                    }
                     if (direction != null) {
                         handler.removeCallbacks(longPress)
                         if (longPressed) {
@@ -1797,6 +1866,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    flickCursorRepeat.stop()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeat)
@@ -1822,6 +1892,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                         else -> key.center
                     }
                     dismissFlickGuide()
+                    if (flickCursorRepeat.didRepeat) return@setOnTouchListener true
                     if (!longPressed || longPressFlicked) {
                         if (isSpace && direction == "left") {
                             moveCursor(-1)
@@ -1850,6 +1921,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    flickCursorRepeat.reset()
                     handler.removeCallbacks(longPress)
                     repeating = false
                     handler.removeCallbacks(repeat)
@@ -1862,6 +1934,16 @@ class AzooKeyInputMethodService : InputMethodService() {
                 else -> true
             }
         }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+            override fun onViewDetachedFromWindow(view: View) {
+                repeating = false
+                handler.removeCallbacks(longPress)
+                handler.removeCallbacks(repeat)
+                textDragSession?.cancel()
+                view.isPressed = false
+            }
+        })
         return view
     }
 
@@ -1990,6 +2072,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             textSize = if (textSizeSetting > 0) textSizeSetting.toFloat() else keyTextSize(label)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             isAllCaps = false
+            isClickable = true
             background = roundedDrawable(if (special) palette.special else palette.key, dp(6).toFloat())
             val vertical = (dp(2) * scale).toInt().coerceAtLeast(1)
             val horizontal = dp(2)
@@ -2162,6 +2245,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
         setPadding(dp(2), dp(2), dp(2), dp(2))
+        expandKeyboardKeyHitAreas(dp(4))
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             keyRowHeight(scale),
@@ -2650,7 +2734,8 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun applyKeyboardWidth() {
         if (!::root.isInitialized) return
-        val availableWidth = inputViewFrame.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val frameWidth = inputViewFrame.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val availableWidth = (frameWidth - inputViewFrame.paddingLeft - inputViewFrame.paddingRight).coerceAtLeast(1)
         val width = if (oneHandedMode == "full") {
             FrameLayout.LayoutParams.MATCH_PARENT
         } else {
@@ -2759,6 +2844,10 @@ class AzooKeyInputMethodService : InputMethodService() {
         if (value.isNullOrEmpty()) return
         if (dictionaryMode == DictionaryMode.EDIT) {
             editDictionaryText(value)
+            return
+        }
+        if (sensitiveInput && mode != "english") {
+            directCommit(value)
             return
         }
         val input = punctuationForInputMode(value, mode)
@@ -3049,6 +3138,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val blockedCombinationValues = candidateBlockedCombinationValues
         val exactRegistrationTexts = candidateExactRegistrationTexts
         val explicitDictionaryTexts = candidateExplicitDictionaryTexts
+        val sentencePreferenceTexts = candidatePreferredSentenceTexts
         val officialLiteralReading = candidateOfficialLiteralReading
         val canonicalConversion = candidateCanonicalConversion
         val officialRequest = candidateOfficialRequest
@@ -3068,28 +3158,36 @@ class AzooKeyInputMethodService : InputMethodService() {
                     reading, text, officialRequest.additionalEntries,
                 )
             },
-        ) { ranked, generated ->
+            preferGenerated = { text ->
+                officialRequest?.let {
+                    azooKeyDictionary.preferredSentenceConversion(reading, text, it.additionalEntries)
+                }
+            },
+        ) { ranked, generated, generatedUsesPreferences ->
             if (displayReading() != reading || ranked.isEmpty() ||
                 previewSession != liveConversionPreview.session) return@rank
             val selectedText = if (candidateSelectedExplicitly) candidates.getOrNull(selectedCandidate) else null
             val katakana = hiraganaToKatakana(reading)
             val learning = learningScores()
+            val generatedPreference = generated?.takeIf { generatedUsesPreferences }?.let(::setOf).orEmpty()
+            val preferredTexts = explicitDictionaryTexts + generatedPreference
+            val dictionaryCandidates = dictionaryPriority + generatedPreference
             val rankedCandidates = rerankedJapaneseCandidates(
                 reading = reading,
                 ranked = ranked,
                 baseCandidates = (listOfNotNull(generated) + baseCandidates).distinct(),
                 predictionReadings = predictionReadings,
                 learning = learning,
-                dictionaryCandidates = dictionaryPriority,
+                dictionaryCandidates = dictionaryCandidates,
                 learningCandidates = learningPriority,
                 partialCandidates = partialTexts,
                 preferredZenzaiCandidate = generated,
-                exactRegistrationTexts = explicitDictionaryTexts,
+                exactRegistrationTexts = preferredTexts,
                 dictionaryLedLiteral = officialLiteralReading,
             ).filter {
                 it == reading || it == katakana || isAllowedCombinationCandidate(
-                    it, trustedCompleteTexts, normalizedIncompleteTexts,
-                    blockedCombinationValues, exactRegistrationTexts,
+                    it, trustedCompleteTexts + generatedPreference, normalizedIncompleteTexts,
+                    blockedCombinationValues, exactRegistrationTexts + generatedPreference,
                 )
             }
             val contextual = prioritizeContextualJapaneseCandidates(
@@ -3097,14 +3195,14 @@ class AzooKeyInputMethodService : InputMethodService() {
             )
             val registered =
                 prioritizeRegisteredJapaneseCandidates(
-                    contextual, dictionaryPriority, predictionReadings.keys,
-                    partialTexts, explicitDictionaryTexts,
+                    contextual, dictionaryCandidates, predictionReadings.keys,
+                    partialTexts, preferredTexts, sentencePreferenceTexts + generatedPreference,
                 )
             val learnedTexts = learnedCandidates(learning).filter {
                 it.reading == katakanaToHiragana(reading) && it.score >= 4
             }.mapTo(mutableSetOf()) { it.text }
             val reranked = keepKanaCandidatesVisible(reading, finalJapaneseCandidateSpellings(
-                registered, canonicalConversion, explicitDictionaryTexts, learnedTexts, generated,
+                registered, canonicalConversion, preferredTexts, learnedTexts, generated,
                 invalidInflectionTexts,
             ))
             candidates = reranked.toMutableList()
@@ -3156,6 +3254,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateBlockedCombinationValues = emptyList()
         candidateExactRegistrationTexts = emptySet()
         candidateExplicitDictionaryTexts = emptySet()
+        candidatePreferredSentenceTexts = emptySet()
         candidateOfficialLiteralReading = false
         candidateCanonicalConversion = null
         candidateOfficialRequest = null
@@ -3280,13 +3379,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         val allowedOfficialConversions = officialCandidates.conversions.filter {
             it in explicitWords || it.replace("\uFE0F", "").replace("\uFE0E", "") !in blockedEmoji
         }
+        val preferredSentences = officialCandidates.preferredSentenceConversions.intersect(allowedOfficialConversions.toSet())
+        candidatePreferredSentenceTexts = preferredSentences
+        candidateDictionaryPriority = (candidateDictionaryPriority + preferredSentences).distinct()
         val parsedInflectionConversions = officialCandidates.parsedInflectionConversions
             .intersect(allowedOfficialConversions.toSet())
         candidateInvalidInflectionTexts = officialCandidates.invalidInflectionConversions
             .intersect(allowedOfficialConversions.toSet())
         // A registered stem can look like an unfinished combination even when
         // the full dictionary has parsed the following verb or auxiliary.
-        candidatePartialTexts = candidatePartialTexts - parsedInflectionConversions
+        candidatePartialTexts = candidatePartialTexts - parsedInflectionConversions - preferredSentences
         values.addAll(allowedOfficialConversions.take(1))
         values.addAll(combinedWords)
         values.addAll(specialCandidates)
@@ -3351,12 +3453,12 @@ class AzooKeyInputMethodService : InputMethodService() {
         val learnedCombinations = (learnedOnlyCombinations + mixedCombinations).distinct().take(8)
         values.addAll(learnedCombinations)
         val allCombinationEntries = registeredCombinationEntries + learnedCombinationEntries
-        candidateTrustedCompleteTexts = parsedInflectionConversions + if (hasLongOrdinaryGapBetweenRegisteredWords(
+        candidateTrustedCompleteTexts = parsedInflectionConversions + preferredSentences + if (hasLongOrdinaryGapBetweenRegisteredWords(
             reading, allCombinationEntries,
         )) allowedOfficialConversions.toSet() else emptySet()
         val explicitDictionaryTexts = (registeredExact + activeHotfixEntries.filter {
             katakanaToHiragana(it.ruby) == reading
-        }.map { it.word }).toSet()
+        }.map { it.word }).toSet() + preferredSentences
         val explicitExactTexts = explicitDictionaryTexts + learned
         candidateExplicitDictionaryTexts = explicitDictionaryTexts
         candidateExactRegistrationTexts = explicitExactTexts
@@ -3370,7 +3472,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         candidateNormalizedIncompleteCombinationTexts = incompleteDictionaryCombinations(
             reading, allCombinationEntries, explicitExactTexts,
         ).mapTo(mutableSetOf(), ::katakanaToHiragana) -
-            parsedInflectionConversions.mapTo(mutableSetOf(), ::katakanaToHiragana)
+            (parsedInflectionConversions + preferredSentences).mapTo(mutableSetOf(), ::katakanaToHiragana)
         val exactTexts = values.toSet() + learned
         val learnedPrefixes = learnedJapanesePrefixPredictions(
             reading, learning, exactTexts, predictionLimit,
@@ -3498,6 +3600,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun maybeOfferReport(report: WrongConversionReport) {
+        if (personalizedLearningDisabled) return
         if (!settings.optBoolean("enable_wrong_conversion_report", false)) return
         if (report.selectedIndex == 0 || report.reading.isBlank()) return
         if (!report.reading.matches(Regex("[ぁ-ゖa-zA-Z0-9]+"))) return
@@ -3532,12 +3635,14 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun showLegacyReportPrompt(candidate: String, index: Int) {
+        if (personalizedLearningDisabled) return
         candidateExpanded = false
         setCandidatePanelVisible(false)
         candidateExpandButton.visibility = View.GONE
         candidateRow.removeAllViews()
         addCandidateButton("「$candidate」を誤変換として報告") {}
         addCandidateButton("送信") {
+            if (personalizedLearningDisabled) return@addCandidateButton
             candidateRow.removeAllViews()
             addCandidateButton("送信中…") {}
             ReportClient.submitLegacyWrongConversion(
@@ -3582,6 +3687,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun maybeOfferReportWithoutFiltering(report: WrongConversionReport) {
+        if (personalizedLearningDisabled) return
         pendingReport = report
         candidateRow.removeAllViews()
         addCandidateButton("「${report.selected}」を選択") {}
@@ -3594,6 +3700,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun submitPendingReport() {
+        if (personalizedLearningDisabled) return
         val report = pendingReport ?: return
         candidateRow.removeAllViews()
         addCandidateButton("送信中…") {}
@@ -3628,7 +3735,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun learningScores(): Map<String, Int> {
-        if (sensitiveInput || settings.optInt("memory_learining_styple_setting", 0) == 2) return emptyMap()
+        if (personalizedLearningDisabled || settings.optInt("memory_learining_styple_setting", 0) == 2) return emptyMap()
         val scores = state.optJSONObject("learning") ?: return emptyMap()
         if (scores === cachedLearningSource) return cachedLearningScores
         return scores.keys().asSequence().associateWith { scores.optInt(it, 0) }.also {
@@ -3647,7 +3754,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         explicitSelection: Boolean = false,
         leftContext: String = "",
     ) {
-        if (sensitiveInput || shouldStopLearningForSearch() ||
+        if (personalizedLearningDisabled || shouldStopLearningForSearch() ||
             settings.optInt("memory_learining_styple_setting", 0) != 0) return
         val scores = learningScores().toMutableMap()
         recordCandidateLearning(scores, reading, candidate, mode == "english", explicitSelection)
@@ -3706,8 +3813,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
         prepareSelectionForInput()
         commitComposition()
-        val input = if (normalizePunctuation) punctuationForInputMode(value, mode) else value
-        val closingDelimiter = closingDelimiterFor(input)
+        val input = if (normalizePunctuation && !sensitiveInput) punctuationForInputMode(value, mode) else value
+        val closingDelimiter = if (sensitiveInput) null else closingDelimiterFor(input)
         currentInputConnection?.commitText(
             if (closingDelimiter == null) input else input + closingDelimiter,
             1,
@@ -4206,6 +4313,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun customInput(value: String) {
         if (value.isEmpty()) return
+        if (sensitiveInput) {
+            directCommit(value)
+            return
+        }
         val tab = activeCustomTab?.let(::customTabDefinition)
         if (tab == null) {
             inputText(value)
@@ -4277,6 +4388,10 @@ class AzooKeyInputMethodService : InputMethodService() {
 
     private fun custardInput(value: String) {
         if (value.isEmpty()) return
+        if (sensitiveInput) {
+            directCommit(value)
+            return
+        }
         if (value.isBlank()) {
             directCommit(value)
             return
@@ -4649,16 +4764,16 @@ class AzooKeyInputMethodService : InputMethodService() {
         private var autoDismiss: Runnable? = null
         private val arrowRepeat = object : Runnable {
             override fun run() {
-                if (!arrowLongPressed) return
+                if (!arrowLongPressed || !isShown || windowVisibility != View.VISIBLE) return
                 move(arrowOffset)
                 handler.postDelayed(this, 100)
             }
         }
         private val arrowLongPress = Runnable {
-            if (arrowOffset == 0) return@Runnable
+            if (arrowOffset == 0 || !isShown || windowVisibility != View.VISIBLE) return@Runnable
             arrowLongPressed = true
             move(arrowOffset)
-            handler.post(arrowRepeat)
+            handler.postDelayed(arrowRepeat, 100)
             feedback(this)
         }
 
@@ -4677,7 +4792,7 @@ class AzooKeyInputMethodService : InputMethodService() {
             val left = before.substringAfterLast('\n')
             line = (left + after).map { it.toString() } + listOf("⏎")
             val half = itemCount / 2
-            displayLeftIndex = line.size - half
+            displayLeftIndex = left.length - half
             displayRightIndex = displayLeftIndex + itemCount
             invalidate()
         }
@@ -4704,8 +4819,8 @@ class AzooKeyInputMethodService : InputMethodService() {
         }
 
         private fun move(count: Int) {
-            val center = displayLeftIndex + itemCount / 2
-            if (center + count < -1 || line.size < center + count) return
+            // The preview shows the current line, but cursor arrows must also
+            // cross line breaks. The editor owns the actual document bounds.
             displayLeftIndex += count
             displayRightIndex += count
             moveCursor(count)
@@ -4755,6 +4870,9 @@ class AzooKeyInputMethodService : InputMethodService() {
         override fun onTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    handler.removeCallbacks(arrowLongPress)
+                    handler.removeCallbacks(arrowRepeat)
                     downX = event.x
                     downY = event.y
                     lastX = downX
@@ -4776,6 +4894,7 @@ class AzooKeyInputMethodService : InputMethodService() {
                     val distance = kotlin.math.hypot(event.x - downX, event.y - downY)
                     if (distance > dp(20)) {
                         handler.removeCallbacks(arrowLongPress)
+                        handler.removeCallbacks(arrowRepeat)
                         if (arrowOffset == 0) moving = true
                     }
                     if (arrowOffset == 0 && moving) {
@@ -4803,16 +4922,27 @@ class AzooKeyInputMethodService : InputMethodService() {
                         tap(downX)
                     }
                     arrowOffset = 0
+                    arrowLongPressed = false
                     return true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(arrowLongPress)
                     handler.removeCallbacks(arrowRepeat)
                     arrowOffset = 0
+                    arrowLongPressed = false
                     return true
                 }
             }
             return true
+        }
+
+        override fun onDetachedFromWindow() {
+            handler.removeCallbacks(arrowLongPress)
+            handler.removeCallbacks(arrowRepeat)
+            autoDismiss?.let(handler::removeCallbacks)
+            arrowOffset = 0
+            arrowLongPressed = false
+            super.onDetachedFromWindow()
         }
     }
 

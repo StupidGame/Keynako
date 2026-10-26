@@ -1,6 +1,7 @@
 import Flutter
 import Contacts
 import Foundation
+import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
@@ -122,6 +123,24 @@ import UniformTypeIdentifiers
       } catch {
         result(FlutterError(code: "image_save_failed", message: error.localizedDescription, details: nil))
       }
+    case "readKeyboardBackgroundImage":
+      let arguments = call.arguments as? [String: Any]
+      guard let path = arguments?["path"] as? String,
+            let file = try? managedBackgroundImageURL(path: path),
+            let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+            attributes[.type] as? FileAttributeType == .typeRegular,
+            let size = attributes[.size] as? NSNumber, size.int64Value <= 8 * 1024 * 1024,
+            let handle = try? FileHandle(forReadingFrom: file) else {
+        result(nil)
+        return
+      }
+      defer { try? handle.close() }
+      guard let data = try? handle.read(upToCount: 8 * 1024 * 1024 + 1) else {
+        result(nil)
+        return
+      }
+      result(data.count <= 8 * 1024 * 1024 && validBackgroundImage(data)
+        ? FlutterStandardTypedData(bytes: data) : nil)
     case "deleteKeyboardBackgroundImage":
       let arguments = call.arguments as? [String: Any]
       if let path = arguments?["path"] as? String {
@@ -202,7 +221,7 @@ import UniformTypeIdentifiers
       allowed.contains(scalar) ? Character(String(scalar)) : "_"
     }.prefix(80))
     let target = directory.appendingPathComponent("\(safeId.isEmpty ? "theme" : safeId).image")
-    guard let source = UIImage(data: data), source.size.width > 0, source.size.height > 0 else {
+    guard validBackgroundImage(data) else {
       throw CocoaError(.fileReadCorruptFile)
     }
     // Keep the source aspect ratio. The keyboard extension crops it against its
@@ -212,10 +231,23 @@ import UniformTypeIdentifiers
   }
 
   private func deleteKeyboardBackgroundImage(path: String) throws {
-    let directory = try backgroundImageDirectory().resolvingSymlinksInPath()
-    let target = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-    guard target.deletingLastPathComponent() == directory else { return }
+    guard let target = try managedBackgroundImageURL(path: path) else { return }
     try? FileManager.default.removeItem(at: target)
+  }
+
+  private func managedBackgroundImageURL(path: String) throws -> URL? {
+    let directory = try backgroundImageDirectory().resolvingSymlinksInPath().standardizedFileURL
+    let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+    return target.pathExtension == "image" && target.deletingLastPathComponent() == directory ? target : nil
+  }
+
+  private func validBackgroundImage(_ data: Data) -> Bool {
+    guard let source = CGImageSourceCreateWithData(data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+          let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue else { return false }
+    return width > 0 && height > 0 && width * height <= 250_000_000
   }
 
   private func backgroundImageDirectory() throws -> URL {

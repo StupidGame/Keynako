@@ -25,14 +25,18 @@ internal fun zenzaiRerankingCandidates(
     reading: String,
     candidates: List<String>,
     incompleteTexts: Set<String> = emptySet(),
+    modelGenerated: String? = null,
 ): List<String> {
     // A pending Roman syllable will change on the next key press. The dictionary
     // can still display its converted prefix without starting model inference.
     if (hasPendingRomanSuffix(reading)) return emptyList()
     val literal = japaneseReadingForms(reading)
+    val generatedKana = modelGenerated?.takeIf {
+        it == katakanaToHiragana(reading) || it == hiraganaToKatakana(katakanaToHiragana(reading))
+    }
     val limit = (384 / reading.length.coerceAtLeast(24)).coerceIn(2, 16)
     return candidates.asSequence().filter {
-        it.isNotBlank() && it !in literal && it !in incompleteTexts
+        it.isNotBlank() && (it !in literal || it == generatedKana) && it !in incompleteTexts
     }.distinct().take(limit).toList()
 }
 

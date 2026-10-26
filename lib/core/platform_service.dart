@@ -196,4 +196,17 @@ class PlatformService implements StateStorage {
       return;
     }
   }
+
+  Future<Uint8List?> readKeyboardBackgroundImage(String path) async {
+    try {
+      return await _channel.invokeMethod<Uint8List>(
+        'readKeyboardBackgroundImage',
+        {'path': path},
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
 }

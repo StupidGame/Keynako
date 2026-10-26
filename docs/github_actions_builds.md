@@ -1,10 +1,12 @@
 # GitHub Actionsでアプリファイルを作る
 
-`.github/workflows/build-app-files.yml` は、Actions画面の手動実行、または`v`で始まるタグのpushで次の成果物を作ります。`android/**`、署名ファイル、Android署名処理のブランチpushでも、固定リリース鍵でAndroidだけをビルドします。Pull RequestはAndroidの解析・テスト・未署名リリースのビルド検証を行い、Android APKは配布しません。他のOSの成果物はPull Requestでも作成します。Windows成果物はすべての実行でAuthenticode署名します。WindowsのPull Requestと手動実行では、Actionsのキャッシュに保持するCI用証明書を使います。
+`.github/workflows/build-app-files.yml` は、ブランチのpush、`v`で始まるタグのpush、Actions画面の手動実行で、次の全OSの成果物を同じ実行のArtifactsへ配布します。Androidだけを変更した場合も全OSを作り、Flutter・辞書・各OSのコードの変更も配布ビルドの対象になります。全成果物には同じActions実行番号が付きます。
+
+実行の表示名は `Build and validate app files · <ブランチまたはタグ>` です。Androidの解析・lint・単体テスト、共有変換モジュールの検証、各OSの配布ファイル生成を7つのジョブで並列に実行します。検証結果と全OSの成果物を1つの実行で確認できます。PRを更新するブランチpushも同じ1回の実行が対象で、`pull_request`イベントによる検証専用の実行は重複起動しません。Windows成果物はAuthenticode署名し、通常のブランチpush・手動実行では、Actionsのキャッシュに保持するCI用証明書を使います。
 
 | ジョブ | 成果物 | 用途 |
 | --- | --- | --- |
-| Android | `app-release.apk`、`signature-report.txt` | 固定の暗号化リリース鍵による署名済みAPKと署名検証結果。Pull Requestでは配布しない |
+| Android | `app-release.apk`、`signature-report.txt` | 固定の暗号化リリース鍵による署名済みAPKと署名検証結果 |
 | iOS | `Keynako-unsigned.ipa` | Appleの証明書で後から署名するための実機用アーカイブ |
 | iOS | `Keynako-simulator.app.zip` | iOS Simulatorへ展開・インストールできるアプリ |
 | Windows | `KeynakoSetup.exe` | Keynako製DLL／exeとインストーラーを常にAuthenticode署名。通常はCI用証明書、登録済み証明書がある`v`タグでは正式証明書を使用 |
@@ -39,9 +41,9 @@ Gitへ保存するのは `signing/android-release.jks.gpg`（GPG AES-256暗号�
 
 - `KEYNAKO_ANDROID_SIGNING_PASSPHRASE`: 作成時に保管したパスフレーズ。GPGの復号とJKSの鍵・keystoreパスワードに使用します。
 
-手動実行、タグ、Androidコードや署名関連ファイルのブランチpushでは、このSecretを必須にしています。未登録・復号失敗の場合は停止し、CI用など別の鍵へフォールバックしません。対象ファイルのブランチpushではAndroidジョブだけを実行します。復号ファイルは `RUNNER_TEMP` 内だけに作り、ジョブ終了時に削除します。完成したAPKの署名は `apksigner` で検証し、コミットした公開証明書のSHA-256とも照合します。
+手動実行、タグ、ブランチpushの配布ビルドでは、このSecretを必須にしています。未登録・復号失敗の場合はAndroidジョブを停止し、CI用など別の鍵へフォールバックしません。各OSのジョブは並列に実行します。復号ファイルは `RUNNER_TEMP` 内だけに作り、ジョブ終了時に削除します。完成したAPKの署名は `apksigner` で検証し、コミットした公開証明書のSHA-256とも照合します。
 
-Pull Requestには復号用Secretを渡さず、`:app:assembleRelease` で未署名リリースをビルドして検証するだけにします。APKのアップロードやCI用鍵の復元は行いません。署名スクリプトもPull Requestからの呼び出しを拒否します。PRのActions概要に、同じブランチの配布ビルドへのリンクを表示します。
+Androidの検証ジョブには署名用Secretを渡さず、配布用APKは同じ実行の別ジョブで固定鍵を使って作成します。PRイベント自体はワークフローの実行対象にせず、署名スクリプトもPull Requestからの呼び出しを拒否します。外部forkのPRコードへ配布鍵を渡すための`pull_request_target`も使いません。
 
 配布するAndroid成果物は `keynako-android-release-apk-<run number>` に統一します。#200・#202・#203・#204は同じ固定リリース鍵で署名されています。一方、従来の `keynako-android-signed-apk-*` は古いCI鍵による別署名です。#205はこのPR用APKだったため、固定リリース鍵でインストールしたアプリには上書き更新できません。実行番号の大きさだけで選ばず、`release-apk` の配布用成果物を使ってください。
 
@@ -80,7 +82,7 @@ Playプロテクトのスキャン確認は署名検証とは別です。有効�
 
 ## Windows署名
 
-WindowsはTSF DLLを入力先プロセス内へ読み込むため、すべてのActions成果物をAuthenticode署名します。Pull Request、手動実行、正式証明書が未登録の`v`タグでは、初回実行時に作成してActionsのキャッシュへ保持するCI用自己署名証明書を使います。CI署名は改ざん検出用であり、Windowsから信頼された発行元とは認識されません。公的に信頼された配布物を作る場合は、次のRepository secretsを登録します。
+WindowsはTSF DLLを入力先プロセス内へ読み込むため、すべてのActions成果物をAuthenticode署名します。通常のブランチpush、手動実行、正式証明書が未登録の`v`タグでは、初回実行時に作成してActionsのキャッシュへ保持するCI用自己署名証明書を使います。CI署名は改ざん検出用であり、Windowsから信頼された発行元とは認識されません。公的に信頼された配布物を作る場合は、次のRepository secretsを登録します。
 
 - `KEYNAKO_WINDOWS_SIGNING_PFX`: PFXファイル全体をBase64にした文字列
 - `KEYNAKO_WINDOWS_SIGNING_PASSWORD`: PFXのパスワード
@@ -89,16 +91,16 @@ WindowsはTSF DLLを入力先プロセス内へ読み込むため、すべての
 
 ## 成果物の取得
 
-Actionsの完了後、実行詳細のArtifactsから次をダウンロードします。
+Actionsで `Build and validate app files` の実行を開き、各OSのジョブ完了後に同じページのArtifactsから次をダウンロードします。同じページにAndroidと共有変換モジュールの検証結果も表示されます。
 
-- `keynako-android-release-apk-<run number>`（固定リリース鍵による署名。Pull Requestでは配布しない）
+- `keynako-android-release-apk-<run number>`（固定リリース鍵による署名）
 - `keynako-ios-files-<run number>`
 - `keynako-windows-installer-ci-signed-<run number>`（通常実行、正式証明書未登録時）
 - `keynako-windows-installer-trusted-signed-<run number>`（正式証明書を使った`v`タグ）
 - `keynako-linux-x64-<run number>`
 - `keynako-macos-<run number>`
 
-成果物は14日間保存されます。Androidのリリース鍵は暗号化してGitに保存し、復号用パスフレーズだけをSecretsで管理します。AndroidのCI用keystoreとWindowsのCI用PFXはリポジトリや成果物には含めず、Actionsキャッシュだけに保存します。AndroidのPull RequestはCI用キャッシュが消えると停止します。リリース鍵はキャッシュに依存しません。WindowsのCI用証明書はキャッシュが消えると再作成されます。
+成果物は14日間保存されます。Androidのリリース鍵は暗号化してGitに保存し、復号用パスフレーズだけをSecretsで管理します。Androidの検証ジョブは署名用keystoreを使いません。配布用のリリース鍵もキャッシュに依存しません。WindowsのCI用PFXはリポジトリや成果物には含めず、Actionsキャッシュだけに保存します。WindowsのCI用証明書はキャッシュが消えると再作成されます。
 
 PC版ジョブは共有変換モジュール、C++入力セッション、Flutter設定アプリを検査します。WindowsではTSF DLLとInno Setup製インストーラー、macOSではInputMethodKit bundle、LinuxではIBus engineも各OS向けに検証・梱包します。`keynako_zenzai`とsmall／xsmallモデルを同梱するため、追加モデル取得は不要です。
 
