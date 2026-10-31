@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A00000000000000000000007 /* Dictionary in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000019 /* Dictionary */; };
 		A00000000000000000000001 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000011 /* KeyboardViewController.swift */; };
 		A00000000000000000000002 /* ReportClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* ReportClient.swift */; };
 		A00000000000000000000003 /* zenz-v3.2-small-gguf in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* zenz-v3.2-small-gguf */; };
@@ -66,6 +67,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A00000000000000000000019 /* Dictionary */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Dictionary; path = "../third_party/azookey_dictionary_storage/Dictionary"; sourceTree = SOURCE_ROOT; };
 		A00000000000000000000010 /* AzooKeyKeyboard.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AzooKeyKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000011 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
 		A00000000000000000000012 /* ReportClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportClient.swift; sourceTree = "<group>"; };
@@ -123,6 +125,7 @@
 				A00000000000000000000016 /* AzooKeyKeyboard.entitlements */,
 				A00000000000000000000014 /* zenz-v3.2-small-gguf */,
 				A00000000000000000000015 /* zenz-v3.2-xsmall-gguf */,
+				A00000000000000000000019 /* Dictionary */,
 			);
 			path = AzooKeyKeyboard;
 			sourceTree = "<group>";
@@ -305,6 +308,7 @@
 			files = (
 				A00000000000000000000003 /* zenz-v3.2-small-gguf in Resources */,
 				A00000000000000000000004 /* zenz-v3.2-xsmall-gguf in Resources */,
+				A00000000000000000000007 /* Dictionary in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

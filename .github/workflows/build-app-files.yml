@@ -57,6 +57,11 @@ jobs:
       - name: Test Android signing preparation
         run: python3 -m unittest discover -s .github/scripts -p 'test_android_signing.py'
 
+      - name: Test official dictionary updates and validate the bundled snapshot
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_update_azookey_dictionary.py'
+          python3 .github/scripts/update_azookey_dictionary.py
+
   android:
     name: Signed Android release APK
     runs-on: ubuntu-26.04

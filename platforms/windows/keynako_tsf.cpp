@@ -31,6 +31,7 @@
 #include "keynako_submission_payload.h"
 #include "personal_dictionary_entry.h"
 #include "shared_dictionary_cache.h"
+#include "official_dictionary_cache.h"
 #include "zenzai_client.h"
 
 #ifndef KEYNAKO_DICTIONARY_SUBMISSION_URL
@@ -369,12 +370,12 @@ public:
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         ShellExecuteW(nullptr, L"open", executable.c_str(), L"--dictionary", executable.parent_path().c_str(), SW_SHOWNORMAL);
     }
-    void refresh_shared_dictionary() {
+    void refresh_shared_dictionary(bool force = true) {
         const auto executable = module_directory().parent_path() / L"Keynako.exe";
         std::error_code executable_error;
         if (!std::filesystem::exists(executable, executable_error) || executable_error) return;
         std::wstring command_line = L"\"" + executable.wstring() +
-                                    L"\" --refresh-shared-dictionary";
+                                    (force ? L"\" --refresh-shared-dictionary" : L"\" --refresh-shared-dictionary-if-due");
         const auto working_directory = executable.parent_path().wstring();
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
@@ -386,10 +387,12 @@ public:
             CloseHandle(process.hThread);
             CloseHandle(process.hProcess);
         }
-        shared_submission_status_ = created
-            ? L"共有辞書を更新中です"
-            : L"共有辞書を更新できません";
-        if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
+        if (force) {
+            shared_submission_status_ = created
+                ? L"共有辞書を更新中です"
+                : L"共有辞書を更新できません";
+            if (candidate_window_) InvalidateRect(candidate_window_, nullptr, TRUE);
+        }
     }
 
     STDMETHODIMP Activate(ITfThreadMgr *thread_manager, TfClientId client_id) override {
@@ -898,6 +901,8 @@ private:
     std::filesystem::path personal_dictionary_path_;
     std::filesystem::file_time_type personal_dictionary_write_time_{};
     std::chrono::steady_clock::time_point last_dictionary_check_{};
+    std::chrono::steady_clock::time_point last_official_refresh_{};
+    std::filesystem::path official_dictionary_path_;
     std::chrono::steady_clock::time_point last_backspace_press_{};
     std::chrono::milliseconds word_delete_interval_{350};
     std::wstring shared_submission_status_;
@@ -1048,6 +1053,17 @@ private:
         std::vector<std::filesystem::path> files;
         const auto program_data = environment_path(L"ProgramData");
         const auto local_app_data = environment_path(L"LOCALAPPDATA");
+        if (last_official_refresh_.time_since_epoch().count() == 0 ||
+            now - last_official_refresh_ >= std::chrono::minutes(5)) {
+            last_official_refresh_ = now;
+            refresh_shared_dictionary(false);
+        }
+        if (session_.raw_input().empty() && !local_app_data.empty()) {
+            const auto root = keynako::official_dictionary_cache(local_app_data / L"Keynako" / L"official_dictionary");
+            if (!root.empty() && root != official_dictionary_path_ && session_.set_bundled_dictionary_path(path_utf8(root))) {
+                official_dictionary_path_ = root;
+            }
+        }
         const auto personal_file = local_app_data.empty()
             ? std::filesystem::path()
             : local_app_data / L"Keynako" / L"user_dictionary.tsv";
