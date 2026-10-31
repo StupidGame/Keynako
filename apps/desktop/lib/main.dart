@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,10 +9,19 @@ import 'input/desktop_input_controller.dart';
 import 'input/desktop_learning.dart';
 import 'input/desktop_personal_dictionary.dart';
 import 'input/desktop_shared_dictionary.dart';
+import 'input/official_dictionary.dart';
 import 'input/desktop_zenzai_locator.dart';
 import 'input/portable_profile.dart';
 
 Future<void> main(List<String> arguments) async {
+  if (arguments.contains(refreshSharedDictionaryCommand) ||
+      arguments.contains(refreshSharedDictionaryIfDueCommand)) {
+    try {
+      await OfficialDictionary().refreshIfDue();
+    } on Object {
+      // Offline and rejected updates retain the active immutable snapshot.
+    }
+  }
   final dictionaryCommand = await runSharedDictionaryCommand(arguments);
   if (dictionaryCommand != null) {
     exitCode = dictionaryCommand;
@@ -23,6 +33,12 @@ Future<void> main(List<String> arguments) async {
     return;
   }
   WidgetsFlutterBinding.ensureInitialized();
+  void refreshOfficialDictionary() {
+    unawaited(OfficialDictionary().refreshIfDue().catchError((Object _) {}));
+  }
+
+  refreshOfficialDictionary();
+  Timer.periodic(const Duration(hours: 1), (_) => refreshOfficialDictionary());
   final profileRepository = DesktopPortableProfileRepository();
   final controller = DesktopInputController(
     zenzaiEngineFactory: DesktopZenzaiLocator.create,

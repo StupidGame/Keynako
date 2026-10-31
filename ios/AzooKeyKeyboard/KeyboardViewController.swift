@@ -54,6 +54,8 @@ final class KeyboardViewController: UIInputViewController {
     private var conversionDictionaryEntries: [AzooKeyHotfixDictionaryEntry] = []
     private var backgroundImageSignature: String?
     private var hasLoadedState = false
+    private var officialDictionaryTimer: Timer?
+    private var officialDictionaryURL: URL?
     private lazy var conversionEngine: AzooKeyConversionEngine? = {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
@@ -73,6 +75,11 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        refreshOfficialDictionary()
+        officialDictionaryTimer?.invalidate()
+        officialDictionaryTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshOfficialDictionary() }
+        }
         dictionaryMode = .closed
         reloadState()
         applyOneHandedLayout()
@@ -89,6 +96,31 @@ final class KeyboardViewController: UIInputViewController {
         super.textWillChange(textInput)
         reloadState()
         refreshCursorBar()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        officialDictionaryTimer?.invalidate()
+        officialDictionaryTimer = nil
+        super.viewWillDisappear(animated)
+    }
+
+    private func refreshOfficialDictionary() {
+        guard hasFullAccess, let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
+        ) else { return }
+        Task { [weak self] in
+            try? await OfficialDictionary.shared.refreshIfDue(in: container)
+            self?.reloadOfficialDictionaryIfIdle()
+        }
+    }
+
+    private func reloadOfficialDictionaryIfIdle() {
+        guard composing.isEmpty, let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.azooKey.keyboard"
+        ), let url = OfficialDictionary.cachedURL(in: container), url != officialDictionaryURL else { return }
+        officialDictionaryURL = url
+        conversionEngine = AzooKeyConversionEngine(sharedContainerURL: container)
+        reloadConversionDictionary()
     }
 
     override func textDidChange(_ textInput: (any UITextInput)?) {
@@ -180,6 +212,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func reloadState() {
+        reloadOfficialDictionaryIfIdle()
         let defaults = UserDefaults(suiteName: "group.com.azooKey.keyboard")!
         let savedMode = defaults.string(forKey: "keynako_one_handed_mode") ?? "full"
         oneHandedMode = ["left", "right"].contains(savedMode) ? savedMode : "full"

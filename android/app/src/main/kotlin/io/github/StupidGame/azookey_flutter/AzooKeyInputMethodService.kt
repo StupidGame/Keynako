@@ -41,6 +41,7 @@ import android.widget.TextView
 import io.github.StupidGame.azookey_flutter.input.disablesPersonalizedLearning
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
+import io.github.StupidGame.azookey_flutter.conversion.OfficialDictionary
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeySpecialCandidates
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyHotfixDictionaryEntry
 import io.github.StupidGame.azookey_flutter.conversion.DictionaryAssetSource
@@ -233,24 +234,45 @@ class AzooKeyInputMethodService : InputMethodService() {
     private var cursorBarVisible = false
     private var cursorBarView: CursorBarView? = null
     private var pendingQuickWordDelete: PendingQuickWordDelete? = null
-    private val azooKeyDictionary by lazy {
-        AzooKeyDictionary(
-            DictionaryAssetSource { path ->
-                assets.open("Dictionary/$path").use { it.readBytes() }
-            },
-        )
+    private val officialDictionary by lazy { OfficialDictionary(File(filesDir, "official_dictionary")) }
+    private var dictionarySnapshot: File? = null
+    private var activeAzooKeyDictionary: AzooKeyDictionary? = null
+    // Called on the serial candidate executor; an entire lookup uses one snapshot.
+    private val azooKeyDictionary: AzooKeyDictionary
+        @Synchronized
+        get() {
+            val snapshot = officialDictionary.current()
+            if (activeAzooKeyDictionary == null || snapshot != dictionarySnapshot) {
+                dictionarySnapshot = snapshot
+                activeAzooKeyDictionary = AzooKeyDictionary(DictionaryAssetSource { path ->
+                    if (snapshot != null) File(snapshot, path).readBytes()
+                    else assets.open("Dictionary/$path").use { it.readBytes() }
+                })
+            }
+            return checkNotNull(activeAzooKeyDictionary)
+        }
+    private val dictionaryUpdateExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val dictionaryUpdateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val dictionaryUpdateTick = object : Runnable {
+        override fun run() {
+            dictionaryUpdateExecutor.execute { runCatching { officialDictionary.refreshIfDue() } }
+            dictionaryUpdateHandler.postDelayed(this, 3_600_000)
+        }
     }
     private val zenzaiRuntime by lazy { AndroidZenzaiRuntime(this) }
 
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
+        dictionaryUpdateHandler.post(dictionaryUpdateTick)
     }
 
     override fun onDestroy() {
         dismissFlickGuide()
         invalidateCandidateLookup()
         candidateExecutor.shutdownNow()
+        dictionaryUpdateHandler.removeCallbacks(dictionaryUpdateTick)
+        dictionaryUpdateExecutor.shutdownNow()
         if (activeInstance === this) activeInstance = null
         if (this::root.isInitialized) zenzaiRuntime.close()
         super.onDestroy()

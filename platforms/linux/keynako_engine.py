@@ -85,6 +85,22 @@ class NativeSession:
         self.library.keynako_ime_set_bundled_dictionary_path(
             self.handle, os.fsencode(dictionary_root),
         )
+        self.official_dictionary_root = storage / "official_dictionary"
+        self.official_dictionary_path = None
+
+    def reload_official_dictionary(self) -> None:
+        if self.raw_input():
+            return
+        try:
+            sha = (self.official_dictionary_root / "current").read_text().strip()
+            if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+                return
+            path = self.official_dictionary_root / sha / "Dictionary"
+            if path != self.official_dictionary_path and (path / "louds/charID.chid").is_file():
+                if self.library.keynako_ime_set_bundled_dictionary_path(self.handle, os.fsencode(path)):
+                    self.official_dictionary_path = path
+        except OSError:
+            pass
 
     def close(self) -> None:
         if self.handle:
@@ -270,6 +286,8 @@ class KeynakoEngine(IBus.Engine):
         if not force and now - self.last_dictionary_check < 5:
             return
         self.last_dictionary_check = now
+        self.session.reload_official_dictionary()
+        self._request_shared_dictionary_refresh()
         personal_candidates = self._personal_dictionary_candidates()
         personal = next((path for path in personal_candidates if path.is_file()), personal_candidates[0])
         try:
