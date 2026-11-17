@@ -38,7 +38,11 @@ void main() {
           controller.candidates.map((value) => value.text),
           isNot(contains('仮面ライダー')),
         );
-        expect(await repository.load(), {'ねこ\t猫': 8, 'いぬ\t犬': 6});
+        expect(await repository.load(), {
+          'ねこ\t猫': 8,
+          'いぬ\t犬': 6,
+          'context:prediction-reset:ja\t仮面ライダー': 1,
+        });
         final reloaded = DesktopInputController(learningRepository: repository);
         await reloaded.initializeLearning();
         reloaded.updateRawInput('kame');

@@ -18,7 +18,7 @@ class CandidateLearningTest {
         )
         assertTrue(resetCandidateLearning(learning, "かめんらいだー", "仮面ライダー"))
         assertEquals(mapOf(
-            "かめんらいだー\t別表記" to 8, "べつ\t仮面ライダー" to 4,
+            "かめんらいだー\t別表記" to 8, predictionResetKey("仮面ライダー") to 1,
             "english:rider\t仮面ライダー" to 6, "context:4eca\tかめんらいだー\t別表記" to 12,
         ), learning)
         assertEquals(false, resetCandidateLearning(learning, "かめんらいだー", "仮面ライダー"))
@@ -29,7 +29,8 @@ class CandidateLearningTest {
             "english:h\tHello" to 7, "english:hello\thello" to 8,
             "english:hel\thelium" to 8, "はろー\tHello" to 6)
         resetCandidateLearning(learning, "hel", "hello", english = true)
-        assertEquals(mapOf("english:hel\thelium" to 8, "はろー\tHello" to 6), learning)
+        assertEquals(mapOf("english:hel\thelium" to 8, "はろー\tHello" to 6,
+            predictionResetKey("hello", english = true) to 1), learning)
         assertEquals(false, resetCandidateLearning(learning, "", "Hello"))
     }
 

@@ -12,7 +12,18 @@ class CandidateLearning {
   static const maxScore = 32;
   static final _legacyEnglishReading = RegExp(r"^[a-zA-Z']+$");
 
-  /// Forgets one reading/value pair, including every preceding-text context.
+  // Reserved context keys cannot be decoded as learned words, and travel
+  // with the existing learning backup without a separate storage format.
+  static String predictionResetKey(String text, {bool english = false}) =>
+      'context:prediction-reset:${english ? 'en' : 'ja'}\t${english ? text.toLowerCase() : text}';
+
+  static bool isPredictionReset(
+    Map<String, int> learning,
+    String text, {
+    bool english = false,
+  }) => learning.containsKey(predictionResetKey(text, english: english));
+
+  /// Forgets a spelling across readings and contexts and hides its predictions.
   /// Parse keys rather than scores so even old zero-score entries are removed.
   static bool reset(
     Map<String, int> learning, {
@@ -26,16 +37,15 @@ class CandidateLearning {
         text.contains('\t')) {
       return false;
     }
-    final normalized = normalizeReading(reading, english: english);
-    final before = learning.length;
+    var changed = false;
     learning.removeWhere((key, _) {
       final parts = key.split('\t');
       final contextual =
           parts.length == 3 && parts.first.startsWith('context:');
       if (contextual) {
-        return !english &&
-            normalizeReading(parts[1]) == normalized &&
-            parts[2] == text;
+        final matches = !english && parts[2] == text;
+        changed |= matches;
+        return matches;
       }
       if (parts.length != 2 || parts.first.startsWith('context:')) return false;
       var ruby = parts.first;
@@ -47,12 +57,16 @@ class CandidateLearning {
       }
       // English history is keyed by the prefix typed when choosing a word.
       // Forget all of that word's prefixes, including shorter earlier inputs.
-      return (english || normalizeReading(ruby) == normalized) &&
-          (english
-              ? parts[1].toLowerCase() == text.toLowerCase()
-              : parts[1] == text);
+      final matches = english
+          ? parts[1].toLowerCase() == text.toLowerCase()
+          : parts[1] == text;
+      changed |= matches;
+      return matches;
     });
-    return learning.length != before;
+    final key = predictionResetKey(text, english: english);
+    changed |= !learning.containsKey(key);
+    learning[key] = 1;
+    return changed;
   }
 
   static String normalizeReading(String reading, {bool english = false}) =>
@@ -180,7 +194,11 @@ class CandidateLearning {
       learning[key] = (strongest + 4).clamp(1, maxScore);
     }
     final contextKeys = learning.keys
-        .where((key) => key.startsWith('context:'))
+        .where(
+          (key) =>
+              key.startsWith('context:') &&
+              !key.startsWith('context:prediction-reset:'),
+        )
         .toList();
     for (final stale in contextKeys.take(
       contextKeys.length > 512 ? contextKeys.length - 512 : 0,
@@ -202,6 +220,9 @@ class CandidateLearning {
       return;
     }
     final normalized = normalizeReading(reading, english: english);
+    if (explicitSelection) {
+      learning.remove(predictionResetKey(text, english: english));
+    }
     final scores = <String, int>{};
     final oldKeys = <String>[];
     for (final entry in learning.entries) {

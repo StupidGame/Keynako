@@ -1,6 +1,7 @@
 package io.github.StupidGame.azookey_flutter
 
 import android.content.Context
+import io.github.StupidGame.azookey_flutter.conversion.predictionResetKey
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -69,6 +70,40 @@ class CandidateLearningResetTest {
         assertEquals("にほんご", ReflectionHelpers.getField<String>(service, "composing"))
     }
 
+    @Test fun kintetsuPhraseDoesNotReturnFromAnotherReadingOrDictionaryPrediction() {
+        val word = "近鉄四日市駅から"
+        val ruby = "きんてつよっかいちえきから"
+        val state = ReflectionHelpers.getField<JSONObject>(service, "state")
+        state.put("learning", JSONObject().put("$ruby\t$word", 32)
+            .put("きんてつ\t$word", 8).put("context:4eca\tきんてつよっかいち\t$word", 16)
+            .put("ねこ\t猫", 8))
+        state.put("userDictionary", org.json.JSONArray().put(JSONObject()
+            .put("id", 1).put("ruby", ruby).put("word", word).put("importance", 3)))
+        ReflectionHelpers.setField(service, "composing", "きんてつ")
+        renderCandidates()
+        val row = ReflectionHelpers.getField<ViewGroup>(service, "candidateRow")
+        assertTrue(labels(row).first { it.text == word }.performLongClick())
+        labels(keyboard).first { it.text == "この単語の学習をリセット" }.performClick()
+        val learning = state.getJSONObject("learning")
+        assertEquals(2, learning.length())
+        assertTrue(learning.has(predictionResetKey(word)))
+        assertEquals(word, state.getJSONArray("userDictionary").getJSONObject(0).getString("word"))
+        repeat(2) {
+            renderCandidates()
+            assertFalse(word in ReflectionHelpers.getField<List<String>>(service, "candidates"))
+        }
+        service.onDestroy()
+        service = Robolectric.buildService(AzooKeyInputMethodService::class.java).create().get()
+        keyboard = service.onCreateInputView()
+        ReflectionHelpers.setField(service, "rawRoman", "")
+        ReflectionHelpers.setField(service, "composing", "きんてつ")
+        renderCandidates()
+        assertFalse(word in ReflectionHelpers.getField<List<String>>(service, "candidates"))
+        ReflectionHelpers.setField(service, "composing", ruby)
+        renderCandidates()
+        assertTrue(word in ReflectionHelpers.getField<List<String>>(service, "candidates"))
+    }
+
     @Test fun returningFromTheMenuKeepsLearningAndComposition() {
         val row = ReflectionHelpers.getField<ViewGroup>(service, "candidateRow")
         assertTrue(labels(row).first { it.text == "学習リセット確認用の単語" }.performLongClick())
@@ -86,7 +121,8 @@ class CandidateLearningResetTest {
         val saved = service.getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .getString(MainActivity.STATE_KEY, "{}")!!
         val learning = JSONObject(saved).getJSONObject("learning")
-        assertEquals(1, learning.length())
+        assertEquals(2, learning.length())
+        assertEquals(1, learning.getInt(predictionResetKey("学習リセット確認用の単語")))
         assertEquals(8, learning.getInt("ねこ\t猫"))
         assertEquals("かめ", ReflectionHelpers.getField<String>(service, "composing"))
         val candidates = ReflectionHelpers.getField<List<String>>(service, "candidates")

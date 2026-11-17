@@ -2860,6 +2860,8 @@ final class KeyboardViewController: UIInputViewController {
             + combinedTexts + learnedCombinationTexts + localComplete
             + prefixCandidates + [hiragana, fullKatakana, composing, rawRoman]).filter { candidate in
             guard !candidate.isEmpty else { return false }
+            if (predictedTexts.contains(candidate) || knownPrefixTexts.contains(candidate)),
+               isResetPrediction(candidate) { return false }
             if candidate != hiragana && candidate != fullKatakana &&
                 !exactRegisteredTexts.contains(candidate) {
                 if normalizedIncompleteCombinationTexts.contains(katakanaToHiragana(candidate)) {
@@ -3121,7 +3123,13 @@ final class KeyboardViewController: UIInputViewController {
         Self.englishPredictionWords
             .filter { $0.count > prefix.count && $0.hasPrefix(prefix) }
             .forEach(append)
-        return Array(result.prefix(32))
+        return Array(result.filter {
+            $0.lowercased() == prefix || !isResetPrediction($0, english: true)
+        }.prefix(32))
+    }
+
+    private func isResetPrediction(_ text: String, english: Bool = false) -> Bool {
+        (state["learning"] as? [String: Any])?[predictionResetKey(text, english: english)] != nil
     }
 
     private func matchEnglishCandidateCase(_ candidate: String, input: String) -> String {
@@ -4927,27 +4935,31 @@ private struct LearnedCandidateEntry {
     let score: Int
 }
 
+private func predictionResetKey(_ text: String, english: Bool) -> String {
+    "context:prediction-reset:\(english ? "en" : "ja")\t\(english ? text.lowercased() : text)"
+}
+
 private func resetCandidateLearning(
     _ learning: [String: Any], reading: String, text: String, english: Bool
 ) -> [String: Any] {
     guard !reading.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
           !reading.contains("\t"), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
           !text.contains("\t") else { return learning }
-    let normalized = english ? reading.lowercased() : katakanaToHiragana(reading)
-    return learning.filter { key, _ in
+    var result = learning.filter { key, _ in
         let parts = key.components(separatedBy: "\t")
         if parts.count == 3, parts[0].hasPrefix("context:") {
-            return english || katakanaToHiragana(parts[1]) != normalized || parts[2] != text
+            return english || parts[2] != text
         }
         guard parts.count == 2, !parts[0].hasPrefix("context:") else { return true }
         let namespaced = parts[0].hasPrefix("english:")
         let ruby = namespaced ? String(parts[0].dropFirst("english:".count)) : parts[0]
         let legacyEnglish = ruby.range(of: "^[a-zA-Z']+$", options: .regularExpression) != nil
         guard namespaced ? english : english == legacyEnglish else { return true }
-        let matchesReading = english || katakanaToHiragana(ruby) == normalized
         let matchesText = english ? parts[1].lowercased() == text.lowercased() : parts[1] == text
-        return !matchesReading || !matchesText
+        return !matchesText
     }
+    result[predictionResetKey(text, english: english)] = 1
+    return result
 }
 
 private func contextLearningPrefixes(_ leftContext: String, reading: String) -> [String] {
@@ -4980,7 +4992,7 @@ private func recordContextCandidateLearning(
         }
         result[prefix + text] = min(32, strongest + 4)
     }
-    let contextKeys = result.keys.filter { $0.hasPrefix("context:") }.sorted()
+    let contextKeys = result.keys.filter { $0.hasPrefix("context:") && !$0.hasPrefix("context:prediction-reset:") }.sorted()
     if contextKeys.count > 512 {
         for key in contextKeys.prefix(contextKeys.count - 512) { result.removeValue(forKey: key) }
     }
@@ -5036,6 +5048,7 @@ private func recordCandidateLearning(
           !reading.contains("\t"), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return learning }
     let normalized = english ? reading.lowercased() : katakanaToHiragana(reading)
     var result = learning
+    if explicitSelection { result.removeValue(forKey: predictionResetKey(text, english: english)) }
     var scores: [String: Int] = [:]
     for entry in learnedCandidateEntries(learning, english: english) where entry.reading == normalized {
         let word = english && entry.text.lowercased() == text.lowercased() ? text : entry.text

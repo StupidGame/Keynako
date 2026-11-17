@@ -8,7 +8,10 @@ private const val MAX_LEARNING_SCORE = 32
 private const val MAX_CONTEXT_CHOICES = 512
 private val legacyEnglishReading = Regex("[a-zA-Z']+")
 
-/** Forget exactly this reading/spelling, including all contextual preferences. */
+internal fun predictionResetKey(text: String, english: Boolean = false): String =
+    "context:prediction-reset:${if (english) "en" else "ja"}\t${if (english) text.lowercase(Locale.ROOT) else text}"
+
+/** Forget this spelling across readings and prevent its predictive return. */
 internal fun resetCandidateLearning(
     learning: MutableMap<String, Int>,
     reading: String,
@@ -16,20 +19,20 @@ internal fun resetCandidateLearning(
     english: Boolean = false,
 ): Boolean {
     if (reading.isBlank() || '\t' in reading || text.isBlank() || '\t' in text) return false
-    val normalized = if (english) reading.lowercase(Locale.ROOT) else katakanaToHiragana(reading)
-    return learning.keys.removeAll { key ->
+    val removed = learning.keys.removeAll { key ->
         val parts = key.split('\t')
         if (parts.size == 3 && parts[0].startsWith("context:")) {
-            !english && katakanaToHiragana(parts[1]) == normalized && parts[2] == text
+            !english && parts[2] == text
         } else if (parts.size == 2 && !parts[0].startsWith("context:")) {
             val namespaced = parts[0].startsWith("english:")
             val ruby = if (namespaced) parts[0].removePrefix("english:") else parts[0]
             val matchesLanguage = if (namespaced) english else english == legacyEnglishReading.matches(ruby)
             matchesLanguage &&
-                (english || katakanaToHiragana(ruby) == normalized) &&
                 parts[1].equals(text, ignoreCase = english)
         } else false
     }
+    val added = learning.put(predictionResetKey(text, english), 1) == null
+    return removed || added
 }
 
 internal fun learnedCandidates(learning: Map<String, Int>, english: Boolean = false): List<LearnedCandidate> =
@@ -84,7 +87,7 @@ internal fun recordContextCandidateLearning(
         }
         learning[prefix + text] = (strongest + 4).coerceAtMost(MAX_LEARNING_SCORE)
     }
-    val contextKeys = learning.keys.filter { it.startsWith("context:") }
+    val contextKeys = learning.keys.filter { it.startsWith("context:") && !it.startsWith("context:prediction-reset:") }
     for (key in contextKeys.take((contextKeys.size - MAX_CONTEXT_CHOICES).coerceAtLeast(0))) {
         learning.remove(key)
     }
@@ -112,6 +115,7 @@ internal fun recordCandidateLearning(
 ) {
     if (reading.isBlank() || '\t' in reading || text.isBlank()) return
     val normalized = if (english) reading.lowercase(Locale.ROOT) else katakanaToHiragana(reading)
+    if (explicitSelection) learning.remove(predictionResetKey(text, english))
     val scores = linkedMapOf<String, Int>()
     val oldKeys = mutableListOf<String>()
     for ((key, count) in learning) {

@@ -181,6 +181,15 @@ class EnglishConverter {
     // English composition remains literal until a completion is selected.
     return ranked
         .map((entry) => entry.$2)
+        .where(
+          (candidate) =>
+              candidate.text.toLowerCase() == normalized ||
+              !CandidateLearning.isPredictionReset(
+                options.learning,
+                candidate.text,
+                english: true,
+              ),
+        )
         .take(predictionLimit)
         .toList(growable: false);
   }
