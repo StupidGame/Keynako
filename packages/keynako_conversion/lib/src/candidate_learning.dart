@@ -12,6 +12,49 @@ class CandidateLearning {
   static const maxScore = 32;
   static final _legacyEnglishReading = RegExp(r"^[a-zA-Z']+$");
 
+  /// Forgets one reading/value pair, including every preceding-text context.
+  /// Parse keys rather than scores so even old zero-score entries are removed.
+  static bool reset(
+    Map<String, int> learning, {
+    required String reading,
+    required String text,
+    bool english = false,
+  }) {
+    if (reading.trim().isEmpty ||
+        reading.contains('\t') ||
+        text.trim().isEmpty ||
+        text.contains('\t')) {
+      return false;
+    }
+    final normalized = normalizeReading(reading, english: english);
+    final before = learning.length;
+    learning.removeWhere((key, _) {
+      final parts = key.split('\t');
+      final contextual =
+          parts.length == 3 && parts.first.startsWith('context:');
+      if (contextual) {
+        return !english &&
+            normalizeReading(parts[1]) == normalized &&
+            parts[2] == text;
+      }
+      if (parts.length != 2 || parts.first.startsWith('context:')) return false;
+      var ruby = parts.first;
+      if (ruby.startsWith('english:')) {
+        if (!english) return false;
+        ruby = ruby.substring('english:'.length);
+      } else if (english != _legacyEnglishReading.hasMatch(ruby)) {
+        return false;
+      }
+      // English history is keyed by the prefix typed when choosing a word.
+      // Forget all of that word's prefixes, including shorter earlier inputs.
+      return (english || normalizeReading(ruby) == normalized) &&
+          (english
+              ? parts[1].toLowerCase() == text.toLowerCase()
+              : parts[1] == text);
+    });
+    return learning.length != before;
+  }
+
   static String normalizeReading(String reading, {bool english = false}) =>
       english
       ? reading.toLowerCase()

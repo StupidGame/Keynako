@@ -8,6 +8,30 @@ private const val MAX_LEARNING_SCORE = 32
 private const val MAX_CONTEXT_CHOICES = 512
 private val legacyEnglishReading = Regex("[a-zA-Z']+")
 
+/** Forget exactly this reading/spelling, including all contextual preferences. */
+internal fun resetCandidateLearning(
+    learning: MutableMap<String, Int>,
+    reading: String,
+    text: String,
+    english: Boolean = false,
+): Boolean {
+    if (reading.isBlank() || '\t' in reading || text.isBlank() || '\t' in text) return false
+    val normalized = if (english) reading.lowercase(Locale.ROOT) else katakanaToHiragana(reading)
+    return learning.keys.removeAll { key ->
+        val parts = key.split('\t')
+        if (parts.size == 3 && parts[0].startsWith("context:")) {
+            !english && katakanaToHiragana(parts[1]) == normalized && parts[2] == text
+        } else if (parts.size == 2 && !parts[0].startsWith("context:")) {
+            val namespaced = parts[0].startsWith("english:")
+            val ruby = if (namespaced) parts[0].removePrefix("english:") else parts[0]
+            val matchesLanguage = if (namespaced) english else english == legacyEnglishReading.matches(ruby)
+            matchesLanguage &&
+                (english || katakanaToHiragana(ruby) == normalized) &&
+                parts[1].equals(text, ignoreCase = english)
+        } else false
+    }
+}
+
 internal fun learnedCandidates(learning: Map<String, Int>, english: Boolean = false): List<LearnedCandidate> =
     learning.mapNotNull { (key, count) -> learnedCandidate(key, count, english) }
 

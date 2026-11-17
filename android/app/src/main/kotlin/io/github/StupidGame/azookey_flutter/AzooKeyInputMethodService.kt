@@ -38,6 +38,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import io.github.StupidGame.azookey_flutter.input.disablesPersonalizedLearning
 import io.github.StupidGame.azookey_flutter.conversion.AndroidZenzaiRuntime
 import io.github.StupidGame.azookey_flutter.conversion.AzooKeyDictionary
@@ -78,6 +79,7 @@ import io.github.StupidGame.azookey_flutter.conversion.prioritizeRegisteredJapan
 import io.github.StupidGame.azookey_flutter.conversion.prefixPredictionEntries
 import io.github.StupidGame.azookey_flutter.conversion.rankUserPrefixPredictions
 import io.github.StupidGame.azookey_flutter.conversion.recordCandidateLearning
+import io.github.StupidGame.azookey_flutter.conversion.resetCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.recordContextCandidateLearning
 import io.github.StupidGame.azookey_flutter.conversion.rerankedJapaneseCandidates
 import io.github.StupidGame.azookey_flutter.conversion.romanToHiragana
@@ -3663,6 +3665,8 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun showCandidatePreview(candidate: String, index: Int) {
+        val reading = candidatePredictionReadings[candidate] ?: displayReading()
+        val english = mode == "english"
         candidateExpanded = true
         setCandidatePanelVisible(true)
         candidateExpandButton.visibility = View.GONE
@@ -3679,6 +3683,21 @@ class AzooKeyInputMethodService : InputMethodService() {
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         candidateRow.removeAllViews()
         addCandidateButton("戻る") { renderCandidates(false) }
+        addCandidateButton("この単語の学習をリセット") {
+            val stored = state.optJSONObject("learning") ?: JSONObject()
+            val scores = stored.keys().asSequence().associateWith { stored.optInt(it, 0) }.toMutableMap()
+            resetCandidateLearning(scores, reading, candidate, english)
+            state.put("learning", JSONObject(scores))
+            cachedLearningSource = null
+            persistState()
+            pendingReport = null
+            candidateExpanded = false
+            setCandidatePanelVisible(false)
+            invalidateCandidateLookup()
+            stableClauseCompletion.reset()
+            updateComposition()
+            Toast.makeText(this, "「$candidate」の学習をリセットしたよ", Toast.LENGTH_SHORT).show()
+        }
         addCandidateButton("誤変換を報告") {
             setCandidatePanelVisible(false)
             candidateExpanded = false

@@ -2,6 +2,59 @@ import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('reset removes only the selected spelling and every context', () {
+    final learning = {
+      'かめんらいだー\t仮面ライダー': 32,
+      'カメンライダー\t仮面ライダー': 0,
+      'かめんらいだー\t別表記': 8,
+      'べつ\t仮面ライダー': 4,
+      'english:rider\t仮面ライダー': 6,
+      'context:4eca.65e5\tかめんらいだー\t仮面ライダー': 16,
+      'context:%E4%BB%8A\tカメンライダー\t仮面ライダー': 0,
+      'context:4eca.65e5\tかめんらいだー\t別表記': 12,
+    };
+    expect(
+      CandidateLearning.reset(learning, reading: 'かめんらいだー', text: '仮面ライダー'),
+      isTrue,
+    );
+    expect(learning, {
+      'かめんらいだー\t別表記': 8,
+      'べつ\t仮面ライダー': 4,
+      'english:rider\t仮面ライダー': 6,
+      'context:4eca.65e5\tかめんらいだー\t別表記': 12,
+    });
+    expect(
+      CandidateLearning.reset(learning, reading: 'かめんらいだー', text: '仮面ライダー'),
+      isFalse,
+    );
+  });
+
+  test('reset forgets legacy and namespaced English case variants', () {
+    final learning = {
+      'Hel\tHello': 4,
+      'english:h\tHello': 7,
+      'english:hello\thello': 8,
+      'english:HEL\tHELLO': 32,
+      'english:hel\thelium': 8,
+      'はろー\tHello': 6,
+    };
+    CandidateLearning.reset(
+      learning,
+      reading: 'hel',
+      text: 'hello',
+      english: true,
+    );
+    expect(learning, {'english:hel\thelium': 8, 'はろー\tHello': 6});
+    expect(
+      CandidateLearning.reset(learning, reading: '', text: 'Hello'),
+      isFalse,
+    );
+    expect(
+      CandidateLearning.reset(learning, reading: 'hel\t', text: 'Hello'),
+      isFalse,
+    );
+  });
+
   test('automatic acceptance stays below a deliberate correction', () {
     final learning = <String, int>{};
     for (var i = 0; i < 20; i++) {

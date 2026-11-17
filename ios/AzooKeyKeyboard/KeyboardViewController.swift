@@ -3271,6 +3271,8 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func showCandidatePreview(_ candidate: String, index: Int) {
+        let reading = candidatePredictionReadings[candidate] ?? composing
+        let english = mode == "english"
         setCandidateExpanded(true)
         candidateExpandButton.isHidden = true
         candidateGrid.removeAllArrangedSubviews()
@@ -3286,6 +3288,21 @@ final class KeyboardViewController: UIInputViewController {
         candidateGrid.addArrangedSubview(enlarged)
         candidateStack.removeAllArrangedSubviews()
         candidateStack.addArrangedSubview(makeCandidateButton("戻る") { [weak self] in self?.renderCandidates(showTabs: false) })
+        candidateStack.addArrangedSubview(makeCandidateButton("この単語の学習をリセット") { [weak self] in
+            guard let self else { return }
+            self.state["learning"] = resetCandidateLearning(
+                self.state["learning"] as? [String: Any] ?? [:],
+                reading: reading, text: candidate, english: english
+            )
+            if !english {
+                self.conversionEngine?.resetCandidateLearning(reading: reading, text: candidate)
+            }
+            self.saveState()
+            self.pendingReport = nil
+            self.setCandidateExpanded(false)
+            self.updateComposition()
+            UIAccessibility.post(notification: .announcement, argument: "「\(candidate)」の学習をリセットしたよ")
+        })
         candidateStack.addArrangedSubview(makeCandidateButton("誤変換を報告") { [weak self] in
             self?.showLegacyReportPrompt(candidate, index: index)
         })
@@ -4908,6 +4925,29 @@ private struct LearnedCandidateEntry {
     let reading: String
     let text: String
     let score: Int
+}
+
+private func resetCandidateLearning(
+    _ learning: [String: Any], reading: String, text: String, english: Bool
+) -> [String: Any] {
+    guard !reading.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          !reading.contains("\t"), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          !text.contains("\t") else { return learning }
+    let normalized = english ? reading.lowercased() : katakanaToHiragana(reading)
+    return learning.filter { key, _ in
+        let parts = key.components(separatedBy: "\t")
+        if parts.count == 3, parts[0].hasPrefix("context:") {
+            return english || katakanaToHiragana(parts[1]) != normalized || parts[2] != text
+        }
+        guard parts.count == 2, !parts[0].hasPrefix("context:") else { return true }
+        let namespaced = parts[0].hasPrefix("english:")
+        let ruby = namespaced ? String(parts[0].dropFirst("english:".count)) : parts[0]
+        let legacyEnglish = ruby.range(of: "^[a-zA-Z']+$", options: .regularExpression) != nil
+        guard namespaced ? english : english == legacyEnglish else { return true }
+        let matchesReading = english || katakanaToHiragana(ruby) == normalized
+        let matchesText = english ? parts[1].lowercased() == text.lowercased() : parts[1] == text
+        return !matchesReading || !matchesText
+    }
 }
 
 private func contextLearningPrefixes(_ leftContext: String, reading: String) -> [String] {

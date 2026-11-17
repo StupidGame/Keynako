@@ -5,6 +5,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CandidateLearningTest {
+    @Test fun resetPreservesOtherSpellingsReadingsAndLanguages() {
+        val learning = mutableMapOf(
+            "かめんらいだー\t仮面ライダー" to 32,
+            "カメンライダー\t仮面ライダー" to 0,
+            "かめんらいだー\t別表記" to 8,
+            "べつ\t仮面ライダー" to 4,
+            "english:rider\t仮面ライダー" to 6,
+            "context:4eca\tかめんらいだー\t仮面ライダー" to 16,
+            "context:%E4%BB%8A\tカメンライダー\t仮面ライダー" to 0,
+            "context:4eca\tかめんらいだー\t別表記" to 12,
+        )
+        assertTrue(resetCandidateLearning(learning, "かめんらいだー", "仮面ライダー"))
+        assertEquals(mapOf(
+            "かめんらいだー\t別表記" to 8, "べつ\t仮面ライダー" to 4,
+            "english:rider\t仮面ライダー" to 6, "context:4eca\tかめんらいだー\t別表記" to 12,
+        ), learning)
+        assertEquals(false, resetCandidateLearning(learning, "かめんらいだー", "仮面ライダー"))
+    }
+
+    @Test fun resetForgetsLegacyAndNamespacedEnglishCaseVariants() {
+        val learning = mutableMapOf("Hel\tHello" to 4, "english:HEL\tHELLO" to 32,
+            "english:h\tHello" to 7, "english:hello\thello" to 8,
+            "english:hel\thelium" to 8, "はろー\tHello" to 6)
+        resetCandidateLearning(learning, "hel", "hello", english = true)
+        assertEquals(mapOf("english:hel\thelium" to 8, "はろー\tHello" to 6), learning)
+        assertEquals(false, resetCandidateLearning(learning, "", "Hello"))
+    }
+
     @Test
     fun automaticAcceptanceRemainsWeakerThanExplicitSelection() {
         val learning = mutableMapOf<String, Int>()
