@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:keynako_conversion/keynako_conversion.dart';
 
 import '../../input/desktop_input_controller.dart';
 import 'personal_dictionary_page.dart';
 import 'portable_profile_page.dart';
 
-enum _DictionaryDestination { shared, personal }
+enum _CandidateAction { shared, personal, resetLearning }
 
 class ImePage extends StatefulWidget {
   const ImePage({required this.controller, super.key});
@@ -426,6 +427,52 @@ class _InputCard extends StatelessWidget {
   final VoidCallback onCommit;
   final ValueChanged<String> onRawInputChanged;
 
+  Future<void> _showCandidateMenu(
+    BuildContext context,
+    ConversionCandidate candidate,
+    Offset globalPosition,
+  ) async {
+    if (controller.candidateSharing) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = overlay.globalToLocal(globalPosition);
+    final action = await showMenu<_CandidateAction>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay.size.width - position.dx,
+        overlay.size.height - position.dy,
+      ),
+      items: const [
+        PopupMenuItem(value: _CandidateAction.shared, child: Text('共通辞書に送る')),
+        PopupMenuItem(value: _CandidateAction.personal, child: Text('個人辞書に登録')),
+        PopupMenuItem(
+          value: _CandidateAction.resetLearning,
+          child: Text('この単語の学習をリセット'),
+        ),
+      ],
+    );
+    if (action == null || !context.mounted) return;
+    String message;
+    switch (action) {
+      case _CandidateAction.shared:
+        await controller.shareCandidateText(candidate.text, candidate.reading);
+        message = controller.candidateShareStatus;
+      case _CandidateAction.personal:
+        await controller.saveCandidateTextToPersonalDictionary(
+          candidate.text,
+          candidate.reading,
+        );
+        message = controller.candidateShareStatus;
+      case _CandidateAction.resetLearning:
+        final success = await controller.resetCandidateLearning(candidate);
+        message = success ? '「${candidate.text}」の学習をリセットしたよ' : '学習をリセットできなかったよ';
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -600,6 +647,7 @@ class _InputCard extends StatelessWidget {
                       separatorBuilder: (_, _) => const SizedBox(height: 7),
                       itemBuilder: (context, index) {
                         final candidate = controller.candidates[index];
+                        var pressPosition = Offset.zero;
                         final selected = index == controller.selectedIndex;
                         final sourceLabel = switch (candidate.source) {
                           'zenzai' || 'zenzai-suggestion' => 'Zenzai',
@@ -635,53 +683,18 @@ class _InputCard extends StatelessWidget {
                               controller.selectCandidate(index);
                               onCommit();
                             },
-                            onSecondaryTapUp: (details) async {
-                              if (controller.candidateSharing) return;
-                              final overlay =
-                                  Overlay.of(context).context.findRenderObject()
-                                      as RenderBox;
-                              final position = overlay.globalToLocal(
-                                details.globalPosition,
-                              );
-                              final destination =
-                                  await showMenu<_DictionaryDestination>(
-                                    context: context,
-                                    position: RelativeRect.fromLTRB(
-                                      position.dx,
-                                      position.dy,
-                                      overlay.size.width - position.dx,
-                                      overlay.size.height - position.dy,
-                                    ),
-                                    items: const [
-                                      PopupMenuItem(
-                                        value: _DictionaryDestination.shared,
-                                        child: Text('共通辞書に送る'),
-                                      ),
-                                      PopupMenuItem(
-                                        value: _DictionaryDestination.personal,
-                                        child: Text('個人辞書に登録'),
-                                      ),
-                                    ],
-                                  );
-                              if (destination == null || !context.mounted) {
-                                return;
-                              }
-                              if (destination ==
-                                  _DictionaryDestination.shared) {
-                                await controller.shareCandidate(index);
-                              } else {
-                                await controller
-                                    .saveCandidateToPersonalDictionary(index);
-                              }
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    controller.candidateShareStatus,
-                                  ),
-                                ),
-                              );
-                            },
+                            onTapDown: (details) =>
+                                pressPosition = details.globalPosition,
+                            onLongPress: () => _showCandidateMenu(
+                              context,
+                              candidate,
+                              pressPosition,
+                            ),
+                            onSecondaryTapUp: (details) => _showCandidateMenu(
+                              context,
+                              candidate,
+                              details.globalPosition,
+                            ),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 14,

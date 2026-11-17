@@ -39,6 +39,7 @@ public final class AzooKeyConversionEngine {
     private let sharedContainerURL: URL
     private let memoryDirectoryURL: URL
     private var lastCandidates: [String: Candidate] = [:]
+    private var lastRequestOptions: ConvertRequestOptions?
     public private(set) var predictionTexts = Set<String>()
     public private(set) var baselineTexts: [String] = []
     public private(set) var completedClause: AzooKeyCompletedClause?
@@ -172,10 +173,12 @@ public final class AzooKeyConversionEngine {
             )
         }
         // Keep a standard conversion available when model suggestions are unusual.
+        let baselineOptions = options(for: .off, predictiveInput: false,
+            bestCount: reading.count >= 16 ? 48 : 20)
+        lastRequestOptions = baselineOptions
         let baseline = converter.requestCandidates(
             composingText,
-            options: options(for: .off, predictiveInput: false,
-                bestCount: reading.count >= 16 ? 48 : 20)
+            options: baselineOptions
         )
         let baselineLeadingTexts = baseline.mainResults.prefix(2).map(\.text)
         let keepShortReading = reading.count <= 2 && baselineLeadingTexts.contains(reading) &&
@@ -295,6 +298,29 @@ public final class AzooKeyConversionEngine {
         predictionTexts = []
         baselineTexts = []
         resetCompletionHistory()
+    }
+
+    public func resetCandidateLearning(reading: String, text: String) {
+        guard !reading.isEmpty, !text.isEmpty else { return }
+        // Explicit deletion also works while automatic learning is paused.
+        if var options = lastRequestOptions {
+            options.learningType = .inputAndOutput
+            options.maxMemoryCount = 65_536
+            var input = ComposingText()
+            input.insertAtCursorPosition(reading, inputStyle: .direct)
+            _ = converter.requestCandidates(input, options: options)
+        }
+        // Use a single vocabulary entry: forgetting a sentence's original
+        // Candidate.data would also forget the unrelated words inside it.
+        let entry = DicdataElement(
+            word: text, ruby: Self.toKatakana(reading),
+            lcid: 1285, rcid: 1285, mid: 501, value: -10
+        )
+        converter.forgetMemory(Candidate(
+            text: text, value: -10, composingCount: .surfaceCount(reading.count),
+            lastMid: 501, data: [entry]
+        ))
+        stopComposition()
     }
 
     private static func toKatakana(_ value: String) -> String {

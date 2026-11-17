@@ -8,6 +8,37 @@ import 'package:keynako_desktop/input/desktop_input_controller.dart';
 import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
+  testWidgets(
+    'long press resets only the chosen candidate without committing',
+    (tester) async {
+      final controller = DesktopInputController();
+      addTearDown(controller.dispose);
+      controller.updateRawInput('ame');
+      controller.selectCandidate(
+        controller.candidates.indexWhere((value) => value.text == '飴'),
+      );
+      controller.commitSelected();
+      controller.replaceCommittedText('');
+      controller.updateRawInput('ame');
+      expect(controller.candidates.first.text, '飴');
+      await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+      await tester.longPress(find.byKey(const Key('candidate-0')));
+      await tester.pumpAndSettle();
+      expect(find.text('この単語の学習をリセット'), findsOneWidget);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(controller.candidates.first.text, '飴');
+      await tester.longPress(find.byKey(const Key('candidate-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('この単語の学習をリセット'));
+      await tester.pumpAndSettle();
+      expect(controller.candidates.first.text, '雨');
+      expect(controller.rawInput, 'ame');
+      expect(controller.committedText, isEmpty);
+      expect(find.text('「飴」の学習をリセットしたよ'), findsOneWidget);
+    },
+  );
+
   testWidgets('converts and commits Japanese input', (tester) async {
     final controller = DesktopInputController();
     await tester.pumpWidget(KeynakoDesktopApp(controller: controller));

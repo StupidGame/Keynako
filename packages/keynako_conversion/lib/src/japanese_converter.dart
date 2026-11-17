@@ -914,7 +914,14 @@ class JapaneseConverter {
     ];
     final baseTexts = baseCandidates.map((candidate) => candidate.text).toSet();
     final visiblePredictions = predictions
-        .where((candidate) => !baseTexts.contains(candidate.text))
+        .where(
+          (candidate) =>
+              !baseTexts.contains(candidate.text) &&
+              !CandidateLearning.isPredictionReset(
+                options.learning,
+                candidate.text,
+              ),
+        )
         .take(predictionLimit < 0 ? 0 : predictionLimit)
         .toList(growable: false);
     // Keep the leading complete conversion in charge of live input, while a
