@@ -779,6 +779,10 @@ class DesktopInputController extends ChangeNotifier {
       final existingIndex = _candidates.indexWhere(
         (candidate) => candidate.text == generated,
       );
+      if (existingIndex < 0 &&
+          CandidateLearning.isPredictionReset(_learning, generated)) {
+        return;
+      }
       // Short readings cannot ground a new model word. Combining kana marks
       // such as て゚ should not replace an ordinary reading either.
       if (existingIndex < 0 &&
