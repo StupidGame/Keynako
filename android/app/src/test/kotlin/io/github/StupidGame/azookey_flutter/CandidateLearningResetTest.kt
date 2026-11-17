@@ -31,8 +31,8 @@ class CandidateLearningResetTest {
         val state = JSONObject()
             .put("settings", JSONObject().put("enable_zenzai", false).put("live_conversion", false))
             .put("learning", JSONObject()
-                .put("かめんらいだー\t仮面ライダー", 32)
-                .put("context:4eca\tかめんらいだー\t仮面ライダー", 16)
+                .put("かめんらいだー\t学習リセット確認用の単語", 32)
+                .put("context:4eca\tかめんらいだー\t学習リセット確認用の単語", 16)
                 .put("ねこ\t猫", 8))
         service.getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .edit().clear().putString(MainActivity.STATE_KEY, state.toString()).commit()
@@ -54,19 +54,34 @@ class CandidateLearningResetTest {
         resetFrom("candidatePanelContent")
     }
 
+    @Test fun resettingADictionaryWordKeepsItsOrdinaryCandidate() {
+        val state = ReflectionHelpers.getField<JSONObject>(service, "state")
+        state.put("learning", JSONObject().put("にほんご\t日本語", 32).put("ねこ\t猫", 8))
+        ReflectionHelpers.setField(service, "composing", "にほんご")
+        renderCandidates()
+        val row = ReflectionHelpers.getField<ViewGroup>(service, "candidateRow")
+        assertTrue(labels(row).first { it.text == "日本語" }.performLongClick())
+        labels(keyboard).first { it.text == "この単語の学習をリセット" }.performClick()
+        assertFalse(state.getJSONObject("learning").has("にほんご\t日本語"))
+        assertEquals(8, state.getJSONObject("learning").getInt("ねこ\t猫"))
+        val candidates = ReflectionHelpers.getField<List<String>>(service, "candidates")
+        assertTrue("日本語" in candidates)
+        assertEquals("にほんご", ReflectionHelpers.getField<String>(service, "composing"))
+    }
+
     @Test fun returningFromTheMenuKeepsLearningAndComposition() {
         val row = ReflectionHelpers.getField<ViewGroup>(service, "candidateRow")
-        assertTrue(labels(row).first { it.text == "仮面ライダー" }.performLongClick())
+        assertTrue(labels(row).first { it.text == "学習リセット確認用の単語" }.performLongClick())
         assertTrue(labels(keyboard).any { it.text == "この単語の学習をリセット" })
         labels(keyboard).first { it.text == "戻る" }.performClick()
         val state = ReflectionHelpers.getField<JSONObject>(service, "state")
-        assertEquals(32, state.getJSONObject("learning").getInt("かめんらいだー\t仮面ライダー"))
+        assertEquals(32, state.getJSONObject("learning").getInt("かめんらいだー\t学習リセット確認用の単語"))
         assertEquals("かめ", ReflectionHelpers.getField<String>(service, "composing"))
     }
 
     private fun resetFrom(field: String) {
         val container = ReflectionHelpers.getField<ViewGroup>(service, field)
-        assertTrue(labels(container).first { it.text == "仮面ライダー" }.performLongClick())
+        assertTrue(labels(container).first { it.text == "学習リセット確認用の単語" }.performLongClick())
         labels(keyboard).first { it.text == "この単語の学習をリセット" }.performClick()
         val saved = service.getSharedPreferences(MainActivity.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .getString(MainActivity.STATE_KEY, "{}")!!
@@ -75,7 +90,7 @@ class CandidateLearningResetTest {
         assertEquals(8, learning.getInt("ねこ\t猫"))
         assertEquals("かめ", ReflectionHelpers.getField<String>(service, "composing"))
         val candidates = ReflectionHelpers.getField<List<String>>(service, "candidates")
-        assertFalse("仮面ライダー" in candidates)
+        assertFalse("学習リセット確認用の単語" in candidates)
     }
 
     private fun renderCandidates() {
