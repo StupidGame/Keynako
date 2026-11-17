@@ -55,7 +55,7 @@ Android/iOSは通常のFlutter画面だけではシステムIMEとして登録�
 
 ## 開発環境
 
-- Flutter stable（Dart 3.13以上）
+- Flutter 3.47.9 stable（Dart 3.13.7。Actionsも同じ版を使用）
 - JDK 17
 - Android SDK、NDK 28、CMake 3.22.1（Android）
 - macOS、Xcode、Apple Developerの署名設定（iOS）

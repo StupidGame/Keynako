@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+# Keep validation and every distributable on the same tested SDK.
+env:
+  FLUTTER_VERSION: "3.47.9"
+
 concurrency:
   group: app-files-${{ github.ref }}
   cancel-in-progress: true
@@ -43,6 +47,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install Flutter packages
@@ -82,6 +87,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install Flutter packages
@@ -143,6 +149,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install Flutter packages
@@ -215,6 +222,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Analyze and test the shared conversion module
@@ -246,6 +254,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Refresh the bundled Dictionary/data_v1.json snapshot
@@ -444,6 +453,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Refresh the bundled Dictionary/data_v1.json snapshot
@@ -517,6 +527,7 @@ jobs:
         uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Refresh the bundled Dictionary/data_v1.json snapshot
