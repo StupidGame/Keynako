@@ -16,28 +16,16 @@ class KeyboardSettingsPage extends StatelessWidget {
         .clamp(100, 1000)
         .toInt();
     final customOptions = _customLayoutOptions(controller.data);
-    final japaneseOptions = [
-      const _LayoutOption('flick', 'フリック入力', '標準配列'),
-      const _LayoutOption('qwerty', 'ローマ字入力', '標準配列'),
-      ...customOptions,
-    ];
-    final englishOptions = [
-      const _LayoutOption('flick', 'フリック入力', '標準配列'),
-      const _LayoutOption('qwerty', 'QWERTY入力', '標準配列'),
-      ...customOptions,
-    ];
-    final numberOptions = [
-      const _LayoutOption('tenkey', 'テンキー', '標準配列'),
-      const _LayoutOption('symbols', '数字・記号', '標準配列'),
-      ...customOptions,
-    ];
-    final phoneOptions = [
-      const _LayoutOption('phone', '電話テンキー', '標準配列'),
-      ...customOptions,
-    ];
-    final dateTimeOptions = [
-      const _LayoutOption('datetime', '日時テンキー', '標準配列'),
-      ...customOptions,
+    final layouts = [
+      for (final layout in _keyboardLayouts)
+        (
+          spec: layout,
+          options: [...layout.options, ...customOptions],
+          value: controller.setting(
+            layout.key,
+            defaultKeyboardLayoutSettings[layout.key]!,
+          ),
+        ),
     ];
 
     return Scaffold(
@@ -89,63 +77,20 @@ class KeyboardSettingsPage extends StatelessWidget {
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                _LayoutTile(
-                  key: const ValueKey('keyboard-layout-keyboard_type'),
-                  icon: Icons.translate,
-                  title: '日本語',
-                  subtitle: '通常の文章入力欄で使う配列',
-                  value: controller.setting('keyboard_type', 'flick'),
-                  options: japaneseOptions,
-                  onChanged: (value) =>
-                      controller.setSetting('keyboard_type', value),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _LayoutTile(
-                  key: const ValueKey('keyboard-layout-keyboard_type_en'),
-                  icon: Icons.abc,
-                  title: '英語',
-                  subtitle: '英語、メールアドレス、URLなどで使う配列',
-                  value: controller.setting('keyboard_type_en', 'flick'),
-                  options: englishOptions,
-                  onChanged: (value) =>
-                      controller.setSetting('keyboard_type_en', value),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _LayoutTile(
-                  key: const ValueKey('keyboard-layout-keyboard_type_number'),
-                  icon: Icons.pin_outlined,
-                  title: '数字',
-                  subtitle: '数値入力欄で使う配列',
-                  value: controller.setting('keyboard_type_number', 'tenkey'),
-                  options: numberOptions,
-                  onChanged: (value) =>
-                      controller.setSetting('keyboard_type_number', value),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _LayoutTile(
-                  key: const ValueKey('keyboard-layout-keyboard_type_phone'),
-                  icon: Icons.phone_outlined,
-                  title: '電話',
-                  subtitle: '電話番号入力欄で使う配列',
-                  value: controller.setting('keyboard_type_phone', 'phone'),
-                  options: phoneOptions,
-                  onChanged: (value) =>
-                      controller.setSetting('keyboard_type_phone', value),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _LayoutTile(
-                  key: const ValueKey('keyboard-layout-keyboard_type_datetime'),
-                  icon: Icons.calendar_month_outlined,
-                  title: '日時',
-                  subtitle: '日付・時刻入力欄で使う配列',
-                  value: controller.setting(
-                    'keyboard_type_datetime',
-                    'datetime',
+                for (final (index, layout) in layouts.indexed) ...[
+                  if (index > 0)
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                  _LayoutTile(
+                    key: ValueKey('keyboard-layout-${layout.spec.key}'),
+                    icon: layout.spec.icon,
+                    title: layout.spec.title,
+                    subtitle: layout.spec.description,
+                    value: layout.value,
+                    options: layout.options,
+                    onChanged: (value) =>
+                        controller.setSetting(layout.spec.key, value),
                   ),
-                  options: dateTimeOptions,
-                  onChanged: (value) =>
-                      controller.setSetting('keyboard_type_datetime', value),
-                ),
+                ],
               ],
             ),
           ),
@@ -161,50 +106,18 @@ class KeyboardSettingsPage extends StatelessWidget {
           Card(
             child: Column(
               children: [
-                _MappingTile(
-                  icon: Icons.notes,
-                  title: '通常の文章',
-                  destination: _selectedLabel(
-                    japaneseOptions,
-                    controller.setting('keyboard_type', 'flick'),
+                for (final (index, layout) in layouts.indexed) ...[
+                  if (index > 0)
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                  _MappingTile(
+                    icon: layout.spec.mappingIcon,
+                    title: layout.spec.inputFields,
+                    destination: _selectedLayout(
+                      layout.options,
+                      layout.value,
+                    ).label,
                   ),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _MappingTile(
-                  icon: Icons.alternate_email,
-                  title: '英語・メール・URL・パスワード',
-                  destination: _selectedLabel(
-                    englishOptions,
-                    controller.setting('keyboard_type_en', 'flick'),
-                  ),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _MappingTile(
-                  icon: Icons.pin,
-                  title: '整数・小数',
-                  destination: _selectedLabel(
-                    numberOptions,
-                    controller.setting('keyboard_type_number', 'tenkey'),
-                  ),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _MappingTile(
-                  icon: Icons.phone_outlined,
-                  title: '電話番号',
-                  destination: _selectedLabel(
-                    phoneOptions,
-                    controller.setting('keyboard_type_phone', 'phone'),
-                  ),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                _MappingTile(
-                  icon: Icons.calendar_month_outlined,
-                  title: '日付・時刻',
-                  destination: _selectedLabel(
-                    dateTimeOptions,
-                    controller.setting('keyboard_type_datetime', 'datetime'),
-                  ),
-                ),
+                ],
               ],
             ),
           ),
@@ -234,10 +147,7 @@ class _LayoutTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selected = options.firstWhere(
-      (option) => option.value == value,
-      orElse: () => options.first,
-    );
+    final selected = _selectedLayout(options, value);
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
@@ -306,6 +216,83 @@ class _LayoutTile extends StatelessWidget {
   }
 }
 
+class _KeyboardLayout {
+  const _KeyboardLayout({
+    required this.key,
+    required this.title,
+    required this.description,
+    required this.inputFields,
+    required this.icon,
+    required this.mappingIcon,
+    required this.options,
+  });
+
+  final String key;
+  final String title;
+  final String description;
+  final String inputFields;
+  final IconData icon;
+  final IconData mappingIcon;
+  final List<_LayoutOption> options;
+}
+
+const _keyboardLayouts = [
+  _KeyboardLayout(
+    key: 'keyboard_type',
+    title: '日本語',
+    description: '通常の文章入力欄で使う配列',
+    inputFields: '通常の文章',
+    icon: Icons.translate,
+    mappingIcon: Icons.notes,
+    options: [
+      _LayoutOption('flick', 'フリック入力', '標準配列'),
+      _LayoutOption('qwerty', 'ローマ字入力', '標準配列'),
+    ],
+  ),
+  _KeyboardLayout(
+    key: 'keyboard_type_en',
+    title: '英語',
+    description: '英語、メールアドレス、URLなどで使う配列',
+    inputFields: '英語・メール・URL・パスワード',
+    icon: Icons.abc,
+    mappingIcon: Icons.alternate_email,
+    options: [
+      _LayoutOption('flick', 'フリック入力', '標準配列'),
+      _LayoutOption('qwerty', 'QWERTY入力', '標準配列'),
+    ],
+  ),
+  _KeyboardLayout(
+    key: 'keyboard_type_number',
+    title: '数字',
+    description: '数値入力欄で使う配列',
+    inputFields: '整数・小数',
+    icon: Icons.pin_outlined,
+    mappingIcon: Icons.pin,
+    options: [
+      _LayoutOption('tenkey', 'テンキー', '標準配列'),
+      _LayoutOption('symbols', '数字・記号', '標準配列'),
+    ],
+  ),
+  _KeyboardLayout(
+    key: 'keyboard_type_phone',
+    title: '電話',
+    description: '電話番号入力欄で使う配列',
+    inputFields: '電話番号',
+    icon: Icons.phone_outlined,
+    mappingIcon: Icons.phone_outlined,
+    options: [_LayoutOption('phone', '電話テンキー', '標準配列')],
+  ),
+  _KeyboardLayout(
+    key: 'keyboard_type_datetime',
+    title: '日時',
+    description: '日付・時刻入力欄で使う配列',
+    inputFields: '日付・時刻',
+    icon: Icons.calendar_month_outlined,
+    mappingIcon: Icons.calendar_month_outlined,
+    options: [_LayoutOption('datetime', '日時テンキー', '標準配列')],
+  ),
+];
+
 class _LayoutOption {
   const _LayoutOption(this.value, this.label, this.group, [this.detail]);
 
@@ -332,9 +319,11 @@ List<_LayoutOption> _customLayoutOptions(AppData data) => [
     ),
 ];
 
-String _selectedLabel(List<_LayoutOption> options, String value) => options
-    .firstWhere((option) => option.value == value, orElse: () => options.first)
-    .label;
+_LayoutOption _selectedLayout(List<_LayoutOption> options, String value) =>
+    options.firstWhere(
+      (option) => option.value == value,
+      orElse: () => options.first,
+    );
 
 List<Widget> _layoutChoices(
   BuildContext context,
@@ -382,13 +371,21 @@ class _MappingTile extends StatelessWidget {
   Widget build(BuildContext context) => ListTile(
     leading: Icon(icon),
     title: Text(title),
-    trailing: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Icon(Icons.arrow_forward, size: 18),
-        const SizedBox(width: 8),
-        Text(destination),
-      ],
+    trailing: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 132),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.arrow_forward, size: 18),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Tooltip(
+              message: destination,
+              child: Text(destination, overflow: TextOverflow.ellipsis),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }

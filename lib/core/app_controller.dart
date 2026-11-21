@@ -43,7 +43,11 @@ class AppController extends ChangeNotifier {
   Timer? _saveTimer;
   Future<void> _saveQueue = Future<void>.value();
   Future<bool>? _azooKeyHotfixSyncTask;
-  bool _dictionaryEdited = false;
+  int _dictionaryRevision = 0;
+  int _savedDictionaryRevision = 0;
+  int _learningResetRevision = 0;
+  int _savedLearningResetRevision = 0;
+  bool _disposed = false;
 
   Future<void> initialize() async {
     try {
@@ -61,9 +65,9 @@ class AppController extends ChangeNotifier {
         );
       }
       initialized = true;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
-    if (_azooKeyHotfixSynchronizer != null) {
+    if (!_disposed && _azooKeyHotfixSynchronizer != null) {
       unawaited(_runAutomaticAzooKeyHotfixSync());
     }
   }
@@ -89,7 +93,8 @@ class AppController extends ChangeNotifier {
 
   Future<bool> _performAzooKeyHotfixSync({required bool force}) async {
     final synchronizer = _azooKeyHotfixSynchronizer;
-    if (synchronizer == null ||
+    if (_disposed ||
+        synchronizer == null ||
         (!force &&
             !isAzooKeyHotfixCheckDue(
               data.azooKeyHotfixLastCheckDate,
@@ -105,6 +110,7 @@ class AppController extends ChangeNotifier {
       final result = await synchronizer.checkAndUpdate(
         cachedTag: data.azooKeyHotfixLatestTag,
       );
+      if (_disposed) return false;
       if (result.dictionaryChanged) {
         data.azooKeyHotfixDictionary = result.dictionary;
         data.azooKeyHotfixLatestTag = result.latestTag;
@@ -118,7 +124,7 @@ class AppController extends ChangeNotifier {
       rethrow;
     } finally {
       azooKeyHotfixSyncing = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -138,7 +144,7 @@ class AppController extends ChangeNotifier {
   }
 
   void addOrUpdateDictionaryEntry(UserDictionaryEntry entry) {
-    _dictionaryEdited = true;
+    _dictionaryRevision++;
     final index = data.userDictionary.indexWhere((item) => item.id == entry.id);
     if (index < 0) {
       data.userDictionary.add(entry);
@@ -154,7 +160,7 @@ class AppController extends ChangeNotifier {
   }
 
   void removeDictionaryEntry(int id) {
-    _dictionaryEdited = true;
+    _dictionaryRevision++;
     data.userDictionary.removeWhere((item) => item.id == id);
     _changed();
   }
@@ -318,6 +324,7 @@ class AppController extends ChangeNotifier {
   }
 
   void resetLearning() {
+    _learningResetRevision++;
     data.learning.clear();
     data.settings['memory_reset_setting'] =
         'need${DateTime.now().microsecondsSinceEpoch}';
@@ -344,7 +351,10 @@ class AppController extends ChangeNotifier {
       );
       added += 1;
     }
-    if (added > 0) _changed(immediate: true);
+    if (added > 0) {
+      _dictionaryRevision++;
+      _changed(immediate: true);
+    }
     return added;
   }
 
@@ -362,15 +372,19 @@ class AppController extends ChangeNotifier {
       throw const FormatException('対応するバックアップJSONではありません。');
     }
     final restored = AppData.decode(value);
+    restored.settings.remove('memory_reset_setting');
     final themeImages = decoded['themeImages'];
     final stagedImages = <String>[];
-    final importId = 'import_${DateTime.now().microsecondsSinceEpoch}_'
+    final importId =
+        'import_${DateTime.now().microsecondsSinceEpoch}_'
         '${Random.secure().nextInt(0x100000000)}';
     try {
       for (var index = 0; index < restored.themes.length; index++) {
         // File paths in a backup are untrusted and are not portable. Only
         // embedded images, saved through the native image store, may be restored.
-        final theme = restored.themes[index].copyWith(clearBackgroundImage: true);
+        final theme = restored.themes[index].copyWith(
+          clearBackgroundImage: true,
+        );
         restored.themes[index] = theme;
         final encoded = themeImages is Map ? themeImages[theme.id] : null;
         if (encoded is! String) continue;
@@ -396,54 +410,32 @@ class AppController extends ChangeNotifier {
           backgroundImageRevision: DateTime.now().microsecondsSinceEpoch,
         );
       }
+      await _saveSnapshot(restored, replacing: true);
     } catch (_) {
       for (final path in stagedImages) {
         await platform.deleteKeyboardBackgroundImage(path);
       }
       rethrow;
     }
-    data = restored;
-    _dictionaryEdited = false;
-    notifyListeners();
-    await flush();
+    if (!_disposed) notifyListeners();
   }
 
   Future<String> exportJson() async {
-    _saveTimer?.cancel();
-    _saveTimer = null;
-    await _saveQueue;
-    final stored = await _storage.load();
-    if (stored != null && stored.isNotEmpty) {
-      final latest = AppData.decode(stored);
-      if (data.settings['memory_reset_setting'] == null) {
-        for (final entry in latest.learning.entries) {
-          if (entry.value > (data.learning[entry.key] ?? 0)) {
-            data.learning[entry.key] = entry.value;
-          }
-        }
-      }
-      if (!_dictionaryEdited) {
-        data.userDictionary
-          ..clear()
-          ..addAll(latest.userDictionary);
-      }
-    }
-    await flush();
-    final backup = data.toJson();
+    final backup = await _saveCurrentState();
+    (backup['settings'] as Map).remove('memory_reset_setting');
+    backup.remove('reportedWrongConversionPairs');
     final images = <String, String>{};
     final themes = (backup['themes'] as List).cast<Map<String, dynamic>>();
-    for (var index = 0; index < data.themes.length; index++) {
-      final theme = data.themes[index];
-      final path = theme.backgroundImage;
+    for (final theme in themes) {
+      final path = theme.remove('backgroundImage') as String?;
       if (path == null) continue;
       final bytes = await platform.readKeyboardBackgroundImage(path);
       if (bytes != null) {
         if (bytes.length > 8 * 1024 * 1024) {
           throw const FormatException('テーマ画像が大きすぎます。');
         }
-        images[theme.id] = base64Encode(bytes);
+        images[theme['id'] as String] = base64Encode(bytes);
       }
-      themes[index].remove('backgroundImage');
     }
     if (images.isNotEmpty) backup['themeImages'] = images;
     final exported = jsonEncode(backup);
@@ -476,19 +468,101 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> flush() async {
+    await _saveCurrentState();
+  }
+
+  Future<Map<String, dynamic>> _saveCurrentState() {
     _saveTimer?.cancel();
     _saveTimer = null;
-    final snapshot = data.encode();
-    final save = _saveQueue.then((_) => _storage.save(snapshot));
+    return _saveSnapshot(data);
+  }
+
+  Future<Map<String, dynamic>> _saveSnapshot(
+    AppData source, {
+    bool replacing = false,
+  }) {
+    final encoded = source.encode();
+    final dictionaryRevision = _dictionaryRevision;
+    final resetRevision = _learningResetRevision;
+    final save = _saveQueue.then((_) async {
+      final sameState = identical(data, source);
+      final snapshot = jsonDecode(
+        replacing || sameState ? encoded : data.encode(),
+      ) as Map<String, dynamic>;
+      if (!replacing) {
+        final stored = await _storage.load();
+        final latest = _readStoredState(stored);
+        if (latest != null) {
+          _mergeKeyboardData(
+            snapshot,
+            latest,
+            preserveDictionary: dictionaryRevision <= _savedDictionaryRevision,
+            preserveLearning: resetRevision <= _savedLearningResetRevision,
+          );
+        }
+      }
+      await _storage.save(jsonEncode(snapshot));
+      if (replacing) {
+        data = source;
+        // The restore replaces any dictionary edits or reset requests from the
+        // previous state, including ones queued while the write was pending.
+        _savedDictionaryRevision = _dictionaryRevision;
+        _savedLearningResetRevision = _learningResetRevision;
+      } else {
+        if (dictionaryRevision > _savedDictionaryRevision) {
+          _savedDictionaryRevision = dictionaryRevision;
+        }
+        if (resetRevision > _savedLearningResetRevision) {
+          _savedLearningResetRevision = resetRevision;
+        }
+      }
+      return snapshot;
+    });
     _saveQueue = save.then<void>((_) {}, onError: (Object _, StackTrace _) {});
-    await save;
+    return save;
   }
 
   @override
   void dispose() {
+    _disposed = true;
     if (_saveTimer != null) unawaited(_saveAutomatically());
     _saveTimer?.cancel();
     super.dispose();
+  }
+}
+
+Map<String, dynamic>? _readStoredState(String? value) {
+  if (value == null || value.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(value);
+    return decoded is Map<String, dynamic> ? decoded : null;
+  } on FormatException {
+    return null;
+  }
+}
+
+void _mergeKeyboardData(
+  Map<String, dynamic> snapshot,
+  Map<String, dynamic> latest, {
+  required bool preserveDictionary,
+  required bool preserveLearning,
+}) {
+  if (preserveDictionary && latest['userDictionary'] is List) {
+    snapshot['userDictionary'] = latest['userDictionary'];
+  }
+  if (preserveLearning) {
+    if (latest['learning'] is Map) snapshot['learning'] = latest['learning'];
+    final settings = snapshot['settings'] as Map;
+    final latestSettings = latest['settings'];
+    if (latestSettings is Map &&
+        latestSettings.containsKey('memory_reset_setting')) {
+      settings['memory_reset_setting'] = latestSettings['memory_reset_setting'];
+    } else {
+      settings.remove('memory_reset_setting');
+    }
+  }
+  for (final key in ['clipboardHistory', 'reportedWrongConversionPairs']) {
+    if (latest[key] is List) snapshot[key] = latest[key];
   }
 }
 

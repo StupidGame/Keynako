@@ -7,6 +7,66 @@ import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
   test(
+    'dictionary refresh preserves the selected word and clears a missing one',
+    () async {
+      const first = ConversionDictionaryEntry(reading: 'あめ', value: '選んだ語');
+      const other = ConversionDictionaryEntry(
+        reading: 'あめ',
+        value: '新しい語',
+        importance: 5,
+      );
+      final repository = _FakeSharedDictionaryRepository();
+      final controller = DesktopInputController(
+        sharedDictionaryRepository: repository,
+      );
+      addTearDown(controller.dispose);
+      Future<void> refresh(List<ConversionDictionaryEntry> entries) async {
+        repository.snapshot = SharedDictionarySnapshot(
+          revision: '${repository.refreshCount}',
+          version: '1.1',
+          lastUpdate: '',
+          entries: entries,
+        );
+        await controller.importSharedDictionary();
+      }
+
+      await refresh([first]);
+      controller.updateRawInput('ame');
+      controller.selectCandidate(
+        controller.candidates.indexWhere(
+          (candidate) => candidate.text == first.value,
+        ),
+      );
+      final oldIndex = controller.selectedIndex;
+      await refresh([other, first]);
+      expect(controller.selectedIndex, isNot(oldIndex));
+      expect(controller.converting, isTrue);
+      expect(controller.displayedComposition, first.value);
+      await refresh([other]);
+      expect(controller.converting, isFalse);
+      expect(controller.displayedComposition, isNot(first.value));
+      expect(controller.rawInput, 'ame');
+    },
+  );
+
+  test(
+    'enabling Zenzai during English input does not request Japanese conversion',
+    () async {
+      final engine = _FakeZenzaiEngine();
+      final controller = DesktopInputController(
+        zenzaiEngineFactory: (_) async => engine,
+      );
+      addTearDown(controller.dispose);
+      controller.setMode(InputMode.english);
+      controller.updateRawInput('hello');
+      await controller.setZenzaiModel(ZenzaiModel.xsmall);
+      expect(controller.zenzaiWorking, isFalse);
+      expect(engine.lastRequest, isNull);
+      expect(controller.displayedComposition, 'hello');
+    },
+  );
+
+  test(
     'a model response does not restore a reset Kintetsu prediction',
     () async {
       final engine = _FakeZenzaiEngine()..result = '近鉄四日市駅から';

@@ -49,20 +49,16 @@ class PlatformService implements StateStorage {
       return await _channel.invokeMethod<String>('loadState');
     } on MissingPluginException {
       return _fallbackState;
-    } on PlatformException {
-      return _fallbackState;
     }
   }
 
   @override
   Future<void> save(String state) async {
-    _fallbackState = state;
     try {
       await _channel.invokeMethod<void>('saveState', {'state': state});
     } on MissingPluginException {
       // The in-memory fallback keeps widget tests and unsupported platforms usable.
-    } on PlatformException {
-      // Keep the app editable even if the platform store is temporarily unavailable.
+      _fallbackState = state;
     }
   }
 

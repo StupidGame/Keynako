@@ -9,6 +9,98 @@ import 'package:keynako_desktop/input/desktop_personal_dictionary.dart';
 import 'package:keynako_desktop/input/portable_profile.dart';
 
 void main() {
+  test(
+    'a failed setting write does not prevent the next setting save',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'keynako-settings-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final repository = _FailingSettingsRepository(
+        File('${directory.path}/profile.json'),
+      );
+      final controller = DesktopInputController(profileRepository: repository);
+      addTearDown(controller.dispose);
+      controller.setLiveConversionEnabled(false);
+      await expectLater(controller.exportPortableProfile(), throwsStateError);
+      controller.setLiveConversionEnabled(true);
+      await controller.exportPortableProfile();
+      expect((await repository.loadImeSettings())['live_conversion'], isTrue);
+      expect(repository.attempts, 2);
+    },
+  );
+
+  test(
+    'checks backup file size before decoding and accepts a small UTF-8 file',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'keynako-profile-size-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/profile.json');
+      await file.writeAsString('日本語');
+      expect(await PortableProfile.readFile(file), '日本語');
+      final handle = await file.open(mode: FileMode.append);
+      try {
+        await handle.truncate(PortableProfile.maxBytes + 1);
+      } finally {
+        await handle.close();
+      }
+      await expectLater(PortableProfile.readFile(file), throwsFormatException);
+    },
+  );
+
+  test(
+    'a late restore failure rolls back the desktop files already written',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'keynako-profile-undo-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final dictionary = DesktopPersonalDictionaryRepository(
+        file: File('${directory.path}/dictionary.tsv'),
+      );
+      final learning = DesktopLearningRepository(
+        file: File('${directory.path}/learning.tsv'),
+      );
+      final profile = _FailingProfileRepository(
+        File('${directory.path}/profile.json'),
+      );
+      await dictionary.save(const [
+        ConversionDictionaryEntry(reading: 'ねこ', value: '猫'),
+      ]);
+      await learning.save({'ねこ\t猫': 4});
+      await profile.saveImeSettings({
+        'live_conversion': false,
+        'automatic_completion_strength': 2,
+      });
+      final controller = DesktopInputController(
+        personalDictionaryRepository: dictionary,
+        learningRepository: learning,
+        profileRepository: profile,
+      );
+      addTearDown(controller.dispose);
+
+      await expectLater(
+        controller.importPortableProfile(
+          PortableProfile.empty().export(
+            dictionary: const [],
+            learning: const {},
+            liveConversion: true,
+            zenzaiEnabled: false,
+          ),
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect((await dictionary.load()).single.value, '猫');
+      expect(await learning.load(), {'ねこ\t猫': 4});
+      expect(await profile.loadImeSettings(), {
+        'live_conversion': false,
+        'automatic_completion_strength': 2,
+      });
+    },
+  );
+
   test('desktop round trip keeps mobile-only dictionary metadata', () {
     final profile = PortableProfile.decode(
       jsonEncode({
@@ -150,4 +242,24 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+}
+
+class _FailingSettingsRepository extends DesktopPortableProfileRepository {
+  _FailingSettingsRepository(File file) : super(file: file);
+
+  int attempts = 0;
+
+  @override
+  Future<void> saveImeSettings(Map<String, dynamic> settings) async {
+    if (++attempts == 1) throw FileSystemException('write failed');
+    await super.saveImeSettings(settings);
+  }
+}
+
+class _FailingProfileRepository extends DesktopPortableProfileRepository {
+  _FailingProfileRepository(File file) : super(file: file);
+
+  @override
+  Future<void> save(String source) async =>
+      throw FileSystemException('write failed');
 }

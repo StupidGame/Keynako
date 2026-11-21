@@ -14,10 +14,22 @@ class PersonalDictionaryPage extends StatefulWidget {
 
 class _PersonalDictionaryPageState extends State<PersonalDictionaryPage> {
   bool _saving = false;
+  final _searchController = TextEditingController();
+  var _search = DictionarySearch('');
 
-  Future<void> _edit({int? index}) async {
+  void _updateSearch(String query) =>
+      setState(() => _search = DictionarySearch(query));
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _edit({ConversionDictionaryEntry? existing}) async {
     final current = widget.controller.personalDictionary;
-    final existing = index == null ? null : current[index];
+    final index = existing == null ? null : current.indexOf(existing);
+    if (index == -1) return;
     final result = await showDialog<ConversionDictionaryEntry>(
       context: context,
       builder: (_) => _DictionaryEditDialog(
@@ -29,10 +41,12 @@ class _PersonalDictionaryPageState extends State<PersonalDictionaryPage> {
     );
     if (result == null || !mounted) return;
     final updated = [...widget.controller.personalDictionary];
-    if (index == null) {
+    if (existing == null) {
       updated.add(result);
     } else {
-      updated[index] = result;
+      final currentIndex = updated.indexOf(existing);
+      if (currentIndex < 0) return;
+      updated[currentIndex] = result;
     }
     await _save(updated);
   }
@@ -51,14 +65,12 @@ class _PersonalDictionaryPageState extends State<PersonalDictionaryPage> {
     }
   }
 
-  Future<void> _delete(int index) async {
+  Future<void> _delete(ConversionDictionaryEntry entry) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('単語を削除'),
-        content: Text(
-          '「${widget.controller.personalDictionary[index].value}」を削除する？',
-        ),
+        content: Text('「${entry.value}」を削除する？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -72,13 +84,24 @@ class _PersonalDictionaryPageState extends State<PersonalDictionaryPage> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final updated = [...widget.controller.personalDictionary]..removeAt(index);
+    final updated = [...widget.controller.personalDictionary];
+    if (!updated.remove(entry)) return;
     await _save(updated);
   }
 
   @override
   Widget build(BuildContext context) {
     final entries = widget.controller.personalDictionary;
+    final visible = entries
+        .asMap()
+        .entries
+        .where(
+          (item) => _search.matches(
+            reading: item.value.reading,
+            word: item.value.value,
+          ),
+        )
+        .toList();
     return Scaffold(
       appBar: AppBar(title: const Text('個人辞書')),
       floatingActionButton: FloatingActionButton.extended(
@@ -89,25 +112,64 @@ class _PersonalDictionaryPageState extends State<PersonalDictionaryPage> {
       ),
       body: widget.controller.personalDictionaryLoadFailed
           ? const Center(child: Text('保存済みの個人辞書を読み込めなかった。ファイルを確認してね'))
-          : entries.isEmpty
-          ? const Center(child: Text('登録した単語はまだないよ'))
-          : ListView.builder(
-              padding: const EdgeInsets.all(20),
-              itemCount: entries.length,
-              itemBuilder: (context, index) {
-                final entry = entries[index];
-                return ListTile(
-                  key: Key('dictionary-entry-$index'),
-                  title: Text(entry.value),
-                  subtitle: Text('${entry.reading} · 重要度 ${entry.importance}'),
-                  onTap: _saving ? null : () => _edit(index: index),
-                  trailing: IconButton(
-                    tooltip: '削除',
-                    onPressed: _saving ? null : () => _delete(index),
-                    icon: const Icon(Icons.delete_outline),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: SearchBar(
+                    controller: _searchController,
+                    leading: const Icon(Icons.search),
+                    hintText: '読み・単語・ローマ字で検索',
+                    onChanged: _updateSearch,
+                    trailing: [
+                      if (!_search.isEmpty)
+                        IconButton(
+                          tooltip: '検索をクリア',
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            _updateSearch('');
+                          },
+                        ),
+                    ],
                   ),
-                );
-              },
+                ),
+                Expanded(
+                  child: visible.isEmpty
+                      ? Center(
+                          child: Text(
+                            entries.isEmpty
+                                ? '登録した単語はまだないよ'
+                                : '一致する単語が見つからなかったよ',
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 88),
+                          itemCount: visible.length,
+                          itemBuilder: (context, position) {
+                            final MapEntry(key: index, value: entry) =
+                                visible[position];
+                            return ListTile(
+                              key: Key('dictionary-entry-$index'),
+                              title: Text(entry.value),
+                              subtitle: Text(
+                                '${entry.reading} · 重要度 ${entry.importance}',
+                              ),
+                              onTap: _saving
+                                  ? null
+                                  : () => _edit(existing: entry),
+                              trailing: IconButton(
+                                tooltip: '削除',
+                                onPressed: _saving
+                                    ? null
+                                    : () => _delete(entry),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
     );
   }

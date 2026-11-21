@@ -20,6 +20,35 @@ class MemoryStorage implements StateStorage {
 }
 
 void main() {
+  testWidgets('user dictionary search matches kana and clears the query', (
+    tester,
+  ) async {
+    final controller = AppController(storage: MemoryStorage());
+    await controller.initialize();
+    controller.data.userDictionary.add(
+      const UserDictionaryEntry(id: 10, ruby: 'とうきょう', word: '東京'),
+    );
+    await tester.pumpWidget(
+      AppControllerScope(
+        controller: controller,
+        child: const MaterialApp(home: UserDictionaryPage()),
+      ),
+    );
+    await tester.enterText(find.byType(SearchBar), ' トウキョウ ');
+    await tester.pumpAndSettle();
+    expect(find.text('東京'), findsOneWidget);
+    expect(find.text('Keynako'), findsNothing);
+    await tester.enterText(find.byType(SearchBar), 'no-match');
+    await tester.pumpAndSettle();
+    expect(find.text('一致する単語が見つからなかったよ'), findsOneWidget);
+    await tester.tap(find.byTooltip('検索をクリア'));
+    await tester.pumpAndSettle();
+    expect(find.text('東京'), findsOneWidget);
+    expect(find.text('Keynako'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   testWidgets('deletes a dictionary word and keeps the last deletion saved', (
     tester,
   ) async {

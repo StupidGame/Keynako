@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../input/desktop_input_controller.dart';
+import '../../input/portable_profile.dart';
 
 class PortableProfilePage extends StatefulWidget {
   const PortableProfilePage({required this.controller, super.key});
@@ -58,11 +59,11 @@ class _PortableProfilePageState extends State<PortableProfilePage> {
   }
 
   Future<void> _export({required bool toFile}) => _run(() async {
+    final path = _path.text.trim();
+    if (toFile && path.isEmpty) throw const FormatException('保存先を入力してね');
     final source = await widget.controller.exportPortableProfile();
-    _json.text = source;
+    if (mounted) _json.text = source;
     if (toFile) {
-      final path = _path.text.trim();
-      if (path.isEmpty) throw const FormatException('保存先を入力してね');
       final file = File(path);
       await file.parent.create(recursive: true);
       await file.writeAsString(source, flush: true);
@@ -74,7 +75,7 @@ class _PortableProfilePageState extends State<PortableProfilePage> {
 
   Future<void> _import({required bool fromFile}) => _run(() async {
     final source = fromFile
-        ? await File(_path.text.trim()).readAsString()
+        ? await PortableProfile.readFile(File(_path.text.trim()))
         : _json.text.trim();
     await widget.controller.importPortableProfile(source);
     return '設定・個人辞書・学習履歴を読み込んだよ';
