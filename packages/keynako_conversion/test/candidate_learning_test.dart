@@ -2,6 +2,185 @@ import 'package:keynako_conversion/keynako_conversion.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'reset preferences survive context pruning and never become learned words',
+    () {
+      final learning = <String, int>{};
+      CandidateLearning.reset(learning, reading: 'きんてつ', text: '近鉄四日市駅から');
+      for (var i = 0; i < 520; i++) {
+        learning['context:${i.toRadixString(16)}\tねこ\t猫'] = 1;
+      }
+      CandidateLearning.recordContext(
+        learning,
+        leftContext: '今日は',
+        reading: 'ねこ',
+        text: '猫',
+      );
+      expect(CandidateLearning.isPredictionReset(learning, '近鉄四日市駅から'), isTrue);
+      expect(CandidateLearning.entries(learning), isEmpty);
+    },
+  );
+
+  test(
+    'Kintetsu phrase stays out of predictions across readings and dictionaries',
+    () {
+      const word = '近鉄四日市駅から';
+      const ruby = 'きんてつよっかいちえきから';
+      final learning = {
+        '$ruby\t$word': 32,
+        'きんてつ\t$word': 8,
+        'context:4eca\tきんてつよっかいち\t$word': 16,
+        'きんてつ\t近鉄': 4,
+      };
+      const dictionary = [
+        ConversionDictionaryEntry(reading: ruby, value: word),
+      ];
+      const converter = JapaneseConverter();
+      CandidateLearning.reset(learning, reading: ruby, text: word);
+      expect(CandidateLearning.entries(learning).map((entry) => entry.text), [
+        '近鉄',
+      ]);
+      for (final enabled in [true, false]) {
+        final options = ConversionOptions(
+          learning: learning,
+          userDictionary: dictionary,
+          learningEnabled: enabled,
+        );
+        expect(
+          converter
+              .candidates(input: 'きんてつ', options: options)
+              .map((entry) => entry.text),
+          isNot(contains(word)),
+        );
+        expect(
+          converter
+              .candidates(input: ruby, options: options)
+              .map((entry) => entry.text),
+          contains(word),
+        );
+      }
+      CandidateLearning.record(
+        learning,
+        reading: ruby,
+        text: word,
+        explicitSelection: true,
+      );
+      expect(CandidateLearning.isPredictionReset(learning, word), isFalse);
+      expect(
+        converter
+            .candidates(
+              input: 'きんてつ',
+              options: ConversionOptions(
+                learning: learning,
+                userDictionary: dictionary,
+              ),
+            )
+            .map((entry) => entry.text),
+        contains(word),
+      );
+    },
+  );
+
+  test(
+    'reset hides built-in English predictions until deliberately relearned',
+    () {
+      final learning = <String, int>{};
+      CandidateLearning.reset(
+        learning,
+        reading: 'hel',
+        text: 'hello',
+        english: true,
+      );
+      const converter = EnglishConverter();
+      expect(
+        converter
+            .candidates(
+              input: 'hel',
+              options: ConversionOptions(learning: learning),
+            )
+            .map((entry) => entry.text),
+        isNot(contains('hello')),
+      );
+      expect(
+        converter
+            .candidates(
+              input: 'hello',
+              options: ConversionOptions(learning: learning),
+            )
+            .map((entry) => entry.text),
+        contains('hello'),
+      );
+      CandidateLearning.record(
+        learning,
+        reading: 'hello',
+        text: 'Hello',
+        english: true,
+        explicitSelection: true,
+      );
+      expect(
+        CandidateLearning.isPredictionReset(learning, 'hello', english: true),
+        isFalse,
+      );
+    },
+  );
+
+  test('reset removes only the selected spelling and every context', () {
+    final learning = {
+      'かめんらいだー\t仮面ライダー': 32,
+      'カメンライダー\t仮面ライダー': 0,
+      'かめんらいだー\t別表記': 8,
+      'べつ\t仮面ライダー': 4,
+      'english:rider\t仮面ライダー': 6,
+      'context:4eca.65e5\tかめんらいだー\t仮面ライダー': 16,
+      'context:%E4%BB%8A\tカメンライダー\t仮面ライダー': 0,
+      'context:4eca.65e5\tかめんらいだー\t別表記': 12,
+    };
+    expect(
+      CandidateLearning.reset(learning, reading: 'かめんらいだー', text: '仮面ライダー'),
+      isTrue,
+    );
+    expect(learning, {
+      'かめんらいだー\t別表記': 8,
+      'english:rider\t仮面ライダー': 6,
+      'context:4eca.65e5\tかめんらいだー\t別表記': 12,
+      'context:prediction-reset:ja\t仮面ライダー': 1,
+    });
+    expect(
+      CandidateLearning.reset(learning, reading: 'かめんらいだー', text: '仮面ライダー'),
+      isFalse,
+    );
+  });
+
+  test('reset forgets legacy and namespaced English case variants', () {
+    final learning = {
+      'Hel\tHello': 4,
+      'english:h\tHello': 7,
+      'english:hello\thello': 8,
+      'english:HEL\tHELLO': 32,
+      'english:hel\thelium': 8,
+      'はろー\tHello': 6,
+    };
+    CandidateLearning.reset(
+      learning,
+      reading: 'hel',
+      text: 'hello',
+      english: true,
+    );
+    expect(learning, {
+      'english:hel\thelium': 8,
+      'はろー\tHello': 6,
+      'context:prediction-reset:en\thello': 1,
+    });
+    expect(
+      CandidateLearning.reset(learning, reading: '', text: 'Hello'),
+      isFalse,
+    );
+    expect(
+      CandidateLearning.reset(learning, reading: 'hel\t', text: 'Hello'),
+      isFalse,
+    );
+  });
+
   test('automatic acceptance stays below a deliberate correction', () {
     final learning = <String, int>{};
     for (var i = 0; i < 20; i++) {

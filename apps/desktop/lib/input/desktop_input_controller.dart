@@ -353,7 +353,10 @@ class DesktopInputController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _queueLearningSave(Map<String, int> before) {
+  void _queueLearningSave(
+    Map<String, int> before, {
+    void Function(Map<String, int>)? update,
+  }) {
     final repository = _learningRepository;
     if (repository == null || _learningLoadFailed) return;
     final snapshot = Map<String, int>.of(_learning);
@@ -372,6 +375,7 @@ class DesktopInputController extends ChangeNotifier {
             latest.remove(key);
           }
           latest.addAll(changed);
+          update?.call(latest);
           await repository.save(latest);
           if (revision == _learningRevision && !_disposed) {
             _learning
@@ -484,6 +488,36 @@ class DesktopInputController extends ChangeNotifier {
     _selectedIndex = index;
     _converting = true;
     notifyListeners();
+  }
+
+  Future<bool> resetCandidateLearning(ConversionCandidate candidate) async {
+    if (_learningLoadFailed) return false;
+    final english = _mode == InputMode.english;
+    final before = Map<String, int>.of(_learning);
+    CandidateLearning.reset(
+      _learning,
+      reading: candidate.reading,
+      text: candidate.text,
+      english: english,
+    );
+    _queueLearningSave(
+      before,
+      update: (latest) {
+        CandidateLearning.reset(
+          latest,
+          reading: candidate.reading,
+          text: candidate.text,
+          english: english,
+        );
+      },
+    );
+    _converting = false;
+    _selectedIndex = 0;
+    _rebuildBaseCandidates();
+    _scheduleZenzai();
+    notifyListeners();
+    await flushLearning();
+    return !_learningSaveFailed;
   }
 
   Future<bool> shareCandidate(int index) async {
@@ -745,6 +779,10 @@ class DesktopInputController extends ChangeNotifier {
       final existingIndex = _candidates.indexWhere(
         (candidate) => candidate.text == generated,
       );
+      if (existingIndex < 0 &&
+          CandidateLearning.isPredictionReset(_learning, generated)) {
+        return;
+      }
       // Short readings cannot ground a new model word. Combining kana marks
       // such as て゚ should not replace an ordinary reading either.
       if (existingIndex < 0 &&

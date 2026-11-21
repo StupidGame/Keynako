@@ -74,6 +74,30 @@ int main() {
         for (const char value : std::string("ai")) contextual.append_ascii(value);
         assert(contextual.candidates().front().text == "藍");
     }
+    {
+        std::ofstream reset(storage / "learning.tsv", std::ios::trunc);
+        reset << "context:prediction-reset:ja\t近鉄四日市駅から\t1\n";
+    }
+    {
+        ImeSession reset;
+        reset.configure_storage(storage);
+        reset.set_user_dictionary({{"きんてつよっかいちえきから", "近鉄四日市駅から", 3}});
+        for (const char value : std::string("kintetsu")) reset.append_ascii(value);
+        assert(std::none_of(reset.candidates().begin(), reset.candidates().end(),
+            [](const auto &candidate) { return candidate.text == "近鉄四日市駅から"; }));
+        reset.clear();
+        for (const char value : std::string("kintetsuyokkaichiekikara")) reset.append_ascii(value);
+        assert(reset.begin_conversion());
+        const auto candidate = std::find_if(reset.candidates().begin(), reset.candidates().end(),
+            [](const auto &value) { return value.text == "近鉄四日市駅から"; });
+        assert(candidate != reset.candidates().end());
+        assert(reset.select_candidate(static_cast<std::size_t>(candidate - reset.candidates().begin())));
+        reset.learn_selected();
+        reset.clear();
+        for (const char value : std::string("kintetsu")) reset.append_ascii(value);
+        assert(std::any_of(reset.candidates().begin(), reset.candidates().end(),
+            [](const auto &value) { return value.text == "近鉄四日市駅から"; }));
+    }
     std::filesystem::remove_all(storage);
     assert(ImeSession::roman_to_hiragana("nihongo") == "にほんご");
     assert(ImeSession::roman_to_hiragana("kitte") == "きって");

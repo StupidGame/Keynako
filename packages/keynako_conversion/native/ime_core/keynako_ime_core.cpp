@@ -926,6 +926,10 @@ void ImeSession::learn_selected() {
         key = full_reading;
     }
     const bool explicit_selection = converting_ || selected_index_ != 0;
+    if (explicit_selection) {
+        const auto reset = learning_.find("context:prediction-reset:ja");
+        if (reset != learning_.end()) reset->second.erase(text);
+    }
     auto &scores = learning_[key];
     if (explicit_selection) {
         int highest = 0;
@@ -959,10 +963,12 @@ void ImeSession::learn_selected() {
         }
         std::size_t contexts = 0;
         for (const auto &[reading, values] : learning_) {
-            if (reading.rfind("context:", 0) == 0) contexts += values.size();
+            if (reading.rfind("context:", 0) == 0 &&
+                reading.rfind("context:prediction-reset:", 0) != 0) contexts += values.size();
         }
         for (auto it = learning_.begin(); contexts > 512 && it != learning_.end();) {
-            if (it->first.rfind("context:", 0) == 0) {
+            if (it->first.rfind("context:", 0) == 0 &&
+                it->first.rfind("context:prediction-reset:", 0) != 0) {
                 contexts -= it->second.size();
                 it = learning_.erase(it);
             } else ++it;
@@ -1301,6 +1307,8 @@ void ImeSession::rebuild_candidates() {
     const auto append_prediction = [&](std::string text, const char *source) {
         if (conversion_reading.empty()) return;
         text += literal_suffix;
+        const auto reset = learning_.find("context:prediction-reset:ja");
+        if (reset != learning_.end() && reset->second.find(text) != reset->second.end()) return;
         append_unique(prefix_predictions, prediction_seen, std::move(text), source);
     };
 

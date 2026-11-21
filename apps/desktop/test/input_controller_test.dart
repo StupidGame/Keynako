@@ -7,6 +7,36 @@ import 'package:keynako_desktop/input/desktop_shared_dictionary.dart';
 
 void main() {
   test(
+    'a model response does not restore a reset Kintetsu prediction',
+    () async {
+      final engine = _FakeZenzaiEngine()..result = '近鉄四日市駅から';
+      final controller = DesktopInputController(
+        zenzaiEngineFactory: (_) async => engine,
+      );
+      addTearDown(controller.dispose);
+      await controller.setZenzaiModel(ZenzaiModel.xsmall);
+      controller.updateRawInput('kintetsu');
+      Future<void> waitForModel() async {
+        for (var i = 0; i < 60 && controller.zenzaiWorking; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(controller.zenzaiWorking, isFalse);
+      }
+
+      await waitForModel();
+      final candidate = controller.candidates.firstWhere(
+        (value) => value.text == engine.result,
+      );
+      expect(await controller.resetCandidateLearning(candidate), isTrue);
+      await waitForModel();
+      expect(
+        controller.candidates.map((value) => value.text),
+        isNot(contains(engine.result)),
+      );
+    },
+  );
+
+  test(
     'kana remain on the first candidate page after model reranking',
     () async {
       final repository = _FakeSharedDictionaryRepository()
