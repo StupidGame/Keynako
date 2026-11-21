@@ -19,6 +19,25 @@ The Flutter application and keyboard behavior are a clean migration and adaptati
 
 This dependency is resolved by the local iOS Swift package with the `ZenzaiCPU` trait.
 
+## azooKey standard dictionary
+
+- Source: https://github.com/azooKey/azooKey_dictionary_storage
+- Pinned revision: the `third_party/azookey_dictionary_storage` Git submodule
+- License: Apache License 2.0 (see `third_party/azookey_dictionary_storage/LICENSE`)
+
+Android, iOS and desktop IMEs start from this dictionary snapshot and check the
+same official repository daily for updates. Downloads are validated and stored
+with their LICENSE in immutable revision directories, independently of the pinned
+converter and Zenzai runtime. The iOS keyboard passes the cached or bundled
+snapshot URL to the converter.
+
+## ZIP archive readers
+
+- Desktop: archive (MIT), https://pub.dev/packages/archive
+- iOS: ZIPFoundation (MIT), https://github.com/weichsel/ZIPFoundation
+
+These libraries retain their own license notices in their package distributions.
+
 ## llama.cpp / ggml
 
 - Source: https://github.com/azooKey/llama.cpp

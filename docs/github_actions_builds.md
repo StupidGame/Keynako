@@ -1,5 +1,51 @@
 # GitHub Actionsでアプリファイルを作る
 
+## 公式標準辞書の定期更新
+
+Android・iOS・Windows・macOS・Linuxのインストール済みIMEが、公式
+`azooKey/azooKey_dictionary_storage` の `main` を直接確認します。
+IMEの利用中に1日1回だけ確認し、新しいコミットのときだけ約12MBのZIPを取得します。
+アプリ更新や更新PRのマージを待つ必要はありません。
+Android・iOSはIME自身、PCはIMEがバックグラウンドで呼び出す同梱アプリの更新コマンドが取得します。
+設定アプリを開いていなくても動作します。IMEが停止している間は取得しません。
+
+取得した辞書は一時ディレクトリへ展開し、ライセンス、必須ファイル、
+バイナリ配置とZIPのCRCを検証した後、コミットID別の保存先へ移します。
+読込先のマーカーを切り替え、Androidは次回の候補検索、iOS・PCは未確定文字がなくなった時点でIMEの辞書を再読込します。
+個人辞書・共有辞書・学習履歴は別ファイルで保持します。
+通信切断、破損、不正なパスやサイズ、形式非互換の場合は直前の辞書を保持し、
+初回取得前は同梱辞書で変換を続けます。失敗後の再試行は最低1時間あけます。
+Android・iOSは起動・表示時と利用中の1時間間隔、PCは既存の辞書更新処理から確認し、
+成功時の記録で24時間以内の重複取得を抑えます。
+
+**iOS:** 「設定 → 一般 → キーボード → キーボード → Keynako」で
+「フルアクセスを許可」をオンにするとIMEから通信できます。
+許可がない場合も同梱辞書で使用できます。
+ダウンロード時に送るのは公開辞書への取得要求だけで、入力内容は送信しません。
+
+PCの辞書キャッシュは次の場所の `official_dictionary` に保存します。
+
+- Windows: `%LOCALAPPDATA%/Keynako`
+- macOS: `~/Library/Application Support/Keynako`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/keynako`
+
+保存済みの版は、古い版を使用中のIMEプロセスでも読めるよう保持します。
+変換器本体とZenzaiモデルは独立して固定します。
+5分間隔で取得するKeynako共有変換辞書とは別の更新経路です。
+
+配布時点の同梱辞書を手動更新・検証する場合:
+
+```bash
+git submodule update --init --depth 1 -- third_party/azookey_dictionary_storage
+python3 -m unittest discover -s .github/scripts -p 'test_update_azookey_dictionary.py'
+python3 .github/scripts/update_azookey_dictionary.py --update
+```
+
+`Build app files` は辞書更新の回帰テスト、同梱辞書の検証、Androidの変換テスト、
+PC IMEのネイティブ変換テストを含めて全OSの検証・配布ビルドを実行します。
+
+## アプリ・IMEの検証と配布ビルド
+
 `.github/workflows/build-app-files.yml` は、ブランチのpush、`v`で始まるタグのpush、Actions画面の手動実行で、次の全OSの成果物を同じ実行のArtifactsへ配布します。Androidだけを変更した場合も全OSを作り、Flutter・辞書・各OSのコードの変更も配布ビルドの対象になります。全成果物には同じActions実行番号が付きます。
 
 実行の表示名は `Build and validate app files · <ブランチまたはタグ>` です。Androidの解析・lint・単体テスト、共有変換モジュールの検証、各OSの配布ファイル生成を7つのジョブで並列に実行します。検証結果と全OSの成果物を1つの実行で確認できます。PRを更新するブランチpushも同じ1回の実行が対象で、`pull_request`イベントによる検証専用の実行は重複起動しません。Windows成果物はAuthenticode署名し、通常のブランチpush・手動実行では、Actionsのキャッシュに保持するCI用証明書を使います。

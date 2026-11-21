@@ -9,6 +9,7 @@
 
 #include "keynako_ime_core.h"
 #include "shared_dictionary_cache.h"
+#include "official_dictionary_cache.h"
 #include "zenzai_client.h"
 
 static IMKServer *gServer;
@@ -74,6 +75,7 @@ static NSString *PairedDelimiter(unichar value) {
     std::filesystem::file_time_type _personalDictionaryWriteTime;
     std::chrono::steady_clock::time_point _lastDictionaryCheck;
     std::chrono::steady_clock::time_point _lastDictionaryRefreshRequest;
+    std::filesystem::path _officialDictionaryPath;
     std::chrono::steady_clock::time_point _lastBackspacePress;
     BOOL _hasCompositionReplacementRange;
     NSString *_candidateDictionaryWord;
@@ -522,6 +524,15 @@ static NSString *PairedDelimiter(unichar value) {
     if (!force && _lastDictionaryCheck.time_since_epoch().count() != 0 &&
         now - _lastDictionaryCheck < std::chrono::seconds(5)) return;
     _lastDictionaryCheck = now;
+    [self requestSharedDictionaryRefresh:NO];
+    if (_session.raw_input().empty()) {
+        NSString *cache = [NSHomeDirectory() stringByAppendingPathComponent:
+            @"Library/Application Support/Keynako/official_dictionary"];
+        const auto root = keynako::official_dictionary_cache(std::filesystem::path(cache.UTF8String));
+        if (!root.empty() && root != _officialDictionaryPath && _session.set_bundled_dictionary_path(root.string())) {
+            _officialDictionaryPath = root;
+        }
+    }
 
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
     [paths addObject:[NSHomeDirectory() stringByAppendingPathComponent:

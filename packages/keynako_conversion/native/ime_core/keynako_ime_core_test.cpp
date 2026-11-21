@@ -1,4 +1,5 @@
 #include "keynako_ime_core.h"
+#include "official_dictionary_cache.h"
 
 #include <algorithm>
 #include <cassert>
@@ -12,6 +13,21 @@ int main() {
     const auto storage = std::filesystem::temp_directory_path() /
         ("keynako_portable_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(storage);
+    {
+        const auto cache = storage / "official_dictionary";
+        const std::string sha(40, 'a');
+        std::filesystem::create_directories(cache);
+        { std::ofstream marker(cache / "current"); marker << "../outside"; }
+        assert(keynako::official_dictionary_cache(cache).empty());
+        { std::ofstream marker(cache / "current"); marker << sha; }
+        assert(keynako::official_dictionary_cache(cache).empty());
+        const auto root = cache / sha / "Dictionary";
+        std::filesystem::create_directories(root / "louds");
+        { std::ofstream characters(root / "louds" / "charID.chid"); characters << "test"; }
+        assert(keynako::official_dictionary_cache(cache) == root);
+        std::filesystem::rename(cache / "current", cache / "previous");
+        assert(keynako::official_dictionary_cache(cache) == root);
+    }
     {
         std::ofstream settings(storage / "ime_settings.tsv");
         settings << "live_conversion\t0\nautomatic_completion_strength\t2\n";

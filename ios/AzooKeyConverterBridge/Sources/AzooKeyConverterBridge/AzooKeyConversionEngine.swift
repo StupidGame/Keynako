@@ -35,7 +35,7 @@ public struct AzooKeyCompletedClause: Sendable {
 /// conversion engine. The package revision and ZenzaiCPU trait match the Swift
 /// application this Flutter port was derived from.
 public final class AzooKeyConversionEngine {
-    private let converter = KanaKanjiConverter.withDefaultDictionary()
+    private let converter: KanaKanjiConverter
     private let sharedContainerURL: URL
     private let memoryDirectoryURL: URL
     private var lastCandidates: [String: Candidate] = [:]
@@ -49,6 +49,15 @@ public final class AzooKeyConversionEngine {
     private var stableCompletionCount = 0
 
     public init(sharedContainerURL: URL) {
+        // Use the same pinned official dictionary as Android and desktop.
+        // Xcode copies the folder reference into the keyboard extension bundle.
+        if let dictionaryURL = OfficialDictionary.cachedURL(in: sharedContainerURL)
+            ?? Bundle.main.url(forResource: "Dictionary", withExtension: nil) {
+            self.converter = KanaKanjiConverter(dictionaryURL: dictionaryURL)
+        } else {
+            // Preserve standalone package use outside the keyboard extension.
+            self.converter = KanaKanjiConverter.withDefaultDictionary()
+        }
         self.sharedContainerURL = sharedContainerURL
         self.memoryDirectoryURL = sharedContainerURL.appendingPathComponent(
             "azookey_flutter_learning",

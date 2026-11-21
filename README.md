@@ -115,7 +115,9 @@ flutter run -d windows # linux、macosも指定可能
 
 ## azooKey / Custard互換性
 
-Keynako 3.1は、azooKeyの安定版[v3.1.1](https://github.com/azooKey/azooKey/releases/tag/v3.1.1)を基準にし、2026年9月17日時点の`main`（[`754a9ad`](https://github.com/azooKey/azooKey/commit/754a9ad17cf300596d761845466b9faa652835f5)）までの変更を確認しています。この更新では、[#761](https://github.com/azooKey/azooKey/pull/761)の複合ラベル仕様に合わせ、英語カスタム配列のラベルがShift／Caps Lockへ追従します。iOS 27向けのSwiftUI固有修正など、UIKitで実装するKeynakoに該当しない変更は取り込んでいません。かな漢字変換パッケージ、標準辞書、Zenzaiモデルは、azooKey v3.1.1が使用する互換リビジョンを維持しています。
+Keynako 3.1は、azooKeyの安定版[v3.1.1](https://github.com/azooKey/azooKey/releases/tag/v3.1.1)を基準にし、2026年9月17日時点の`main`（[`754a9ad`](https://github.com/azooKey/azooKey/commit/754a9ad17cf300596d761845466b9faa652835f5)）までの変更を確認しています。この更新では、[#761](https://github.com/azooKey/azooKey/pull/761)の複合ラベル仕様に合わせ、英語カスタム配列のラベルがShift／Caps Lockへ追従します。iOS 27向けのSwiftUI固有修正など、UIKitで実装するKeynakoに該当しない変更は取り込んでいません。かな漢字変換パッケージとZenzaiモデルは、azooKey v3.1.1が使用する互換リビジョンを維持しています。
+
+標準辞書は[azooKey公式の辞書](https://github.com/azooKey/azooKey_dictionary_storage)をAndroid・iOS・Windows・macOS・LinuxのIMEで共通利用します。インストール済みのIMEが利用中に1日1回、公式`main`の更新を確認し、新しい版だけを取得します。検証済みの辞書をIMEへ反映するため、アプリの更新は不要です。通信・検証に失敗した場合は直前の辞書、初回は同梱辞書で変換を続けます。iOSの自動取得にはキーボードのフルアクセス許可が必要です。詳しくは[公式標準辞書の定期更新](docs/github_actions_builds.md#公式標準辞書の定期更新)を参照してください。
 
 「拡張」の読み込みボタンへCustard URLを入力すると、元のazooKeyと同じJSON形式を単体・配列のどちらでも読み込めます。`https://custard.azookey.com/tab/...` は公式API URLへ自動変換されます。キー座標とサイズ、system key、複数アクション、長押し開始・反復、フリック／PCバリエーションは定義を無損失で保持し、AndroidとiOSのネイティブキーボードが直接実行します。Custardの`input`／`direct_input`でも開き記号は対応する閉じ記号を補完し、カーソルを内側へ移動します。
 
