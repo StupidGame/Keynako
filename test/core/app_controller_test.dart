@@ -12,12 +12,14 @@ import 'package:flutter/services.dart';
 
 class _MemoryStorage implements StateStorage {
   String? value;
+  bool failWrites = false;
 
   @override
   Future<String?> load() async => value;
 
   @override
   Future<void> save(String state) async {
+    if (failWrites) throw StateError('save failed');
     value = state;
   }
 }
@@ -77,6 +79,79 @@ const _hotfixDictionary = AzooKeyHotfixDictionary(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('settings and exports preserve deletions and other changes from the keyboard', () async {
+    final stored = AppData.defaults();
+    stored.learning['きんてつ\t近鉄四日市駅から'] = 32;
+    final storage = _MemoryStorage()..value = stored.encode();
+    final controller = AppController(storage: storage);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    stored.learning.clear();
+    stored.learning['context:prediction-reset:ja\t近鉄四日市駅から'] = 1;
+    stored.learning['ねこ\t猫'] = 6;
+    stored.userDictionary.clear();
+    stored.clipboardHistory.add('キーボードでコピーした文');
+    storage.value = stored.encode();
+    controller.setSetting('live_conversion', false);
+    await controller.flush();
+    final saved = AppData.decode(storage.value!);
+    expect(saved.learning, stored.learning);
+    expect(saved.userDictionary, isEmpty);
+    expect(saved.clipboardHistory, stored.clipboardHistory);
+    expect(saved.settings['live_conversion'], isFalse);
+    expect(
+      AppData.decode(await controller.exportJson()).learning,
+      stored.learning,
+    );
+
+    controller.resetLearning();
+    await controller.flush();
+    final consumed = AppData.decode(storage.value!);
+    expect(consumed.learning, isEmpty);
+    consumed.settings['memory_reset_setting'] = false;
+    consumed.learning['いぬ\t犬'] = 4;
+    storage.value = consumed.encode();
+    controller.setSetting('live_conversion', true);
+    await controller.flush();
+    final subsequent = AppData.decode(storage.value!);
+    expect(subsequent.learning, {'いぬ\t犬': 4});
+    expect(subsequent.settings['memory_reset_setting'], isFalse);
+    expect(
+      AppData.decode(await controller.exportJson())
+          .settings['memory_reset_setting'],
+      isNull,
+    );
+  });
+
+  test(
+    'a failed restore keeps the previous state and can be retried',
+    () async {
+      final storage = _MemoryStorage()..value = AppData.defaults().encode();
+      final controller = AppController(storage: storage);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final original = controller.data;
+      final restored = AppData.defaults();
+      restored.learning['ねこ\t猫'] = 8;
+      restored.settings['memory_reset_setting'] = 'pending-from-backup';
+      storage.failWrites = true;
+      await expectLater(
+        controller.importJson(restored.encode()),
+        throwsStateError,
+      );
+      expect(controller.data, same(original));
+      expect(AppData.decode(storage.value!).learning, isEmpty);
+      storage.failWrites = false;
+      await controller.importJson(restored.encode());
+      expect(controller.data.learning, {'ねこ\t猫': 8});
+      expect(
+        AppData.decode(storage.value!).settings['memory_reset_setting'],
+        isNull,
+      );
+    },
+  );
 
   test('theme image bytes survive a backup across mobile file paths', () async {
     final directory = await Directory.systemTemp.createTemp(

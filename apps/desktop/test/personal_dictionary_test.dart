@@ -9,6 +9,39 @@ import 'package:keynako_desktop/input/desktop_input_controller.dart';
 import 'package:keynako_desktop/input/desktop_personal_dictionary.dart';
 
 void main() {
+  testWidgets('dictionary search matches romaji and edits the matching entry', (
+    tester,
+  ) async {
+    final repository = _MemoryPersonalDictionaryRepository()
+      ..entries = const [
+        ConversionDictionaryEntry(reading: 'ねこ', value: '猫'),
+        ConversionDictionaryEntry(reading: 'とうきょう', value: '東京'),
+      ];
+    final controller = DesktopInputController(
+      personalDictionaryRepository: repository,
+    );
+    await controller.initializePersonalDictionary();
+    await tester.pumpWidget(KeynakoDesktopApp(controller: controller));
+    await tester.tap(find.byKey(const Key('personal-dictionary-open')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(SearchBar), 'Toukyou');
+    await tester.pumpAndSettle();
+    expect(find.text('猫'), findsNothing);
+    await tester.tap(find.text('東京'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('dictionary-word')), '東京都');
+    await tester.tap(find.byKey(const Key('dictionary-save')));
+    await tester.pumpAndSettle();
+    expect(repository.entries.map((entry) => entry.value), ['猫', '東京都']);
+
+    await tester.tap(find.byTooltip('検索をクリア'));
+    await tester.pumpAndSettle();
+    expect(find.text('猫'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   test('personal entries survive reload and affect conversion', () async {
     final directory = await Directory.systemTemp.createTemp(
       'keynako-personal-',

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:keynako_conversion/keynako_conversion.dart'
+    show DictionarySearch;
 
 import '../../core/app_controller.dart';
 import '../../models/app_data.dart';
@@ -560,7 +562,17 @@ class UserDictionaryPage extends StatefulWidget {
 }
 
 class _UserDictionaryPageState extends State<UserDictionaryPage> {
-  var _query = '';
+  final _searchController = TextEditingController();
+  var _search = DictionarySearch('');
+
+  void _updateSearch(String query) =>
+      setState(() => _search = DictionarySearch(query));
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _deleteEntry(
     AppController controller,
@@ -574,11 +586,14 @@ class _UserDictionaryPageState extends State<UserDictionaryPage> {
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
-    final entries = controller.data.userDictionary.where((entry) {
-      final query = _query.toLowerCase();
-      return entry.ruby.toLowerCase().contains(query) ||
-          entry.word.toLowerCase().contains(query);
-    }).toList();
+    final entries = controller.data.userDictionary
+        .where(
+          (entry) =>
+              _search.matches(reading: entry.ruby, word: entry.word) ||
+              (entry.formatLiteral != null &&
+                  _search.matches(reading: '', word: entry.formatLiteral!)),
+        )
+        .toList();
     return Scaffold(
       appBar: AppBar(
         title: const Text('ユーザ辞書'),
@@ -599,60 +614,81 @@ class _UserDictionaryPageState extends State<UserDictionaryPage> {
           Padding(
             padding: const EdgeInsets.all(12),
             child: SearchBar(
+              controller: _searchController,
               leading: const Icon(Icons.search),
-              hintText: '読み・単語を検索',
-              onChanged: (value) => setState(() => _query = value),
+              hintText: '読み・単語・ローマ字で検索',
+              onChanged: _updateSearch,
+              trailing: [
+                if (!_search.isEmpty)
+                  IconButton(
+                    tooltip: '検索をクリア',
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      _searchController.clear();
+                      _updateSearch('');
+                    },
+                  ),
+              ],
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: entries.length,
-              itemBuilder: (context, index) {
-                final entry = entries[index];
-                return Dismissible(
-                  key: ValueKey(entry.id),
-                  background: Container(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 24),
-                    child: const Icon(Icons.delete),
+            child: entries.isEmpty
+                ? Center(
+                    child: Text(
+                      _search.isEmpty ? '登録した単語はまだないよ' : '一致する単語が見つからなかったよ',
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: entries.length,
+                    itemBuilder: (context, index) {
+                      final entry = entries[index];
+                      return Dismissible(
+                        key: ValueKey(entry.id),
+                        background: Container(
+                          color: Theme.of(context).colorScheme.errorContainer,
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 24),
+                          child: const Icon(Icons.delete),
+                        ),
+                        direction: DismissDirection.endToStart,
+                        confirmDismiss: (_) =>
+                            _confirmDictionaryEntryDeletion(context, entry),
+                        onDismissed: (_) =>
+                            controller.removeDictionaryEntry(entry.id),
+                        child: ListTile(
+                          title: Text(
+                            entry.isTemplateMode
+                                ? (entry.formatLiteral ?? entry.word)
+                                : entry.word,
+                          ),
+                          subtitle: Text(
+                            '${entry.ruby} ・ 重要度 ${entry.importance}',
+                          ),
+                          leading: Icon(
+                            entry.isTemplateMode
+                                ? Icons.schedule
+                                : entry.isPersonName
+                                ? Icons.person_outline
+                                : entry.isPlaceName
+                                ? Icons.place_outlined
+                                : Icons.text_fields,
+                          ),
+                          trailing: IconButton(
+                            key: ValueKey('dictionary-delete-${entry.id}'),
+                            tooltip: '単語を削除',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _deleteEntry(controller, entry),
+                          ),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  UserDictionaryEditorPage(entry: entry),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                  direction: DismissDirection.endToStart,
-                  confirmDismiss: (_) =>
-                      _confirmDictionaryEntryDeletion(context, entry),
-                  onDismissed: (_) =>
-                      controller.removeDictionaryEntry(entry.id),
-                  child: ListTile(
-                    title: Text(
-                      entry.isTemplateMode
-                          ? (entry.formatLiteral ?? entry.word)
-                          : entry.word,
-                    ),
-                    subtitle: Text('${entry.ruby} ・ 重要度 ${entry.importance}'),
-                    leading: Icon(
-                      entry.isTemplateMode
-                          ? Icons.schedule
-                          : entry.isPersonName
-                          ? Icons.person_outline
-                          : entry.isPlaceName
-                          ? Icons.place_outlined
-                          : Icons.text_fields,
-                    ),
-                    trailing: IconButton(
-                      key: ValueKey('dictionary-delete-${entry.id}'),
-                      tooltip: '単語を削除',
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => _deleteEntry(controller, entry),
-                    ),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => UserDictionaryEditorPage(entry: entry),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
           ),
         ],
       ),

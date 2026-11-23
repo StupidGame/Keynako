@@ -10,15 +10,36 @@ import 'desktop_learning.dart';
 class PortableProfile {
   PortableProfile._(this.json, this.dictionary, this.learning, this.settings);
 
+  static const maxBytes = 32 * 1024 * 1024;
+
   final Map<String, dynamic> json;
   final List<ConversionDictionaryEntry> dictionary;
   final Map<String, int> learning;
   final Map<String, dynamic> settings;
 
-  static PortableProfile decode(String source) {
-    if (source.length > 32 * 1024 * 1024) {
+  static Future<String> readFile(File file) async {
+    if (await file.length() > maxBytes) {
       throw const FormatException('バックアップが大きすぎる');
     }
+    var length = 0;
+    final bytes = file.openRead(0, maxBytes + 1).map((chunk) {
+      length += chunk.length;
+      if (length > maxBytes) throw const FormatException('バックアップが大きすぎる');
+      return chunk;
+    });
+    return utf8.decoder.bind(bytes).join();
+  }
+
+  static void _checkSize(String source) {
+    if (source.length > maxBytes ||
+        (source.length > maxBytes ~/ 3 &&
+            utf8.encode(source).length > maxBytes)) {
+      throw const FormatException('バックアップが大きすぎる');
+    }
+  }
+
+  static PortableProfile decode(String source) {
+    _checkSize(source);
     final decoded = jsonDecode(source);
     if (decoded is! Map ||
         decoded['settings'] is! Map ||
@@ -58,7 +79,11 @@ class PortableProfile {
       }
       final key = item.key as String;
       final score = (item.value as num).toInt();
-      if (key.length > 256 || !key.contains('\t') || score < 0) {
+      if (key.length > 256 ||
+          !key.contains('\t') ||
+          key.contains('\n') ||
+          key.contains('\r') ||
+          score < 0) {
         throw const FormatException('学習履歴の形式が不正');
       }
       if (score > 0) scores[key] = score.clamp(1, 32);
@@ -112,7 +137,9 @@ class PortableProfile {
       for (final entry in learning.entries)
         if (entry.value > 0) entry.key: entry.value.clamp(1, 32),
     };
-    return jsonEncode(result);
+    final encoded = jsonEncode(result);
+    _checkSize(encoded);
+    return encoded;
   }
 
   static PortableProfile empty() => decode(
@@ -129,6 +156,7 @@ class DesktopPortableProfileRepository {
   DesktopPortableProfileRepository({this.file});
 
   final File? file;
+  static int _temporaryFileId = 0;
 
   File get storageFile =>
       file ??
@@ -163,29 +191,27 @@ class DesktopPortableProfileRepository {
     final strength = settings['automatic_completion_strength'] is num
         ? (settings['automatic_completion_strength'] as num).toInt().clamp(0, 4)
         : 0;
-    final active = imeSettingsFile;
-    await active.parent.create(recursive: true);
-    await active.writeAsString(
+    await _writeFile(
+      imeSettingsFile,
       'live_conversion\t${live ? 1 : 0}\n'
       'automatic_completion_strength\t$strength\n',
-      flush: true,
     );
   }
 
   Future<PortableProfile> load() async {
     final active = storageFile;
     if (!await active.exists()) return PortableProfile.empty();
-    if (await active.length() > 32 * 1024 * 1024) {
-      throw const FormatException('バックアップが大きすぎる');
-    }
-    return PortableProfile.decode(await active.readAsString());
+    return PortableProfile.decode(await PortableProfile.readFile(active));
   }
 
   Future<void> save(String source) async {
     PortableProfile.decode(source);
-    final active = storageFile;
+    await _writeFile(storageFile, source);
+  }
+
+  Future<void> _writeFile(File active, String source) async {
     await active.parent.create(recursive: true);
-    final temporary = File('${active.path}.tmp.$pid');
+    final temporary = File('${active.path}.tmp.$pid.${_temporaryFileId++}');
     try {
       await temporary.writeAsString(source, flush: true);
       try {

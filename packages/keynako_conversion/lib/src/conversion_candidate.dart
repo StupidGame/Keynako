@@ -12,10 +12,11 @@ class ConversionCandidate {
   final String source;
   final int score;
 
-  ConversionCandidate copyWith({int? score}) => ConversionCandidate(
-    text: text,
-    reading: reading,
-    source: source,
-    score: score ?? this.score,
-  );
+  ConversionCandidate copyWith({String? source, int? score}) =>
+      ConversionCandidate(
+        text: text,
+        reading: reading,
+        source: source ?? this.source,
+        score: score ?? this.score,
+      );
 }

@@ -528,6 +528,9 @@ class JapaneseConverter {
     final prefixPredictions = <ConversionCandidate>[];
     final exactLearning = <String, int>{};
     final predictionLearning = <String, int>{};
+    final learnedEntries = options.learningEnabled
+        ? CandidateLearning.entries(options.learning).toList(growable: false)
+        : const <LearnedCandidate>[];
     final contextLearning = options.learningEnabled
         ? CandidateLearning.contextScores(
             options.learning,
@@ -538,24 +541,22 @@ class JapaneseConverter {
 
     // Recover selected words even when they came from Zenzai or a dictionary
     // that is no longer loaded. A longer learned reading is only a completion.
-    if (options.learningEnabled) {
-      for (final entry in CandidateLearning.entries(options.learning)) {
-        final ruby = entry.reading;
-        final text = entry.text;
-        if (text.trim().isEmpty || !ruby.startsWith(reading)) continue;
-        final exact = ruby == reading;
-        if (!exact && predictionLimit <= 0) continue;
-        final scores = exact ? exactLearning : predictionLearning;
-        if (entry.score > (scores[text] ?? 0)) scores[text] = entry.score;
-        (exact ? values : prefixPredictions).add(
-          ConversionCandidate(
-            text: text,
-            reading: ruby,
-            source: exact ? 'learned' : 'learned-prediction',
-            score: exact ? 250 : 180 - (ruby.length - reading.length) * 4,
-          ),
-        );
-      }
+    for (final entry in learnedEntries) {
+      final ruby = entry.reading;
+      final text = entry.text;
+      if (text.trim().isEmpty || !ruby.startsWith(reading)) continue;
+      final exact = ruby == reading;
+      if (!exact && predictionLimit <= 0) continue;
+      final scores = exact ? exactLearning : predictionLearning;
+      if (entry.score > (scores[text] ?? 0)) scores[text] = entry.score;
+      (exact ? values : prefixPredictions).add(
+        ConversionCandidate(
+          text: text,
+          reading: ruby,
+          source: exact ? 'learned' : 'learned-prediction',
+          score: exact ? 250 : 180 - (ruby.length - reading.length) * 4,
+        ),
+      );
     }
 
     for (final entry in contextLearning.entries) {
@@ -687,8 +688,8 @@ class JapaneseConverter {
         ),
       );
     }
-    if (options.learningEnabled) {
-      final learnedEntries = CandidateLearning.entries(options.learning)
+    if (learnedEntries.isNotEmpty) {
+      final learnedWords = learnedEntries
           .where((entry) => reading.contains(entry.reading))
           .map(
             (entry) => ConversionDictionaryEntry(
@@ -702,10 +703,10 @@ class JapaneseConverter {
           .map((path) => path.text)
           .toSet();
       final learnedPaths = [
-        ..._dictionaryCombinations(reading, learnedEntries),
+        ..._dictionaryCombinations(reading, learnedWords),
         ..._dictionaryCombinations(reading, [
           ...options.userDictionary,
-          ...learnedEntries,
+          ...learnedWords,
         ], limit: 32).where((path) => !dictionaryTexts.contains(path.text)),
       ];
       final seen = <String>{};
@@ -846,38 +847,16 @@ class JapaneseConverter {
       );
     }
 
-    final unique = <String, ConversionCandidate>{};
-    for (final candidate in values) {
-      if (candidate.text.trim().isEmpty) continue;
-      final learned = (exactLearning[candidate.text] ?? 0).clamp(0, 1000);
-      final scored = candidate.copyWith(
-        score:
-            candidate.score +
-            learned * 50 +
-            (contextLearning[candidate.text] ?? 0) * 120,
-      );
-      final previous = unique[candidate.text];
-      if (previous == null ||
-          _candidatePriority(scored) < _candidatePriority(previous) ||
-          (_candidatePriority(scored) == _candidatePriority(previous) &&
-              scored.score > previous.score)) {
-        unique[candidate.text] = scored;
-      }
-    }
+    final unique = _bestCandidates(
+      values,
+      exactLearning,
+      context: contextLearning,
+    );
     final result = _rank(unique.values);
-    final uniquePredictions = <String, ConversionCandidate>{};
-    for (final candidate in prefixPredictions) {
-      if (candidate.text.trim().isEmpty) continue;
-      final learned = (predictionLearning[candidate.text] ?? 0).clamp(0, 1000);
-      final scored = candidate.copyWith(score: candidate.score + learned * 50);
-      final previous = uniquePredictions[candidate.text];
-      if (previous == null ||
-          _candidatePriority(scored) < _candidatePriority(previous) ||
-          (_candidatePriority(scored) == _candidatePriority(previous) &&
-              scored.score > previous.score)) {
-        uniquePredictions[candidate.text] = scored;
-      }
-    }
+    final uniquePredictions = _bestCandidates(
+      prefixPredictions,
+      predictionLearning,
+    );
     final predictions = _priorityOrder(_rank(uniquePredictions.values));
     final prioritizedResults = _priorityOrder(result);
     final liveCandidate =
@@ -1027,6 +1006,32 @@ class JapaneseConverter {
       visible.insert(latestIndex.clamp(0, visible.length).toInt(), candidate);
     }
     return visible;
+  }
+
+  Map<String, ConversionCandidate> _bestCandidates(
+    Iterable<ConversionCandidate> candidates,
+    Map<String, int> learning, {
+    Map<String, int> context = const {},
+  }) {
+    final best = <String, ConversionCandidate>{};
+    for (final candidate in candidates) {
+      final text = candidate.text;
+      if (text.trim().isEmpty) continue;
+      final score =
+          candidate.score +
+          (learning[text] ?? 0) * 50 +
+          (context[text] ?? 0) * 120;
+      final previous = best[text];
+      if (previous != null) {
+        final priority = _candidatePriority(candidate)
+            .compareTo(_candidatePriority(previous));
+        if (priority > 0 || (priority == 0 && score <= previous.score)) {
+          continue;
+        }
+      }
+      best[text] = candidate.copyWith(score: score);
+    }
+    return best;
   }
 
   List<ConversionCandidate> _priorityOrder(

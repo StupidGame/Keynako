@@ -80,6 +80,7 @@ class DesktopInputController extends ChangeNotifier {
   Future<void> _learningSaveQueue = Future<void>.value();
   int _learningRevision = 0;
   Future<void> _settingsSaveQueue = Future<void>.value();
+  bool _settingsSaveFailed = false;
   bool _liveConversionEdited = false;
   bool _learningLoadFailed = false;
   bool _learningSaveFailed = false;
@@ -153,7 +154,7 @@ class DesktopInputController extends ChangeNotifier {
   }
 
   ConversionCandidate _firstCompleteCandidate() => _candidates.firstWhere(
-    (candidate) => !candidate.source.contains('prediction'),
+    (candidate) => _candidatePhase(candidate) != 1,
     orElse: () => ConversionCandidate(
       text: composingText,
       reading: composingText,
@@ -164,13 +165,18 @@ class DesktopInputController extends ChangeNotifier {
   void setLiveConversionEnabled(bool enabled, {bool persist = true}) {
     if (_liveConversionEnabled == enabled) return;
     _liveConversionEnabled = enabled;
-    if (persist && _profileRepository != null) {
+    final repository = _profileRepository;
+    if (persist && repository != null) {
       _liveConversionEdited = true;
       _settingsSaveQueue = _settingsSaveQueue.then((_) async {
-        final repository = _profileRepository;
-        final settings = await repository.loadImeSettings();
-        settings['live_conversion'] = enabled;
-        await repository.saveImeSettings(settings);
+        try {
+          final settings = await repository.loadImeSettings();
+          settings['live_conversion'] = enabled;
+          await repository.saveImeSettings(settings);
+          _settingsSaveFailed = false;
+        } on Object {
+          _settingsSaveFailed = true;
+        }
       });
     }
     notifyListeners();
@@ -246,28 +252,30 @@ class DesktopInputController extends ChangeNotifier {
       } on FormatException {
         // The TSV dictionary remains usable if the optional profile is damaged.
       }
+      if (_disposed) return;
+      final originals = <(String, String), ConversionDictionaryEntry>{};
+      for (final entry in profileEntries) {
+        originals.putIfAbsent((entry.reading, entry.value), () => entry);
+      }
       _personalDictionary = List.unmodifiable(
         loaded.map((entry) {
-          for (final original in profileEntries) {
-            if (entry.reading == original.reading &&
-                entry.value == original.value) {
-              return ConversionDictionaryEntry(
-                reading: entry.reading,
-                value: entry.value,
-                importance: entry.importance,
-                template: original.template,
-                format: original.format,
-                wordWeight: entry.wordWeight,
-                leftContextId: entry.leftContextId,
-                rightContextId: entry.rightContextId,
-              );
-            }
-          }
-          return entry;
+          final original = originals[(entry.reading, entry.value)];
+          if (original == null) return entry;
+          return ConversionDictionaryEntry(
+            reading: entry.reading,
+            value: entry.value,
+            importance: entry.importance,
+            template: original.template,
+            format: original.format,
+            wordWeight: entry.wordWeight,
+            leftContextId: entry.leftContextId,
+            rightContextId: entry.rightContextId,
+          );
         }),
       );
       _personalDictionaryLoadFailed = false;
     } on Object {
+      if (_disposed) return;
       _personalDictionary = const [];
       _personalDictionaryLoadFailed = true;
     }
@@ -279,11 +287,14 @@ class DesktopInputController extends ChangeNotifier {
     final repository = _learningRepository;
     if (repository == null) return;
     try {
+      final loaded = await repository.load();
+      if (_disposed) return;
       _learning
         ..clear()
-        ..addAll(await repository.load());
+        ..addAll(loaded);
       _learningLoadFailed = false;
     } on Object {
+      if (_disposed) return;
       // Keep a damaged file available for recovery instead of overwriting it.
       _learningLoadFailed = true;
     }
@@ -299,6 +310,7 @@ class DesktopInputController extends ChangeNotifier {
     await flushLearning();
     if (_learningSaveFailed) throw StateError('学習履歴を保存できない');
     await _settingsSaveQueue;
+    if (_settingsSaveFailed) throw StateError('入力設定を保存できない');
     final profile = await repository.load();
     final scores = await _learningRepository?.load() ?? _learning;
     final dictionary =
@@ -329,10 +341,41 @@ class DesktopInputController extends ChangeNotifier {
     final profile = PortableProfile.decode(source);
     await flushLearning();
     await _settingsSaveQueue;
-    await dictionaryRepository.save(profile.dictionary);
-    await learningRepository.save(profile.learning);
-    await repository.saveImeSettings(profile.settings);
-    await repository.save(source);
+    final previousDictionary = await _readBeforeRestore(
+      dictionaryRepository.load,
+    );
+    final previousLearning = await _readBeforeRestore(learningRepository.load);
+    final previousSettings = await repository.loadImeSettings();
+    final completed = <Future<void> Function()>[];
+    try {
+      await dictionaryRepository.save(profile.dictionary);
+      if (previousDictionary != null) {
+        completed.add(() => dictionaryRepository.save(previousDictionary));
+      }
+      await learningRepository.save(profile.learning);
+      if (previousLearning != null) {
+        completed.add(() => learningRepository.save(previousLearning));
+      }
+      await repository.saveImeSettings(profile.settings);
+      completed.add(() => repository.saveImeSettings(previousSettings));
+      await repository.save(source);
+    } on Object catch (error, stackTrace) {
+      Object? recoveryError;
+      for (final undo in completed.reversed) {
+        try {
+          await undo();
+        } on Object catch (error) {
+          recoveryError ??= error;
+        }
+      }
+      if (recoveryError != null) {
+        throw StateError('復元に失敗し、以前のデータにも戻せなかった ($error / $recoveryError)');
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+    _settingsSaveFailed = false;
+    _learningSaveFailed = false;
+    if (_disposed) return;
     _personalDictionary = List.unmodifiable(profile.dictionary);
     _learning
       ..clear()
@@ -351,6 +394,15 @@ class DesktopInputController extends ChangeNotifier {
     );
     if (_rawInput.isNotEmpty) _rebuildBaseCandidates();
     notifyListeners();
+  }
+
+  Future<T?> _readBeforeRestore<T>(Future<T> Function() load) async {
+    try {
+      return await load();
+    } on FormatException {
+      // An explicitly selected backup can recover an unreadable local file.
+      return null;
+    }
   }
 
   void _queueLearningSave(
@@ -411,25 +463,24 @@ class DesktopInputController extends ChangeNotifier {
         (model == ZenzaiModel.off || _zenzaiEngine != null)) {
       return;
     }
-    _requestSequence += 1;
+    _cancelZenzaiRequest();
     final previous = _zenzaiEngine;
     _zenzaiEngine = null;
     _zenzaiModel = model;
-    _zenzaiWorking = false;
     _zenzaiStatus = model == ZenzaiModel.off ? '無効' : '準備中';
     notifyListeners();
     await previous?.close();
 
-    if (model == ZenzaiModel.off) return;
+    if (model == ZenzaiModel.off || _disposed || _zenzaiModel != model) return;
     final engine = await _zenzaiEngineFactory?.call(model);
-    if (_zenzaiModel != model) {
+    if (_disposed || _zenzaiModel != model) {
       await engine?.close();
       return;
     }
     _zenzaiEngine = engine;
     _zenzaiStatus = engine == null ? 'モデル未検出' : '待機中';
+    _scheduleZenzai();
     notifyListeners();
-    if (_rawInput.isNotEmpty) _scheduleZenzai();
   }
 
   void setMode(InputMode mode) {
@@ -437,15 +488,10 @@ class DesktopInputController extends ChangeNotifier {
     final wasConverting = _converting;
     _mode = mode;
     _selectedIndex = 0;
-    _rebuildBaseCandidates();
+    _rebuildBaseCandidates(preserveSelection: false);
     _converting = wasConverting && _candidates.isNotEmpty;
-    _requestSequence += 1;
-    _zenzaiDebounce?.cancel();
-    _zenzaiWorking = false;
+    _scheduleZenzai();
     notifyListeners();
-    if (_mode == InputMode.japanese && _rawInput.isNotEmpty) {
-      _scheduleZenzai();
-    }
   }
 
   void updateRawInput(String value) {
@@ -453,14 +499,8 @@ class DesktopInputController extends ChangeNotifier {
     _selectedIndex = 0;
     _converting = false;
     _rebuildBaseCandidates();
+    _scheduleZenzai();
     notifyListeners();
-    if (_mode == InputMode.japanese && value.isNotEmpty) {
-      _scheduleZenzai();
-    } else {
-      _requestSequence += 1;
-      _zenzaiDebounce?.cancel();
-      _zenzaiWorking = false;
-    }
   }
 
   void replaceCommittedText(String value) {
@@ -684,18 +724,14 @@ class DesktopInputController extends ChangeNotifier {
 
   void cancelComposition() {
     _rawInput = '';
-    _candidates = const [];
-    _selectedIndex = 0;
-    _converting = false;
-    _requestSequence += 1;
-    _zenzaiDebounce?.cancel();
-    _zenzaiWorking = false;
+    _replaceCandidates(const []);
+    _cancelZenzaiRequest();
     notifyListeners();
   }
 
-  void _rebuildBaseCandidates() {
+  void _rebuildBaseCandidates({bool preserveSelection = true}) {
     if (_rawInput.isEmpty) {
-      _candidates = const [];
+      _replaceCandidates(const []);
       return;
     }
     final options = ConversionOptions(
@@ -706,42 +742,66 @@ class DesktopInputController extends ChangeNotifier {
         _committedSelectionOffset.clamp(0, _committedText.length),
       ),
     );
-    _candidates = _mode == InputMode.japanese
-        ? _japaneseConverter.candidates(
-            input: _rawInput,
-            romanInput: true,
-            options: options,
-          )
-        : _englishConverter.candidates(input: _rawInput, options: options);
+    _replaceCandidates(
+      _mode == InputMode.japanese
+          ? _japaneseConverter.candidates(
+              input: _rawInput,
+              romanInput: true,
+              options: options,
+            )
+          : _englishConverter.candidates(input: _rawInput, options: options),
+      preserveSelection: preserveSelection,
+    );
+  }
+
+  void _replaceCandidates(
+    List<ConversionCandidate> updated, {
+    bool preserveSelection = true,
+  }) {
+    final selected = preserveSelection && _converting
+        ? _candidates.elementAtOrNull(_selectedIndex)
+        : null;
+    final index = selected == null
+        ? -1
+        : updated.indexWhere(
+            (candidate) =>
+                candidate.text == selected.text &&
+                candidate.reading == selected.reading,
+          );
+    _candidates = updated;
+    _selectedIndex = index < 0 ? 0 : index;
+    _converting = index >= 0;
+  }
+
+  void _cancelZenzaiRequest() {
+    _requestSequence += 1;
+    _zenzaiDebounce?.cancel();
+    if (_zenzaiWorking) _zenzaiStatus = '待機中';
+    _zenzaiWorking = false;
   }
 
   void _scheduleZenzai() {
+    _cancelZenzaiRequest();
+    final sequence = _requestSequence;
     final engine = _zenzaiEngine;
-    final sequence = ++_requestSequence;
-    _zenzaiDebounce?.cancel();
-    final reading = composingText;
-    final hasExactRegistration = [..._personalDictionary, ..._sharedDictionary]
-        .any(
-          (entry) =>
-              CandidateLearning.normalizeReading(entry.reading) == reading,
-        );
-    final strongLearning = CandidateLearning.exactScores(
-      _learning,
-      reading,
-    ).values.any((score) => score >= 4);
-    if (engine == null ||
-        reading.characters.length == 1 ||
-        (reading.characters.length <= 2 &&
-            _candidates.isNotEmpty &&
-            _candidates.first.text == reading &&
-            !hasExactRegistration &&
-            !strongLearning)) {
-      _zenzaiWorking = false;
+    if (engine == null || _mode != InputMode.japanese || _rawInput.isEmpty) {
       return;
+    }
+    final reading = composingText;
+    final length = reading.characters.length;
+    if (length <= 1) return;
+    if (length == 2 && _candidates.firstOrNull?.text == reading) {
+      bool matchesReading(ConversionDictionaryEntry entry) =>
+          CandidateLearning.normalizeReading(entry.reading) == reading;
+      final hasExactRegistration =
+          _personalDictionary.any(matchesReading) ||
+          _sharedDictionary.any(matchesReading);
+      final strongLearning = CandidateLearning.entries(_learning)
+          .any((entry) => entry.reading == reading && entry.score >= 4);
+      if (!hasExactRegistration && !strongLearning) return;
     }
     _zenzaiWorking = true;
     _zenzaiStatus = '入力待ち';
-    notifyListeners();
     _zenzaiDebounce = Timer(
       const Duration(milliseconds: 140),
       () => _runZenzai(engine, sequence, reading),
@@ -773,9 +833,6 @@ class DesktopInputController extends ChangeNotifier {
         ),
       );
       if (sequence != _requestSequence || generated == null) return;
-      final selectedText = _converting && _candidates.isNotEmpty
-          ? _candidates[_selectedIndex].text
-          : null;
       final existingIndex = _candidates.indexWhere(
         (candidate) => candidate.text == generated,
       );
@@ -790,29 +847,27 @@ class DesktopInputController extends ChangeNotifier {
               _unusualModelText(generated, reading))) {
         return;
       }
+      final candidates = List<ConversionCandidate>.of(_candidates);
       if (existingIndex < 0) {
-        final insertion = _candidates.length < 3 ? _candidates.length : 3;
-        _candidates = [
-          ..._candidates.take(insertion),
+        final insertion = candidates.length < 3 ? candidates.length : 3;
+        candidates.insert(
+          insertion,
           ConversionCandidate(
             text: generated,
             reading: reading,
             source: 'zenzai-suggestion',
             score: 1000,
           ),
-          ..._candidates.skip(insertion),
-        ];
-      } else if (_candidatePhase(_candidates[existingIndex]) == 0) {
+        );
+      } else if (_candidatePhase(candidates[existingIndex]) == 0) {
         // The model may select a word already present in a dictionary or learning.
-        _candidates[existingIndex] = ConversionCandidate(
-          text: generated,
-          reading: reading,
+        candidates[existingIndex] = candidates[existingIndex].copyWith(
           source: 'zenzai',
           score: 1000,
         );
       }
       final learned = CandidateLearning.exactScores(_learning, reading);
-      final ranked = _candidates.indexed.toList()
+      final ranked = candidates.indexed.toList()
         ..sort((left, right) {
           final leftPhase = _candidatePhase(left.$2);
           final rightPhase = _candidatePhase(right.$2);
@@ -831,20 +886,18 @@ class DesktopInputController extends ChangeNotifier {
               ? score
               : left.$1.compareTo(right.$1);
         });
-      _candidates = _keepKanaCandidatesVisible(
-        reading,
-        ranked.map((entry) => entry.$2).toList(),
+      _replaceCandidates(
+        _keepKanaCandidatesVisible(
+          reading,
+          ranked.map((entry) => entry.$2).toList(),
+        ),
       );
-      _selectedIndex = selectedText == null
-          ? 0
-          : _candidates.indexWhere((value) => value.text == selectedText);
-      if (_selectedIndex < 0) _selectedIndex = 0;
-      _zenzaiStatus = '待機中';
     } catch (_) {
       if (sequence != _requestSequence) return;
       _zenzaiStatus = '利用不可';
     } finally {
       if (sequence == _requestSequence) {
+        if (_zenzaiStatus == '推論中') _zenzaiStatus = '待機中';
         _zenzaiWorking = false;
         notifyListeners();
       }
@@ -915,8 +968,7 @@ class DesktopInputController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _requestSequence += 1;
-    _zenzaiDebounce?.cancel();
+    _cancelZenzaiRequest();
     _sharedDictionaryTimer?.cancel();
     _zenzaiEngine?.close();
     super.dispose();

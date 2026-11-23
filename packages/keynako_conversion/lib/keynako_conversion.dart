@@ -4,6 +4,7 @@ export 'src/candidate_learning.dart';
 export 'src/azookey_special_candidates.dart';
 export 'src/conversion_candidate.dart';
 export 'src/conversion_options.dart';
+export 'src/dictionary_search.dart';
 export 'src/english_converter.dart';
 export 'src/japanese_converter.dart';
 export 'src/shared_dictionary.dart';
