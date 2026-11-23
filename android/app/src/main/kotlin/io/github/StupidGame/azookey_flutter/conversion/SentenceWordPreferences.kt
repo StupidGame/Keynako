@@ -16,6 +16,8 @@ internal data class SentenceWordPreference(
     val weight: Double = 0.0,
 )
 
+internal data class PreferredSentenceSpelling(val text: String, val hasPreferredPrefix: Boolean)
+
 /** Replaces whole parsed words; learned lexical spellings cannot replace grammar alone. */
 internal fun preferredSentenceSpelling(
     reading: String,
@@ -23,7 +25,7 @@ internal fun preferredSentenceSpelling(
     spans: List<ConversionWordSpan>,
     preferences: List<SentenceWordPreference>,
     referenceWords: List<ConversionWordSpan>? = null,
-): String? {
+): PreferredSentenceSpelling? {
     if (spans.isEmpty() || preferences.isEmpty()) return null
     val normalized = katakanaToHiragana(reading)
     val referenceBoundaries = referenceWords?.mapTo(mutableSetOf(0)) { it.readingEnd }
@@ -65,5 +67,5 @@ internal fun preferredSentenceSpelling(
     for (match in chosen.sortedByDescending { it.start }) {
         result = result.replaceRange(match.start, match.end, match.preference.text)
     }
-    return result
+    return PreferredSentenceSpelling(result, hasPreferredPrefix = chosen.any { it.start == 0 })
 }

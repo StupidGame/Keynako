@@ -46,8 +46,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
         maxTokens: Int,
         incompleteTexts: Set<String> = emptySet(),
         validateGenerated: (String) -> Boolean = { false },
-        preferGenerated: (String) -> String? = { null },
-        callback: (List<String>, String?, Boolean) -> Unit,
+        preferGenerated: (String) -> PreferredSentenceSpelling? = { null },
+        callback: (List<String>, String?, PreferredSentenceSpelling?) -> Unit,
     ) {
         if (closed) return
         val request = requestSequence.incrementAndGet()
@@ -59,8 +59,8 @@ internal class AndroidZenzaiRuntime(context: Context) {
             if (closed || request != requestSequence.get()) return@Runnable
             val startedAt = System.nanoTime()
             val result = runCatching {
-                if (!ensureModel(modelSize)) return@runCatching Triple(emptyList<String>(), null, false)
-                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, false)
+                if (!ensureModel(modelSize)) return@runCatching Triple(emptyList<String>(), null, null)
+                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, null)
 
                 val generatedText = if (shouldGenerateZenzaiCandidate(reading.length, maxTokens)) {
                     ZenzEngine.generateWithContextAndConditionsV32(
@@ -78,20 +78,20 @@ internal class AndroidZenzaiRuntime(context: Context) {
                 } else {
                     ""
                 }
-                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, false)
+                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, null)
                 // The proposal must consume the whole reading through the dictionary.
                 // This also rejects truncated output and invented words/readings.
                 val complete = completeZenzaiCandidate(
                     reading, generatedText, baseCandidates, incompleteTexts, validateGenerated,
                 ).orEmpty()
                 val preferred = complete.takeIf(String::isNotEmpty)?.let(preferGenerated)
-                val generated = preferred ?: complete
-                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, false)
+                val generated = preferred?.text ?: complete
+                if (request != requestSequence.get()) return@runCatching Triple(emptyList<String>(), null, null)
 
                 val values = linkedSetOf<String>()
                 if (generated.isNotEmpty()) values.add(generated)
                 values.addAll(baseCandidates.filter { it.isNotBlank() })
-                if (values.isEmpty()) return@runCatching Triple(emptyList<String>(), null, false)
+                if (values.isEmpty()) return@runCatching Triple(emptyList<String>(), null, null)
 
                 // Scoring every entry in the large dictionary makes inference lag behind typing.
                 // Zenzai reranks the strongest entries and preserves the remaining dictionary order.
@@ -114,10 +114,10 @@ internal class AndroidZenzaiRuntime(context: Context) {
                             ?: Float.NEGATIVE_INFINITY
                     }.thenBy { it.index },
                 ).map { it.value } + candidates.filter { it !in rerankedCandidates }
-                Triple(ranked, generated.takeIf { it.isNotEmpty() }, preferred != null)
+                Triple(ranked, generated.takeIf { it.isNotEmpty() }, preferred)
             }.getOrElse { error ->
                 Log.e(LOG_TAG, "Candidate ranking failed", error)
-                Triple(emptyList<String>(), null, false)
+                Triple(emptyList<String>(), null, null)
             }
 
             if (result.first.isEmpty() || closed || request != requestSequence.get()) {

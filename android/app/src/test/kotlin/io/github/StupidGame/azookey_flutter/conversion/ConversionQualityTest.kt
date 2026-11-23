@@ -76,6 +76,23 @@ class ConversionQualityTest {
         assertEquals("雲を見る", dictionary.preferredSentenceConversion("くもをみる", "蜘蛛を見る", entries))
     }
 
+    @Test fun identifiesOnlyFullyParsedSentencePrefixesForPromotion() {
+        val entry = AzooKeyHotfixDictionaryEntry("佐東", "さとう", -9.0, 1285, 1285, 501)
+        for (learned in listOf(false, true)) {
+            val entries = listOf(entry.copy(isLearned = learned))
+            val front = dictionary.candidates("さとうさんにあう", 0, additionalEntries = entries)
+            assertTrue(front.conversions.first().startsWith("佐東さん"))
+            assertTrue(front.conversions.first() in front.preferredPrefixConversions)
+            val middle = dictionary.candidates("きょうさとうさんにあう", 0, additionalEntries = entries)
+            assertTrue(middle.preferredSentenceConversions.any { it.contains("佐東さん") })
+            assertTrue(middle.preferredPrefixConversions.isEmpty())
+        }
+        val insideWord = dictionary.candidates("せんせいにあう", 0, additionalEntries = listOf(
+            entry.copy(word = "姓", ruby = "せい"),
+        ))
+        assertTrue(insideWord.preferredPrefixConversions.isEmpty())
+    }
+
     @Test fun katakanaCompoundsNeedNeitherAModelNorPersonalLearning() {
         for ((reading, expected) in listOf(
             "ふるふれっくす" to "フルフレックス",

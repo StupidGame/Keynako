@@ -21,6 +21,8 @@ internal data class DictionaryCandidates(
     val invalidInflectionConversions: Set<String> = emptySet(),
     /** Complete sentences with registered or deliberately learned word spellings. */
     val preferredSentenceConversions: Set<String> = emptySet(),
+    /** Complete sentences whose preferred word begins at the start of the reading. */
+    val preferredPrefixConversions: Set<String> = emptySet(),
 )
 
 internal data class AzooKeyHotfixDictionaryEntry(
@@ -127,8 +129,10 @@ internal class AzooKeyDictionary(
         val preferences: List<AzooKeyHotfixDictionaryEntry>,
     )
 
-    private val preferenceCache = object : LinkedHashMap<PreferenceCacheKey, String?>(128, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PreferenceCacheKey, String?>): Boolean = size > 128
+    private val preferenceCache = object : LinkedHashMap<PreferenceCacheKey, PreferredSentenceSpelling?>(128, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<PreferenceCacheKey, PreferredSentenceSpelling?>,
+        ): Boolean = size > 128
     }
 
     // Personal spellings must not create their own word boundaries inside a
@@ -210,12 +214,15 @@ internal class AzooKeyDictionary(
         // preference: it may have split a normal word to fit that entry.
         val preferred = (conversions.values.take(3) + listOfNotNull(conversions.canonical) +
             conversions.preferredSentences.take(3)).distinct().mapNotNull {
-            preferredSentenceConversion(reading, it, additionalEntries)
-        }.distinct()
-        val complete = if (preferred.isEmpty()) conversions.values else {
-            (preferred.take(3) + listOfNotNull(conversions.canonical) +
-                preferred.drop(3) + conversions.values).distinct().take(conversionLimit.coerceAtLeast(0))
+            findPreferredSentenceSpelling(reading, it, additionalEntries)
         }
+        val prefixTexts = preferred.filter { it.hasPreferredPrefix }.mapTo(linkedSetOf()) { it.text }
+        val preferredTexts = (prefixTexts + preferred.map { it.text }).toList()
+        val complete = if (preferredTexts.isEmpty()) conversions.values else {
+            (preferredTexts.take(3) + listOfNotNull(conversions.canonical) +
+                preferredTexts.drop(3) + conversions.values).distinct().take(conversionLimit.coerceAtLeast(0))
+        }
+        val retained = complete.toSet()
         return DictionaryCandidates(
             complete,
             predictions.map(ReadingPrediction::text),
@@ -223,17 +230,24 @@ internal class AzooKeyDictionary(
             conversions.canonical,
             conversions.parsedInflections,
             conversions.invalidInflections,
-            preferred.toSet().intersect(complete.toSet()),
+            preferredTexts.toSet().intersect(retained),
+            prefixTexts.intersect(retained),
         )
     }
 
-    /** Align a candidate to its reading before applying personal word spellings. */
-    @Synchronized
     fun preferredSentenceConversion(
         reading: String,
         text: String,
         additionalEntries: List<AzooKeyHotfixDictionaryEntry>,
-    ): String? {
+    ): String? = findPreferredSentenceSpelling(reading, text, additionalEntries)?.text
+
+    /** Align a candidate to its reading before applying personal word spellings. */
+    @Synchronized
+    fun findPreferredSentenceSpelling(
+        reading: String,
+        text: String,
+        additionalEntries: List<AzooKeyHotfixDictionaryEntry>,
+    ): PreferredSentenceSpelling? {
         val normalized = reading.toKatakana()
         if (additionalEntries.any { !it.isLearned && it.ruby.toKatakana() == normalized && it.word == text }) return null
         val relevant = additionalEntries.filter {

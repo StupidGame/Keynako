@@ -173,6 +173,7 @@ internal fun prioritizeRegisteredJapaneseCandidates(
     partialTexts: Set<String> = emptySet(),
     exactRegistrationTexts: Set<String> = emptySet(),
     sentencePreferenceTexts: Set<String> = emptySet(),
+    prefixPreferenceTexts: Set<String> = emptySet(),
 ): List<String> {
     val available = candidates.toSet()
     // Word spelling overrides the model; sentence substitutions retain its
@@ -185,7 +186,15 @@ internal fun prioritizeRegisteredJapaneseCandidates(
     }.distinct()
     if (registered.isEmpty()) return candidates
     val registeredTexts = registered.toSet()
-    return registered + candidates.filter { it !in registeredTexts }
+    // Keep the current contextual/model order inside each sentence group.
+    val leadingPreferences = candidates.filter {
+        it in prefixPreferenceTexts && it in registeredTexts && it !in predictionTexts && it !in partialTexts
+    }
+    val promoted = if (leadingPreferences.isEmpty()) registered else {
+        (registered.filter { it in exactRegistrationTexts && it !in sentencePreferenceTexts } +
+            leadingPreferences + registered).distinct()
+    }
+    return promoted + candidates.filter { it !in registeredTexts }
 }
 
 /** Keep completions visible after the model reranks candidates, without using one for live text. */
@@ -201,6 +210,8 @@ internal fun rerankedJapaneseCandidates(
     preferredZenzaiCandidate: String? = null,
     exactRegistrationTexts: Set<String> = emptySet(),
     dictionaryLedLiteral: Boolean = baseCandidates.firstOrNull() == reading,
+    sentencePreferenceTexts: Set<String> = emptySet(),
+    prefixPreferenceTexts: Set<String> = emptySet(),
 ): List<String> {
     val learnedPrefixes = learnedJapanesePrefixPredictions(reading, learning)
     val predictionTexts = predictionReadings.keys + learnedPrefixes.map { it.text }
@@ -292,6 +303,7 @@ internal fun rerankedJapaneseCandidates(
     )
     val dictionaryOrdered = prioritizeRegisteredJapaneseCandidates(
         withKana, dictionaryCandidates, predictionTexts, partialCandidates, exactRegistrationTexts,
+        sentencePreferenceTexts, prefixPreferenceTexts,
     )
     return preferSingleKanaReading(reading, dictionaryOrdered, exactRegistration)
 }
