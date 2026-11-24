@@ -3823,7 +3823,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val reading = displayReading()
         val availableCandidates = if (useCandidate) candidates.ifEmpty { buildCandidates() } else emptyList()
         val text = compositionCommitText(reading, availableCandidates, useCandidate, selectedCandidate)
-        val leftContext = if (candidateSelectedExplicitly) {
+        val leftContext = if (useCandidate && candidateSelectedExplicitly) {
             leftContextBeforeComposition(20)
         } else ""
         if (currentInputConnection?.commitText(text, 1) != true) return
@@ -4111,7 +4111,9 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun setMode(newMode: String) {
-        if (dictionaryMode != DictionaryMode.EDIT && (mode != "english" || newMode != "english")) commitComposition()
+        if (dictionaryMode != DictionaryMode.EDIT && (mode != "english" || newMode != "english")) {
+            commitComposition(useCandidate = false)
+        }
         mode = newMode
         activeCustomTab = null
         layout = when (newMode) {
@@ -4124,7 +4126,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun nextKeyboard() {
-        commitComposition()
+        commitComposition(useCandidate = false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             switchToNextInputMethod(false)
         } else {
@@ -4338,7 +4340,7 @@ class AzooKeyInputMethodService : InputMethodService() {
         val profile = customLayoutProfile(id) ?: return
         // Custard Shift/Caps Lock can be separate tabs, with an input action
         // followed by move_tab to return. Neither move should accept the word.
-        if (mode != "english" || profile.first != "en_US") commitComposition()
+        if (mode != "english" || profile.first != "en_US") commitComposition(useCandidate = false)
         activateCustomLayout(id)
         renderCandidates()
         renderKeyboard()
@@ -4664,7 +4666,7 @@ class AzooKeyInputMethodService : InputMethodService() {
     }
 
     private fun setForcedLayout(newMode: String, newLayout: String) {
-        if (mode != "english" || newMode != "english") commitComposition()
+        if (mode != "english" || newMode != "english") commitComposition(useCandidate = false)
         mode = newMode
         layout = newLayout
         activeCustomTab = null

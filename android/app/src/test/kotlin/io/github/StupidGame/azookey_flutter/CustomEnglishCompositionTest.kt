@@ -154,12 +154,57 @@ class CustomEnglishCompositionTest {
     }
 
     @Test
-    fun languageChangeStillCommitsThePreviousComposition() {
-        input("a")
+    fun switchingToJapaneseCommitsTheTypedEnglishWithoutAcceptingACorrection() {
+        input("teh")
+        setCandidates("the", "teh")
         moveTab("kana")
-        assertEquals(1, commits.size)
+        assertEquals(listOf("teh"), commits)
         assertEquals("", ReflectionHelpers.getField<String>(service, "composing"))
         assertEquals("japanese", ReflectionHelpers.getField<String>(service, "mode"))
+    }
+
+    @Test
+    fun switchingToEnglishCommitsKanaEvenWhenAKanjiCandidateIsPreviewed() {
+        selectTab("japanese")
+        dispatch(JSONObject().put("type", "input").put("value", "にほんご"))
+        setCandidates("にほんご", "日本語")
+        ReflectionHelpers.callInstanceMethod<Unit>(service, "selectNextCandidate")
+        assertEquals("日本語", markedText)
+        ReflectionHelpers.getField<JSONObject>(service, "settings")
+            .put("memory_learining_styple_setting", 0)
+
+        selectTab("english")
+
+        assertEquals(listOf("にほんご"), commits)
+        assertEquals("", markedText)
+        assertTrue(ReflectionHelpers.callInstanceMethod<Map<String, Int>>(service, "learningScores").isEmpty())
+    }
+
+    @Test
+    fun switchingFromRomajiToFlickCommitsTheKanaReading() {
+        moveTab("romaji")
+        input("nihongo")
+        setCandidates("日本語", "にほんご")
+
+        dispatch(tabAction("flick_japanese", "system"))
+
+        assertEquals(listOf("にほんご"), commits)
+        assertEquals("", markedText)
+        assertEquals("", ReflectionHelpers.getField<String>(service, "rawRoman"))
+        assertEquals("flick", ReflectionHelpers.getField<String>(service, "layout"))
+    }
+
+    @Test
+    fun nextKeyboardCommitsTheTypedTextBeforeSwitchingInputMethods() {
+        input("teh")
+        setCandidates("the", "teh")
+
+        ReflectionHelpers.callInstanceMethod<Unit>(
+            service, "dispatchNamedAction", ClassParameter.from(String::class.java, "nextKeyboard"),
+        )
+
+        assertEquals(listOf("teh"), commits)
+        assertEquals("", markedText)
     }
 
     @Test
@@ -205,6 +250,12 @@ class CustomEnglishCompositionTest {
         input("B")
         assertEquals("B", commits.last())
         assertEquals("", ReflectionHelpers.getField<String>(service, "composing"))
+    }
+
+    private fun setCandidates(vararg values: String) {
+        ReflectionHelpers.callInstanceMethod<Unit>(service, "invalidateCandidateLookup")
+        ReflectionHelpers.setField(service, "candidates", values.toMutableList())
+        ReflectionHelpers.setField(service, "selectedCandidate", 0)
     }
 
     private fun assertComposing(expected: String) {

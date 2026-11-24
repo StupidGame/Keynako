@@ -454,7 +454,7 @@ final class KeyboardViewController: UIInputViewController {
         let bottom = makeRow()
         bottom.distribution = .fill
         bottom.addArrangedSubview(makeButton("☆123", special: true) { [weak self] in self?.setMode("symbols") })
-        bottom.addArrangedSubview(makeButton("🌐", special: true, action: advanceToNextInputMode))
+        bottom.addArrangedSubview(makeButton("🌐", special: true, action: nextKeyboard))
         if useShift && !legacyShift {
             bottom.addArrangedSubview(makeButton(capsLock ? "⇪" : "⇧", special: true, action: toggleShift))
         }
@@ -804,7 +804,7 @@ final class KeyboardViewController: UIInputViewController {
             return makeCustomButton(custom)
         }
         switch type {
-        case "change_keyboard": return makeButton("🌐", special: true) { [weak self] in self?.advanceToNextInputMode() }
+        case "change_keyboard": return makeButton("🌐", special: true) { [weak self] in self?.nextKeyboard() }
         case "qwerty_language_switch": return makeButton("あA", special: true) { [weak self] in
             guard let self else { return }
             setMode(mode == "japanese" ? "english" : "japanese")
@@ -1646,7 +1646,7 @@ final class KeyboardViewController: UIInputViewController {
     private func commitComposition(useCandidate: Bool = true) {
         guard !composing.isEmpty || !rawRoman.isEmpty else { return }
         let explicitSelection = selectedCandidateText != nil
-        let available = candidates.isEmpty ? buildCandidates() : candidates
+        let available = useCandidate && candidates.isEmpty ? buildCandidates() : candidates
         let selected = useCandidate
             ? (selectedCandidateText ?? available.first(where: { candidatePredictionReadings[$0] == nil }) ?? composing)
             : composing
@@ -1856,7 +1856,9 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setMode(_ newMode: String) {
-        if dictionaryMode != .edit, mode != "english" || newMode != "english" { commitComposition() }
+        if dictionaryMode != .edit, mode != "english" || newMode != "english" {
+            commitComposition(useCandidate: false)
+        }
         mode = newMode
         activeCustomTab = nil
         switch newMode {
@@ -1866,6 +1868,11 @@ final class KeyboardViewController: UIInputViewController {
         }
         renderCandidates()
         renderKeyboard()
+    }
+
+    private func nextKeyboard() {
+        commitComposition(useCandidate: false)
+        advanceToNextInputMode()
     }
 
     private func handleFlickValue(_ value: String, definition: FlickDefinition) {
@@ -1928,7 +1935,7 @@ final class KeyboardViewController: UIInputViewController {
         case "kogana": transformLastCharacter()
         case "shiftEnglish": toggleShift()
         case "upperLowerEnglish": pressAa()
-        case "nextKeyboard": advanceToNextInputMode()
+        case "nextKeyboard": nextKeyboard()
         default: break
         }
     }
@@ -2255,7 +2262,7 @@ final class KeyboardViewController: UIInputViewController {
         guard let profile = customLayoutProfile(id) else { return }
         // Custard Shift/Caps Lock can be separate tabs, with an input action
         // followed by move_tab to return. Neither move should accept the word.
-        if mode != "english" || profile.language != "en_US" { commitComposition() }
+        if mode != "english" || profile.language != "en_US" { commitComposition(useCandidate: false) }
         activateCustomLayout(id)
         renderCandidates()
         renderKeyboard()
@@ -2601,7 +2608,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setForcedLayout(mode: String, layout: String) {
-        if self.mode != "english" || mode != "english" { commitComposition() }
+        if self.mode != "english" || mode != "english" { commitComposition(useCandidate: false) }
         self.mode = mode
         self.layout = layout
         activeCustomTab = nil
