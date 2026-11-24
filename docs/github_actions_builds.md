@@ -91,7 +91,9 @@ WindowsはTSF DLLを入力先プロセス内へ読み込むため、すべての
 
 ## 成果物の取得
 
-Actionsで `Build and validate app files` の実行を開き、各OSのジョブ完了後に同じページのArtifactsから次をダウンロードします。同じページにAndroidと共有変換モジュールの検証結果も表示されます。
+すべてのビルド・検証ジョブが成功すると、Actionsの実行を開いたときのSummaryに「Keynako ダウンロード」が表示されます。各OSのリンクから、その実行の成果物をダウンロードできます。ダウンロードにはGitHubへのログインが必要です。
+
+各OSのジョブが完了すると、同じページのArtifactsにも次の項目が表示されます。
 
 - `keynako-android-release-apk-<run number>`（固定リリース鍵による署名）
 - `keynako-ios-files-<run number>`

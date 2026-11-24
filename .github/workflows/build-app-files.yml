@@ -66,6 +66,8 @@ jobs:
     name: Signed Android release APK
     runs-on: ubuntu-26.04
     timeout-minutes: 60
+    outputs:
+      download-url: ${{ steps.upload.outputs.artifact-url }}
 
     steps:
       - name: Check out source and submodules
@@ -120,6 +122,7 @@ jobs:
           python3 .github/scripts/android_signing.py --verify-apk-report build/app/outputs/flutter-apk/signature-report.txt
 
       - name: Upload Android files
+        id: upload
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-android-release-apk-${{ github.run_number }}
@@ -138,6 +141,8 @@ jobs:
     name: Unsigned iOS files
     runs-on: macos-26
     timeout-minutes: 90
+    outputs:
+      download-url: ${{ steps.upload.outputs.artifact-url }}
 
     steps:
       - name: Check out source and submodules
@@ -197,6 +202,7 @@ jobs:
           } > build/ios/ARTIFACTS.txt
 
       - name: Upload iOS files
+        id: upload
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-ios-files-${{ github.run_number }}
@@ -243,6 +249,8 @@ jobs:
     name: Windows desktop IME
     runs-on: windows-2025-vs2026
     timeout-minutes: 120
+    outputs:
+      download-url: ${{ steps.upload.outputs.artifact-url }}
 
     steps:
       - name: Check out source and submodules
@@ -421,6 +429,7 @@ jobs:
             Set-Content -Encoding ascii (Join-Path $outputRoot 'KeynakoSetup.exe.sha256')
 
       - name: Upload the signed Windows desktop app
+        id: upload
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-windows-installer-${{ steps.windows-signing.outputs.kind }}-signed-${{ github.run_number }}
@@ -439,6 +448,8 @@ jobs:
     name: Linux desktop IME
     runs-on: ubuntu-26.04
     timeout-minutes: 120
+    outputs:
+      download-url: ${{ steps.upload.outputs.artifact-url }}
 
     steps:
       - name: Check out source and submodules
@@ -505,6 +516,7 @@ jobs:
           tar -C "$RUNNER_TEMP" -czf build/Keynako-linux-x64.tar.gz Keynako
 
       - name: Upload the Linux desktop app
+        id: upload
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-linux-x64-${{ github.run_number }}
@@ -516,6 +528,8 @@ jobs:
     name: macOS desktop IME
     runs-on: macos-26
     timeout-minutes: 120
+    outputs:
+      download-url: ${{ steps.upload.outputs.artifact-url }}
 
     steps:
       - name: Check out source and submodules
@@ -590,9 +604,41 @@ jobs:
             "$package_root" build/Keynako-macos.zip
 
       - name: Upload the macOS desktop app
+        id: upload
         uses: actions/upload-artifact@v7.0.1
         with:
           name: keynako-macos-${{ github.run_number }}
           if-no-files-found: error
           retention-days: 14
           path: build/Keynako-macos.zip
+
+  download-links:
+    name: Download links
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    needs: [android-validation, android, ios, desktop-tests, desktop-windows, desktop-linux, desktop-macos]
+
+    steps:
+      - name: Write the download list to the run summary
+        shell: bash
+        env:
+          ANDROID_URL: ${{ needs.android.outputs.download-url }}
+          IOS_URL: ${{ needs.ios.outputs.download-url }}
+          WINDOWS_URL: ${{ needs.desktop-windows.outputs.download-url }}
+          LINUX_URL: ${{ needs.desktop-linux.outputs.download-url }}
+          MACOS_URL: ${{ needs.desktop-macos.outputs.download-url }}
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Keynako ダウンロード
+
+          | OS | ダウンロード |
+          | --- | --- |
+          | Android | [署名済み APK](${ANDROID_URL:?Missing Android artifact URL}) |
+          | iOS | [実機用の未署名 IPA・Simulator 用アプリ](${IOS_URL:?Missing iOS artifact URL}) |
+          | Windows | [署名済み x64 インストーラー](${WINDOWS_URL:?Missing Windows artifact URL}) |
+          | Linux | [x64 アプリ・IBus エンジン](${LINUX_URL:?Missing Linux artifact URL}) |
+          | macOS | [アプリ・入力ソース](${MACOS_URL:?Missing macOS artifact URL}) |
+
+          ダウンロードには GitHub へのログインが必要です。成果物の保存期間は14日間です。
+          EOF
